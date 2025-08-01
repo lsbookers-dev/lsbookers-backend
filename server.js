@@ -1,6 +1,5 @@
 const express = require('express');
 const cors = require('cors');
-const bodyParser = require('body-parser');
 
 const authRoutes = require('./routes/auth');
 const profileRoutes = require('./routes/profile');
@@ -17,7 +16,7 @@ const app = express();
 
 // ✅ Middlewares globaux
 app.use(cors());
-app.use(bodyParser.json());
+app.use(express.json()); // 🟢 Utilisation correcte du parsing JSON
 
 // ✅ Exposition du dossier uploads (fichiers médias)
 app.use('/uploads', express.static('uploads'));
