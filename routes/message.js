@@ -141,7 +141,9 @@ router.post('/send-file', authenticateToken, upload.single('file'), async (req, 
       return res.status(400).json({ error: 'Contenu ou fichier requis' });
     }
 
-    const cleanFileUrl = file ? `http://localhost:5001/uploads/${file.filename}` : null;
+    const cleanFileUrl = file
+      ? `https://lsbookers-backend-production.up.railway.app/uploads/${file.filename}`
+      : null;
 
     const messageData = {
       senderId: req.user.id,
