@@ -8,6 +8,8 @@ const authMiddleware = require('../middleware/authMiddleware');
 
 // 🔐 ROUTE D’INSCRIPTION
 router.post('/register', async (req, res) => {
+  console.log("📩 Données reçues à l'inscription :", req.body); // <-- ✅ Log ajouté
+
   const { name, email, password, role, isAdmin } = req.body;
 
   if (!name || !email || !password || !role) {
@@ -28,7 +30,7 @@ router.post('/register', async (req, res) => {
         email,
         password: hashedPassword,
         role,
-        isAdmin: isAdmin ?? false, // ✅ Prise en compte du rôle admin
+        isAdmin: isAdmin ?? false,
         profile: { create: {} },
       },
       include: { profile: true },
