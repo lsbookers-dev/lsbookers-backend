@@ -8,7 +8,7 @@ const authMiddleware = require('../middleware/authMiddleware');
 
 // 🔐 ROUTE D’INSCRIPTION
 router.post('/register', async (req, res) => {
-  console.log("📩 Données reçues à l'inscription :", req.body); // <-- ✅ Log ajouté
+  console.log("📩 Données reçues à l'inscription :", req.body);
 
   const { name, email, password, role, isAdmin } = req.body;
 
@@ -41,7 +41,7 @@ router.post('/register', async (req, res) => {
       user,
     });
   } catch (err) {
-    console.error(err);
+    console.error('❌ Erreur dans /register :', err);
     res.status(500).json({ error: 'Erreur serveur' });
   }
 });
@@ -49,6 +49,7 @@ router.post('/register', async (req, res) => {
 // 🔑 ROUTE DE CONNEXION
 router.post('/login', async (req, res) => {
   const { email, password } = req.body;
+  console.log('📥 Données reçues pour /login :', { email, password });
 
   try {
     const user = await prisma.user.findUnique({
@@ -57,12 +58,19 @@ router.post('/login', async (req, res) => {
     });
 
     if (!user) {
+      console.log('❌ Email introuvable dans la base');
       return res.status(401).json({ error: 'Email incorrect ❌' });
     }
 
     const isValid = await bcrypt.compare(password, user.password);
     if (!isValid) {
+      console.log('❌ Mot de passe invalide');
       return res.status(401).json({ error: 'Mot de passe incorrect ❌' });
+    }
+
+    if (!process.env.JWT_SECRET) {
+      console.error('❌ JWT_SECRET non défini dans .env');
+      return res.status(500).json({ error: 'JWT secret non configuré ❌' });
     }
 
     const token = jwt.sign(
@@ -71,13 +79,15 @@ router.post('/login', async (req, res) => {
       { expiresIn: '7d' }
     );
 
+    console.log('✅ Connexion réussie pour :', user.email);
+
     res.json({
       message: 'Connexion réussie ✅',
       token,
       user,
     });
   } catch (err) {
-    console.error(err);
+    console.error('❌ Erreur serveur lors de la connexion :', err);
     res.status(500).json({ error: 'Erreur serveur' });
   }
 });
@@ -96,7 +106,7 @@ router.get('/me', authMiddleware, async (req, res) => {
 
     res.json({ user });
   } catch (err) {
-    console.error(err);
+    console.error('❌ Erreur dans /me :', err);
     res.status(500).json({ error: 'Erreur serveur' });
   }
 });
