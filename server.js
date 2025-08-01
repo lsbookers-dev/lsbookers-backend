@@ -34,8 +34,8 @@ app.use('/api', usersRoutes);                  // ex: /api/users/:id
 app.use('/api/admin', adminRoutes);            // ✅ routes sécurisées admin
 app.use('/api/admin/settings', adminSettingsRoutes); // ✅ routes design (adminSettings)
 
-// ✅ Lancement du serveur
+// ✅ Lancement du serveur pour Railway (écoute sur 0.0.0.0)
 const PORT = process.env.PORT || 5001;
-app.listen(PORT, () => {
-  console.log(`✅ Serveur lancé sur http://localhost:${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ Serveur lancé sur http://0.0.0.0:${PORT}`);
 });
