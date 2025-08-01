@@ -1,0 +1,6 @@
+-- AlterTable
+ALTER TABLE "Conversation" ALTER COLUMN "updatedAt" DROP DEFAULT;
+
+-- AlterTable
+ALTER TABLE "Media" ALTER COLUMN "userId" DROP DEFAULT,
+ALTER COLUMN "type" DROP DEFAULT;
