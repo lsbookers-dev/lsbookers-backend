@@ -12,6 +12,9 @@ router.post('/register', async (req, res) => {
 
   const { name, email, password, role, isAdmin } = req.body;
 
+  // DEBUG : afficher le rôle reçu
+  console.log("📌 Rôle reçu :", role);
+
   if (!name || !email || !password || !role) {
     return res.status(400).json({ error: 'Champs requis manquants ❌' });
   }
@@ -30,6 +33,13 @@ router.post('/register', async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
+    console.log("✅ Création du user avec :", {
+      name,
+      email,
+      role,
+      isAdmin: isAdmin ?? false,
+    });
+
     const user = await prisma.user.create({
       data: {
         name,
@@ -41,6 +51,8 @@ router.post('/register', async (req, res) => {
       },
       include: { profile: true },
     });
+
+    console.log("✅ Utilisateur créé :", user.email);
 
     res.status(201).json({
       message: 'Inscription réussie ✅',
