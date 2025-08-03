@@ -117,5 +117,6 @@ model AdminSettings {
 enum Role {
   ARTIST
   ORGANIZER
-  ADMIN // ✅ Nouveau rôle pour administrateurs
+  PROVIDER
+  ADMIN 
 }

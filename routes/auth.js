@@ -16,6 +16,12 @@ router.post('/register', async (req, res) => {
     return res.status(400).json({ error: 'Champs requis manquants ❌' });
   }
 
+  // ✅ Vérification que le rôle est valide
+  const validRoles = ['ARTIST', 'ORGANIZER', 'PROVIDER', 'ADMIN'];
+  if (!validRoles.includes(role)) {
+    return res.status(400).json({ error: `Rôle invalide ❌ (${role})` });
+  }
+
   try {
     const existingUser = await prisma.user.findUnique({ where: { email } });
     if (existingUser) {
