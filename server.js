@@ -1,13 +1,18 @@
 const express = require('express')
 const router = express.Router()
-const { PrismaClient } = require('@prisma/client') // ✅ CORRECTION ici
+const { PrismaClient } = require('@prisma/client')
 const prisma = new PrismaClient()
-const authenticateToken = require('../middleware/authenticateToken')
+const authenticateToken = require('../middleware/authenticateToken.js') // ✅ CORRECTION ici
 
 // ✅ Nouvelle route : récupération de tous les utilisateurs
 router.get('/users', authenticateToken, async (req, res) => {
   try {
     const users = await prisma.user.findMany({
+      where: {
+        id: {
+          not: req.user.id, // exclure soi-même
+        },
+      },
       select: {
         id: true,
         name: true,
