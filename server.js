@@ -1,6 +1,7 @@
 const express = require('express')
 const router = express.Router()
-const prisma = require('../prisma/client')
+const { PrismaClient } = require('@prisma/client') // ✅ CORRECTION ici
+const prisma = new PrismaClient()
 const authenticateToken = require('../middleware/authenticateToken')
 
 // ✅ Nouvelle route : récupération de tous les utilisateurs
