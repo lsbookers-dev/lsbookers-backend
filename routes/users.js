@@ -1,8 +1,32 @@
 const express = require('express')
 const router = express.Router()
-const prisma = require('../prisma/client') // Assure-toi que ce chemin est correct
+const prisma = require('../prisma/client')
+const authenticateToken = require('../middleware/authenticateToken')
 
-// Récupération d’un utilisateur par ID
+// ✅ Nouvelle route : GET /users → tous les utilisateurs sauf soi-même
+router.get('/users', authenticateToken, async (req, res) => {
+  try {
+    const users = await prisma.user.findMany({
+      where: {
+        id: {
+          not: req.user.id, // exclure soi-même
+        },
+      },
+      select: {
+        id: true,
+        name: true,
+        role: true,
+      },
+    })
+
+    res.json(users)
+  } catch (err) {
+    console.error('Erreur dans GET /users', err)
+    res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
+// ✅ Route déjà en place : GET /users/:id
 router.get('/users/:id', async (req, res) => {
   const userId = parseInt(req.params.id)
 
