@@ -1,7 +1,8 @@
 const express = require('express')
 const router = express.Router()
-const prisma = require('../prisma/client')
-const authenticateToken = require('../middleware/authenticateToken')
+const { PrismaClient } = require('@prisma/client')
+const prisma = new PrismaClient()
+const authenticateToken = require('../middleware/authenticateToken.js') // ✅ Correction ici
 
 // ✅ Nouvelle route : GET /users → tous les utilisateurs sauf soi-même
 router.get('/users', authenticateToken, async (req, res) => {
