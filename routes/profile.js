@@ -76,7 +76,7 @@ router.get('/:id', authenticate, async (req, res) => {
   }
 });
 
-// ✅ Mettre à jour un profil (ARTISTE ou ORGANIZER)
+// ✅ Mettre à jour un profil
 router.put('/:id', authenticate, async (req, res) => {
   const { id } = req.params;
   const userId = req.user.id;
@@ -89,7 +89,9 @@ router.put('/:id', authenticate, async (req, res) => {
     specialties,
     typeEtablissement,
     latitude: clientLatitude,
-    longitude: clientLongitude
+    longitude: clientLongitude,
+    avatarUrl,
+    bannerUrl
   } = req.body;
 
   console.log('🟢 Données reçues PUT /profile/:id', req.body);
@@ -124,7 +126,6 @@ router.put('/:id', authenticate, async (req, res) => {
       latitude = clientLatitude;
       longitude = clientLongitude;
 
-      // 🧭 Si on a les coordonnées mais pas le pays → géocoder inverse
       const revRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=3&addressdetails=1`);
       const revData = await revRes.json();
       country = revData?.address?.country || null;
@@ -142,7 +143,9 @@ router.put('/:id', authenticate, async (req, res) => {
         ...(longitude !== undefined && { longitude }),
         ...(country !== undefined && { country }),
         ...(specialties !== undefined && { specialties }),
-        ...(typeEtablissement !== undefined && { typeEtablissement })
+        ...(typeEtablissement !== undefined && { typeEtablissement }),
+        ...(avatarUrl !== undefined && { avatarUrl }),
+        ...(bannerUrl !== undefined && { bannerUrl })
       }
     });
 

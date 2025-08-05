@@ -11,7 +11,8 @@ const feedRoutes = require('./routes/feed')
 const searchRoutes = require('./routes/search')
 const usersRoutes = require('./routes/users')
 const adminRoutes = require('./routes/admin')
-const adminSettingsRoutes = require('./routes/adminSettings') // Routes design admin
+const adminSettingsRoutes = require('./routes/adminSettings')
+const eventRoutes = require('./routes/events') // ✅ NOUVELLE ROUTE AJOUTÉE
 
 const app = express()
 
@@ -30,9 +31,10 @@ app.use('/api/messages', messageRoutes)
 app.use('/api/follow', followRoutes)
 app.use('/api/feed', feedRoutes)
 app.use('/api/search', searchRoutes)
-app.use('/api', usersRoutes) // /api/users & /api/users/:id
+app.use('/api', usersRoutes)
 app.use('/api/admin', adminRoutes)
 app.use('/api/admin/settings', adminSettingsRoutes)
+app.use('/api/events', eventRoutes) // ✅ NOUVELLE ROUTE ACTIVÉE
 
 // ✅ Lancement du serveur (compatible Railway)
 const PORT = process.env.PORT || 5001

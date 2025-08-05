@@ -13,7 +13,7 @@ model User {
   email        String   @unique
   password     String
   role         Role
-  isAdmin      Boolean  @default(false) // ✅ Champ pour les administrateurs
+  isAdmin      Boolean  @default(false)
   profile      Profile?
   media        Media[]
   followers    Follow[] @relation("followers")
@@ -29,15 +29,18 @@ model Profile {
   bio               String?
   profession        String?
   location          String?
-  country           String?   // 🌍 Pays extrait automatiquement par géocodage
+  country           String?
   latitude          Float?
   longitude         Float?
   radiusKm          Int?
   specialties       String[]
   typeEtablissement String?
+  avatar            String?
+  banner            String?
 
   user              User      @relation(fields: [userId], references: [id])
-  events            Event[]   // ✅ Événements liés à ce profil
+  events            Event[]
+  media             Media[]   // ✅ Galerie liée à ce profil
 }
 
 model Media {
@@ -46,8 +49,12 @@ model Media {
   type      MediaType
   caption   String?
   createdAt DateTime @default(now())
+
   userId    Int
   user      User     @relation(fields: [userId], references: [id])
+
+  profileId Int
+  profile   Profile  @relation(fields: [profileId], references: [id])
 }
 
 enum MediaType {
@@ -98,7 +105,11 @@ model ConversationParticipant {
 model Event {
   id        Int      @id @default(autoincrement())
   title     String
-  date      DateTime
+  start     DateTime
+  end       DateTime
+  allDay    Boolean  @default(false)
+  lieu      String?
+  type      String?
   profile   Profile  @relation(fields: [profileId], references: [id])
   profileId Int
   createdAt DateTime @default(now())
@@ -106,10 +117,10 @@ model Event {
 
 model AdminSettings {
   id             Int      @id @default(1)
-  mainColor      String?  @default("#FF0055") // couleur principale du site
-  secondaryColor String?  @default("#000000") // couleur secondaire
-  bannerUrl      String?  // URL de la bannière d’accueil
-  welcomeText    String?  // phrase d’accroche sur la landing
+  mainColor      String?  @default("#FF0055")
+  secondaryColor String?  @default("#000000")
+  bannerUrl      String?
+  welcomeText    String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 }
