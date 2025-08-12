@@ -1,24 +1,17 @@
+// routes/profile.js
 const express = require('express');
 const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const authenticate = require('../middleware/authenticate');
 
-// ✅ Import fetch compatible CommonJS
+// Import fetch (CommonJS compatible)
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
-/* ========================= Helpers ========================= */
-function isBasicUpdate(body = {}) {
-  const allowed = new Set(['bannerUrl', 'avatarUrl', 'description']);
-  const keys = Object.keys(body);
-  if (keys.length === 0) return false;
-  // true si TOUTES les clés sont dans le set autorisé
-  return keys.every((k) => allowed.has(k));
-}
-
-/* =================== Routes publiques (GET) =================== */
-
-// ✅ Route publique : Récupérer le profil via userId
+/**
+ * GET /api/profile/user/:userId
+ * Public : récupérer un profil par userId
+ */
 router.get('/user/:userId', async (req, res) => {
   const { userId } = req.params;
 
@@ -26,14 +19,11 @@ router.get('/user/:userId', async (req, res) => {
     const profile = await prisma.profile.findUnique({
       where: { userId: parseInt(userId, 10) },
       include: {
-        user: {
-          select: { id: true, name: true, email: true, role: true },
-        },
-      },
+        user: { select: { id: true, name: true, email: true, role: true } }
+      }
     });
 
     if (!profile) return res.status(404).json({ error: 'Profil introuvable' });
-
     res.json({ profile });
   } catch (error) {
     console.error('❌ Erreur récupération profil public /user/:userId :', error);
@@ -41,20 +31,22 @@ router.get('/user/:userId', async (req, res) => {
   }
 });
 
-// ✅ Récupérer les événements d’un artiste via son userId
+/**
+ * GET /api/profile/calendar/:userId
+ * Public : calendrier d’un artiste (via userId)
+ */
 router.get('/calendar/:userId', async (req, res) => {
   const { userId } = req.params;
 
   try {
     const profile = await prisma.profile.findUnique({
-      where: { userId: parseInt(userId, 10) },
+      where: { userId: parseInt(userId, 10) }
     });
-
     if (!profile) return res.status(404).json({ error: 'Profil introuvable' });
 
     const events = await prisma.event.findMany({
       where: { profileId: profile.id },
-      orderBy: { date: 'asc' },
+      orderBy: { date: 'asc' }
     });
 
     res.json({ events });
@@ -64,7 +56,10 @@ router.get('/calendar/:userId', async (req, res) => {
   }
 });
 
-// ✅ Récupérer le profil par ID interne (utilisateur connecté)
+/**
+ * GET /api/profile/:id
+ * Privé : récupérer un profil par id interne
+ */
 router.get('/:id', authenticate, async (req, res) => {
   const { id } = req.params;
 
@@ -72,14 +67,11 @@ router.get('/:id', authenticate, async (req, res) => {
     const profile = await prisma.profile.findUnique({
       where: { id: parseInt(id, 10) },
       include: {
-        user: {
-          select: { id: true, name: true, email: true, role: true },
-        },
-      },
+        user: { select: { id: true, name: true, email: true, role: true } }
+      }
     });
 
     if (!profile) return res.status(404).json({ error: 'Profil introuvable' });
-
     res.json({ profile });
   } catch (error) {
     console.error('❌ Erreur récupération profil sécurisé /:id :', error);
@@ -87,53 +79,16 @@ router.get('/:id', authenticate, async (req, res) => {
   }
 });
 
-/* ============ Raccourci PUBLIC pour mise à jour basique ============ */
 /**
- * Cette route capte PUT /:id quand la requête ne contient QUE
- * bannerUrl / avatarUrl / description (rien d’autre).
- * Elle met à jour directement le profil SANS authentification.
- * ⚠️ À sécuriser plus tard (token) quand on branchera le front auth complet.
+ * PUT /api/profile/:id
+ * Privé : mettre à jour le profil
+ * NOTE : on accepte avatar/banner ET avatarUrl/bannerUrl (alias).
  */
-router.put('/:id', async (req, res, next) => {
-  try {
-    if (!isBasicUpdate(req.body)) {
-      // Ce n'est pas une mise à jour "basique" → on laisse la route suivante gérer (auth requise)
-      return next();
-    }
-
-    const { id } = req.params;
-    const { bannerUrl, avatarUrl, description } = req.body || {};
-
-    const updated = await prisma.profile.update({
-      where: { id: parseInt(id, 10) },
-      data: {
-        ...(bannerUrl !== undefined && { bannerUrl }),
-        ...(avatarUrl !== undefined && { avatarUrl }),
-        // on stocke "description" dans la colonne bio
-        ...(description !== undefined && { bio: description }),
-      },
-      select: {
-        id: true,
-        bannerUrl: true,
-        avatarUrl: true,
-        bio: true,
-      },
-    });
-
-    return res.json({ ok: true, profile: updated });
-  } catch (error) {
-    console.error('❌ Erreur mise à jour basique (publique) PUT /:id :', error);
-    return res.status(500).json({ error: 'Erreur serveur' });
-  }
-});
-
-/* ===================== Route sécurisée (complète) ===================== */
-
-// ✅ Mettre à jour un profil (complète, avec auth)
 router.put('/:id', authenticate, async (req, res) => {
   const { id } = req.params;
   const userId = req.user.id;
 
+  // Champs possibles en entrée
   const {
     bio,
     location,
@@ -143,6 +98,12 @@ router.put('/:id', authenticate, async (req, res) => {
     typeEtablissement,
     latitude: clientLatitude,
     longitude: clientLongitude,
+
+    // Nouveaux champs (col. Prisma)
+    avatar,
+    banner,
+
+    // Aliases historiques acceptés
     avatarUrl,
     bannerUrl,
   } = req.body;
@@ -151,7 +112,7 @@ router.put('/:id', authenticate, async (req, res) => {
 
   try {
     const profile = await prisma.profile.findUnique({
-      where: { id: parseInt(id, 10) },
+      where: { id: parseInt(id, 10) }
     });
 
     if (!profile || profile.userId !== userId) {
@@ -162,13 +123,9 @@ router.put('/:id', authenticate, async (req, res) => {
     let longitude = profile.longitude;
     let country = profile.country;
 
-    // 🌍 Si location est fournie : géocoder
+    // 🌍 Géocodage si "location" fourni
     if (location) {
-      const geoRes = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(
-          location
-        )}`
-      );
+      const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(location)}`);
       const geoData = await geoRes.json();
 
       if (Array.isArray(geoData) && geoData.length > 0) {
@@ -179,40 +136,46 @@ router.put('/:id', authenticate, async (req, res) => {
       } else {
         return res.status(400).json({ error: 'Localisation invalide ou non reconnue' });
       }
-    } else if (clientLatitude && clientLongitude) {
-      latitude = clientLatitude;
-      longitude = clientLongitude;
+    } else if (clientLatitude != null && clientLongitude != null) {
+      latitude = Number(clientLatitude);
+      longitude = Number(clientLongitude);
 
-      const revRes = await fetch(
-        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=3&addressdetails=1`
-      );
+      const revRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=3&addressdetails=1`);
       const revData = await revRes.json();
       country = revData?.address?.country || null;
       console.log('🌐 Pays déterminé par coordonnées :', country);
     }
 
+    // Prépare le payload de mise à jour
+    const dataToUpdate = {};
+
+    if (bio !== undefined) dataToUpdate.bio = bio;
+    if (profession !== undefined) dataToUpdate.profession = profession;
+    if (location !== undefined) dataToUpdate.location = location;
+    if (radiusKm !== undefined && !isNaN(parseInt(radiusKm, 10))) dataToUpdate.radiusKm = parseInt(radiusKm, 10);
+    if (latitude !== undefined) dataToUpdate.latitude = latitude;
+    if (longitude !== undefined) dataToUpdate.longitude = longitude;
+    if (country !== undefined) dataToUpdate.country = country;
+    if (specialties !== undefined) dataToUpdate.specialties = specialties;
+    if (typeEtablissement !== undefined) dataToUpdate.typeEtablissement = typeEtablissement;
+
+    // ✅ Champs média : on mappe correctement vers les colonnes Prisma
+    // Priorité aux champs "nouveaux" (avatar/banner), sinon on prend les alias (avatarUrl/bannerUrl)
+    if (avatar !== undefined) dataToUpdate.avatar = avatar;
+    else if (avatarUrl !== undefined) dataToUpdate.avatar = avatarUrl;
+
+    if (banner !== undefined) dataToUpdate.banner = banner;
+    else if (bannerUrl !== undefined) dataToUpdate.banner = bannerUrl;
+
     const updatedProfile = await prisma.profile.update({
       where: { id: parseInt(id, 10) },
-      data: {
-        ...(bio !== undefined && { bio }),
-        ...(profession !== undefined && { profession }),
-        ...(location !== undefined && { location }),
-        ...(radiusKm !== undefined &&
-          !isNaN(parseInt(radiusKm, 10)) && { radiusKm: parseInt(radiusKm, 10) }),
-        ...(latitude !== undefined && { latitude }),
-        ...(longitude !== undefined && { longitude }),
-        ...(country !== undefined && { country }),
-        ...(specialties !== undefined && { specialties }),
-        ...(typeEtablissement !== undefined && { typeEtablissement }),
-        ...(avatarUrl !== undefined && { avatarUrl }),
-        ...(bannerUrl !== undefined && { bannerUrl }),
-      },
+      data: dataToUpdate
     });
 
     console.log('✅ Profil mis à jour avec succès');
     res.json({ profile: updatedProfile });
   } catch (error) {
-    console.error('❌ Erreur mise à jour profil PUT /:id :', error?.message || error);
+    console.error('❌ Erreur mise à jour profil PUT /:id :', error);
     res.status(500).json({ error: 'Erreur serveur' });
   }
 });
