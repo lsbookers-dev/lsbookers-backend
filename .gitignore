@@ -3,3 +3,7 @@ node_modules
 .env
 
 /generated/prisma
+
+# Local assets (do not deploy)
+Photos/
+uploads/
