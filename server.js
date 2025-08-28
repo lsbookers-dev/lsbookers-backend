@@ -2,13 +2,13 @@
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
-require('dotenv').config(); // charge .env (Cloudinary, DB, etc.)
+require('dotenv').config();
 
 // ✅ Importation des routes
 const authRoutes = require('./routes/auth');
 const profileRoutes = require('./routes/profile');
 const mediaRoutes = require('./routes/media');
-const messageRoutes = require('./routes/message');   // <-- assure-toi que le fichier s'appelle bien message.js
+const messageRoutes = require('./routes/message');   // assure-toi que le fichier s'appelle bien message.js
 const followRoutes = require('./routes/follow');
 const feedRoutes = require('./routes/feed');
 const searchRoutes = require('./routes/search');
@@ -24,25 +24,32 @@ const app = express();
 
 // CORS — autorise credentials et origine dynamique (dev + prod)
 const corsOptions = {
-  origin: true,           // reflète l'origine de la requête
+  origin: true,  // reflète l'origine appelante
   credentials: true,
   methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
-  allowedHeaders: ['Authorization','Content-Type'],
+  // 👇 Ajout des en-têtes utilisés par ton front (corrige l’erreur)
+  allowedHeaders: [
+    'Authorization',
+    'Content-Type',
+    'Cache-Control',
+    'Pragma',
+    'Expires',
+  ],
 };
 app.use(cors(corsOptions));
-// Important pour le caching inter-Origine (CDN/proxies)
+// Important pour caches/CDN
 app.use((req, res, next) => { res.header('Vary', 'Origin'); next(); });
-// Gérer explicitement les préflight
+// Préflights
 app.options('*', cors(corsOptions));
 
-// JSON/body parsers avec limites plus larges pour les images encodées
+// Parsers
 app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
 // Logs
 app.use(morgan('dev'));
 
-// ✅ Exposition du dossier "uploads" (si utilisé)
+// Static (si utilisé)
 app.use('/uploads', express.static('uploads'));
 
 /* ===================== Routes API ===================== */
@@ -60,14 +67,9 @@ app.use('/api/events', eventRoutes);
 app.use('/api/upload', uploadRoutes);
 
 /* ===================== Gestion d’erreurs ===================== */
-// Renvoie un JSON propre en cas de 500 (et loggue la stack)
 app.use((err, req, res, next) => {
-  // eslint-disable-next-line no-console
   console.error('Unhandled error:', err);
-  const status = err.status || 500;
-  res.status(status).json({
-    error: err.message || 'Erreur serveur',
-  });
+  res.status(err.status || 500).json({ error: err.message || 'Erreur serveur' });
 });
 
 /* ===================== Démarrage ===================== */
