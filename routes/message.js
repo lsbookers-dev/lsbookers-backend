@@ -1,3 +1,4 @@
+// routes/message.js
 const express = require('express');
 const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
@@ -6,32 +7,39 @@ const authenticateToken = require('../middleware/authenticate');
 const multer = require('multer');
 const path = require('path');
 
-/* ======================= Multer (upload disque) ======================= */
+/* ------------ Multer (upload local si besoin) ------------ */
 const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
+  destination: function (_req, _file, cb) {
     cb(null, 'uploads/');
   },
-  filename: function (req, file, cb) {
+  filename: function (_req, file, cb) {
     const ext = path.extname(file.originalname);
     cb(null, Date.now() + '-' + file.originalname.replace(/\s/g, '_'));
   },
 });
 const upload = multer({ storage });
 
-/* Petite aide : inclure avatar de profil avec l’utilisateur */
-const userWithProfileSelect = {
-  id: true,
-  name: true,
-  email: true,
-  image: true,
-  profile: { select: { avatar: true } },
-};
+/* ------------ Helpers ------------ */
+function pickUserPublic(u) {
+  if (!u) return null;
+  // Ajuste ces champs selon ton schéma User
+  return {
+    id: u.id,
+    name: u.name,
+    role: u.role,
+    image: u.image || null,
+    profile: u.profile ? { avatar: u.profile.avatar || null } : null,
+  };
+}
 
-/* ======================= Conversations (liste) ======================= */
-/** Récupérer toutes les conversations de l'utilisateur connecté */
+/* =========================================================
+   GET /api/messages/conversations
+   ➜ conversations de l’utilisateur connecté
+========================================================= */
 router.get('/conversations', authenticateToken, async (req, res) => {
   try {
-    const userId = req.user.id;
+    const userId = Number(req.user?.id);
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
     const participations = await prisma.conversationParticipant.findMany({
       where: { userId },
@@ -40,7 +48,11 @@ router.get('/conversations', authenticateToken, async (req, res) => {
           include: {
             participants: {
               include: {
-                user: { select: userWithProfileSelect },
+                user: {
+                  include: {
+                    profile: true, // doit contenir avatar
+                  },
+                },
               },
             },
             messages: {
@@ -50,278 +62,262 @@ router.get('/conversations', authenticateToken, async (req, res) => {
           },
         },
       },
-      orderBy: { conversation: { updatedAt: 'desc' } },
     });
 
     const conversations = participations.map((p) => {
       const c = p.conversation;
       return {
         id: c.id,
-        participants: c.participants.map((part) => part.user),
+        participants: c.participants.map((part) => pickUserPublic(part.user)),
         lastMessage: c.messages[0]?.content || '',
         updatedAt: c.updatedAt,
       };
     });
 
-    res.json(conversations);
+    // Optionnel : tri par updatedAt DESC (au cas où)
+    conversations.sort(
+      (a, b) =>
+        new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime()
+    );
+
+    res.json({ conversations });
   } catch (err) {
-    console.error('Erreur lors de la récupération des conversations :', err);
-    res.status(500).json({ error: 'Erreur serveur ❌' });
+    console.error('❌ [GET /conversations] Error:', err);
+    res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 
-/* ======================= Messages d’une conversation ======================= */
-/** Récupérer les messages d'une conversation (sécurisé) */
+/* =========================================================
+   GET /api/messages/messages/:conversationId
+   ➜ messages d’une conversation
+========================================================= */
 router.get('/messages/:conversationId', authenticateToken, async (req, res) => {
-  const { conversationId } = req.params;
-  const convId = parseInt(conversationId, 10);
-
   try {
-    // Sécurité : vérifier que l’utilisateur est participant
-    const participation = await prisma.conversationParticipant.findFirst({
-      where: { conversationId: convId, userId: req.user.id },
+    const userId = Number(req.user?.id);
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const conversationId = Number(req.params.conversationId);
+    if (!conversationId) return res.status(400).json({ error: 'conversationId invalide' });
+
+    // Vérifie que l’utilisateur est bien participant
+    const isParticipant = await prisma.conversationParticipant.findFirst({
+      where: { conversationId, userId },
     });
-    if (!participation) {
-      return res.status(404).json({ error: 'Conversation introuvable ou non autorisée' });
-    }
+    if (!isParticipant) return res.status(403).json({ error: 'Forbidden' });
 
     const messages = await prisma.message.findMany({
-      where: { conversationId: convId },
+      where: { conversationId },
       orderBy: { createdAt: 'asc' },
       include: {
-        sender: { select: userWithProfileSelect },
+        sender: {
+          include: {
+            profile: true, // pour récupérer avatar si tu veux l’exposer ici
+          },
+        },
       },
     });
 
-    // Remap pour coller à ton front (sender { id, name, image })
-    const mapped = messages.map((m) => ({
+    // Normalise la forme attendue par le front (sender.image)
+    const payload = messages.map((m) => ({
       id: String(m.id),
       content: m.content,
       createdAt: m.createdAt,
-      seen: m.seen ?? false,
+      seen: m.seen,
       sender: {
-        id: m.sender?.id,
-        name: m.sender?.name,
-        image: m.sender?.profile?.avatar || m.sender?.image || null,
+        id: m.senderId,
+        name: m.sender?.name || 'Utilisateur',
+        image: (m.sender?.profile?.avatar || m.sender?.image || null),
       },
     }));
 
-    res.json(mapped);
+    res.json(payload);
   } catch (err) {
-    console.error('Erreur lors de la récupération des messages :', err);
-    res.status(500).json({ error: 'Erreur serveur ❌' });
+    console.error('❌ [GET /messages/:conversationId] Error:', err);
+    res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 
-/* ======================= Marquer "VU" ======================= */
-/** Marquer tous les messages reçus comme vus (principal) */
-router.post('/mark-seen/:conversationId', authenticateToken, async (req, res) => {
-  const convId = parseInt(req.params.conversationId, 10);
-  try {
-    // Vérifier participation
-    const participation = await prisma.conversationParticipant.findFirst({
-      where: { conversationId: convId, userId: req.user.id },
-    });
-    if (!participation) {
-      return res.status(404).json({ error: 'Conversation introuvable ou non autorisée' });
-    }
-
-    await prisma.message.updateMany({
-      where: {
-        conversationId: convId,
-        senderId: { not: req.user.id },
-        seen: false,
-      },
-      data: { seen: true },
-    });
-
-    res.status(204).send();
-  } catch (err) {
-    console.error('Erreur mark-seen :', err);
-    res.status(500).json({ error: 'Erreur serveur ❌' });
-  }
-});
-
-/** Fallback ancien endpoint (compat front) */
-router.post('/seen/:conversationId', authenticateToken, async (req, res) => {
-  const convId = parseInt(req.params.conversationId, 10);
-  try {
-    const participation = await prisma.conversationParticipant.findFirst({
-      where: { conversationId: convId, userId: req.user.id },
-    });
-    if (!participation) {
-      return res.status(404).json({ error: 'Conversation introuvable ou non autorisée' });
-    }
-
-    await prisma.message.updateMany({
-      where: {
-        conversationId: convId,
-        senderId: { not: req.user.id },
-        seen: false,
-      },
-      data: { seen: true },
-    });
-
-    res.status(204).send();
-  } catch (err) {
-    console.error('Erreur seen :', err);
-    res.status(500).json({ error: 'Erreur serveur ❌' });
-  }
-});
-
-/* ======================= Envoyer message (anti-doublon) ======================= */
-/** Envoyer un message (création auto de la conversation si besoin) */
+/* =========================================================
+   POST /api/messages/send
+   ➜ créer/rouvrir conversation + envoyer message texte
+========================================================= */
 router.post('/send', authenticateToken, async (req, res) => {
-  const { recipientId, content } = req.body;
-  const senderId = req.user.id;
-
-  if (!recipientId || (!content || String(content).trim() === '')) {
-    return res.status(400).json({ error: 'Destinataire et contenu requis' });
-  }
-
   try {
-    // ✅ Conversation existante = celle qui contient les DEUX participants
-    const existingConversation = await prisma.conversation.findFirst({
+    const senderId = Number(req.user?.id);
+    if (!senderId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { recipientId, content } = req.body;
+    if (!recipientId || (!content || !String(content).trim())) {
+      return res.status(400).json({ error: 'recipientId et content requis' });
+    }
+
+    // Trouve une conv entre ces 2 utilisateurs (peu importe l’ordre)
+    let conversation = await prisma.conversation.findFirst({
       where: {
-        participants: {
-          some: { userId: senderId },
-        },
-        AND: {
-          participants: {
-            some: { userId: Number(recipientId) },
-          },
-        },
+        AND: [
+          { participants: { some: { userId: senderId } } },
+          { participants: { some: { userId: Number(recipientId) } } },
+        ],
       },
-      include: { participants: true },
     });
 
-    const conversation = existingConversation
-      ? existingConversation
-      : await prisma.conversation.create({
-          data: {
-            participants: {
-              create: [{ userId: senderId }, { userId: Number(recipientId) }],
-            },
+    if (!conversation) {
+      conversation = await prisma.conversation.create({
+        data: {
+          participants: {
+            create: [{ userId: senderId }, { userId: Number(recipientId) }],
           },
-        });
+        },
+      });
+    }
 
     const message = await prisma.message.create({
       data: {
         content: String(content),
         senderId,
         conversationId: conversation.id,
-        seen: false,
       },
     });
 
-    // Met à jour l’updatedAt de la conversation
+    // Met à jour updatedAt pour l’ordre des conversations
     await prisma.conversation.update({
       where: { id: conversation.id },
       data: { updatedAt: new Date() },
     });
 
     res.json({
-      id: message.id,
       conversationId: conversation.id,
-      content: message.content,
-      createdAt: message.createdAt,
-    });
-  } catch (err) {
-    console.error("Erreur lors de l'envoi du message :", err);
-    res.status(500).json({ error: 'Erreur serveur ❌' });
-  }
-});
-
-/* ======================= Envoyer message + fichier ======================= */
-router.post('/send-file', authenticateToken, upload.single('file'), async (req, res) => {
-  try {
-    const { content, conversationId } = req.body;
-    const file = req.file;
-
-    if (!conversationId || (!content && !file)) {
-      return res.status(400).json({ error: 'Contenu ou fichier requis' });
-    }
-
-    const convId = parseInt(conversationId, 10);
-
-    // Vérifier participation
-    const participation = await prisma.conversationParticipant.findFirst({
-      where: { conversationId: convId, userId: req.user.id },
-    });
-    if (!participation) {
-      return res.status(404).json({ error: 'Conversation introuvable ou non autorisée' });
-    }
-
-    const cleanFileUrl = file
-      ? `https://lsbookers-backend-production.up.railway.app/uploads/${file.filename}`
-      : null;
-
-    let finalContent = '';
-    if (file && content) finalContent = `${content}\n${cleanFileUrl}`;
-    else if (file) finalContent = `Lien : ${cleanFileUrl}`;
-    else finalContent = content;
-
-    const newMessage = await prisma.message.create({
-      data: {
-        senderId: req.user.id,
-        conversationId: convId,
-        content: finalContent,
-        seen: false,
+      message: {
+        id: message.id,
+        content: message.content,
+        createdAt: message.createdAt,
+        senderId: message.senderId,
       },
     });
-
-    // Touch updatedAt
-    await prisma.conversation.update({
-      where: { id: convId },
-      data: { updatedAt: new Date() },
-    });
-
-    return res.json({
-      id: newMessage.id,
-      content: newMessage.content,
-      senderId: newMessage.senderId,
-      conversationId: newMessage.conversationId,
-      createdAt: newMessage.createdAt,
-      fileUrl: cleanFileUrl,
-    });
   } catch (err) {
-    console.error('Erreur send-file :', err);
+    console.error('❌ [POST /send] Error:', err);
     res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 
-/* ======================= Supprimer conversation ======================= */
-/** Supprime une conversation (hard delete) si l’utilisateur est participant */
-router.delete('/conversations/:id', authenticateToken, async (req, res) => {
-  const convId = parseInt(req.params.id, 10);
-
+/* =========================================================
+   POST /api/messages/send-file
+   ➜ envoyer message avec fichier (content facultatif)
+========================================================= */
+router.post('/send-file', authenticateToken, upload.single('file'), async (req, res) => {
   try {
-    // Vérifier que la conversation existe et que l’utilisateur y participe
-    const conv = await prisma.conversation.findUnique({
-      where: { id: convId },
-      include: {
-        participants: true,
+    const senderId = Number(req.user?.id);
+    if (!senderId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { content, conversationId } = req.body;
+    const file = req.file;
+
+    if (!conversationId || (!content && !file)) {
+      return res.status(400).json({ error: 'conversationId et (content ou file) requis' });
+    }
+
+    // URL publique (adapter selon ton hébergeur)
+    const fileUrl = file
+      ? `https://lsbookers-backend-production.up.railway.app/uploads/${file.filename}`
+      : null;
+
+    let finalContent = '';
+    if (file && content) finalContent = `${content}\n${fileUrl}`;
+    else if (file) finalContent = `Lien : ${fileUrl}`;
+    else finalContent = String(content);
+
+    const message = await prisma.message.create({
+      data: {
+        senderId,
+        conversationId: Number(conversationId),
+        content: finalContent,
       },
     });
 
-    if (!conv) return res.status(404).json({ error: 'Conversation introuvable' });
+    await prisma.conversation.update({
+      where: { id: Number(conversationId) },
+      data: { updatedAt: new Date() },
+    });
 
-    const isParticipant = conv.participants.some((p) => p.userId === req.user.id);
-    if (!isParticipant) {
-      return res.status(403).json({ error: 'Non autorisé' });
-    }
+    return res.json({
+      conversationId: Number(conversationId),
+      message: {
+        id: message.id,
+        content: message.content,
+        createdAt: message.createdAt,
+        senderId: message.senderId,
+      },
+      fileUrl,
+    });
+  } catch (err) {
+    console.error('❌ [POST /send-file] Error:', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
 
-    // Supprimer messages + participations + conversation
+/* =========================================================
+   POST /api/messages/mark-seen/:conversationId
+   ➜ marquer comme vus tous les messages reçus
+========================================================= */
+router.post('/mark-seen/:conversationId', authenticateToken, async (req, res) => {
+  try {
+    const userId = Number(req.user?.id);
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const conversationId = Number(req.params.conversationId);
+    if (!conversationId) return res.status(400).json({ error: 'conversationId invalide' });
+
+    // L’utilisateur doit être participant
+    const isParticipant = await prisma.conversationParticipant.findFirst({
+      where: { conversationId, userId },
+    });
+    if (!isParticipant) return res.status(403).json({ error: 'Forbidden' });
+
+    const result = await prisma.message.updateMany({
+      where: {
+        conversationId,
+        seen: false,
+        // on ne marque pas “vu” ses propres messages
+        NOT: { senderId: userId },
+      },
+      data: { seen: true },
+    });
+
+    res.json({ updated: result.count });
+  } catch (err) {
+    console.error('❌ [POST /mark-seen] Error:', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+/* =========================================================
+   DELETE /api/messages/conversations/:id
+   ➜ supprime la conversation (et messages)
+========================================================= */
+router.delete('/conversations/:id', authenticateToken, async (req, res) => {
+  try {
+    const userId = Number(req.user?.id);
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const conversationId = Number(req.params.id);
+    if (!conversationId) return res.status(400).json({ error: 'conversationId invalide' });
+
+    const isParticipant = await prisma.conversationParticipant.findFirst({
+      where: { conversationId, userId },
+    });
+    if (!isParticipant) return res.status(403).json({ error: 'Forbidden' });
+
+    // Supprime messages + participations + conversation
     await prisma.$transaction([
-      prisma.message.deleteMany({ where: { conversationId: convId } }),
-      prisma.conversationParticipant.deleteMany({ where: { conversationId: convId } }),
-      prisma.conversation.delete({ where: { id: convId } }),
+      prisma.message.deleteMany({ where: { conversationId } }),
+      prisma.conversationParticipant.deleteMany({ where: { conversationId } }),
+      prisma.conversation.delete({ where: { id: conversationId } }),
     ]);
 
-    return res.status(204).send();
+    res.status(204).end();
   } catch (err) {
-    console.error('Erreur suppression conversation :', err);
-    res.status(500).json({ error: 'Erreur serveur ❌' });
+    console.error('❌ [DELETE /conversations/:id] Error:', err);
+    res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 
