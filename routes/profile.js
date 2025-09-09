@@ -13,14 +13,18 @@ const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fet
  * Public : récupérer un profil par userId
  */
 router.get('/user/:userId', async (req, res) => {
-  const { userId } = req.params;
+  const raw = req.params.userId;
+  const userId = Number.parseInt(raw, 10);
+  if (Number.isNaN(userId)) {
+    return res.status(400).json({ error: 'Paramètre userId invalide' });
+  }
 
   try {
     const profile = await prisma.profile.findUnique({
-      where: { userId: parseInt(userId, 10) },
+      where: { userId },
       include: {
-        user: { select: { id: true, name: true, email: true, role: true } }
-      }
+        user: { select: { id: true, name: true, email: true, role: true } },
+      },
     });
 
     if (!profile) return res.status(404).json({ error: 'Profil introuvable' });
@@ -36,17 +40,21 @@ router.get('/user/:userId', async (req, res) => {
  * Public : calendrier d’un artiste (via userId)
  */
 router.get('/calendar/:userId', async (req, res) => {
-  const { userId } = req.params;
+  const raw = req.params.userId;
+  const userId = Number.parseInt(raw, 10);
+  if (Number.isNaN(userId)) {
+    return res.status(400).json({ error: 'Paramètre userId invalide' });
+  }
 
   try {
     const profile = await prisma.profile.findUnique({
-      where: { userId: parseInt(userId, 10) }
+      where: { userId },
     });
     if (!profile) return res.status(404).json({ error: 'Profil introuvable' });
 
     const events = await prisma.event.findMany({
       where: { profileId: profile.id },
-      orderBy: { date: 'asc' }
+      orderBy: { date: 'asc' },
     });
 
     res.json({ events });
@@ -61,14 +69,18 @@ router.get('/calendar/:userId', async (req, res) => {
  * Privé : récupérer un profil par id interne
  */
 router.get('/:id', authenticate, async (req, res) => {
-  const { id } = req.params;
+  const raw = req.params.id;
+  const id = Number.parseInt(raw, 10);
+  if (Number.isNaN(id)) {
+    return res.status(400).json({ error: 'Paramètre id invalide' });
+  }
 
   try {
     const profile = await prisma.profile.findUnique({
-      where: { id: parseInt(id, 10) },
+      where: { id },
       include: {
-        user: { select: { id: true, name: true, email: true, role: true } }
-      }
+        user: { select: { id: true, name: true, email: true, role: true } },
+      },
     });
 
     if (!profile) return res.status(404).json({ error: 'Profil introuvable' });
@@ -85,8 +97,13 @@ router.get('/:id', authenticate, async (req, res) => {
  * NOTE : on accepte avatar/banner ET avatarUrl/bannerUrl (alias).
  */
 router.put('/:id', authenticate, async (req, res) => {
-  const { id } = req.params;
+  const raw = req.params.id;
+  const id = Number.parseInt(raw, 10);
   const userId = req.user.id;
+
+  if (Number.isNaN(id)) {
+    return res.status(400).json({ error: 'Paramètre id invalide' });
+  }
 
   // Champs possibles en entrée
   const {
@@ -111,9 +128,7 @@ router.put('/:id', authenticate, async (req, res) => {
   console.log('🟢 Données reçues PUT /profile/:id', req.body);
 
   try {
-    const profile = await prisma.profile.findUnique({
-      where: { id: parseInt(id, 10) }
-    });
+    const profile = await prisma.profile.findUnique({ where: { id } });
 
     if (!profile || profile.userId !== userId) {
       return res.status(403).json({ error: 'Accès interdit' });
@@ -125,7 +140,9 @@ router.put('/:id', authenticate, async (req, res) => {
 
     // 🌍 Géocodage si "location" fourni
     if (location) {
-      const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(location)}`);
+      const geoRes = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(location)}`
+      );
       const geoData = await geoRes.json();
 
       if (Array.isArray(geoData) && geoData.length > 0) {
@@ -140,7 +157,9 @@ router.put('/:id', authenticate, async (req, res) => {
       latitude = Number(clientLatitude);
       longitude = Number(clientLongitude);
 
-      const revRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=3&addressdetails=1`);
+      const revRes = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=3&addressdetails=1`
+      );
       const revData = await revRes.json();
       country = revData?.address?.country || null;
       console.log('🌐 Pays déterminé par coordonnées :', country);
@@ -152,15 +171,16 @@ router.put('/:id', authenticate, async (req, res) => {
     if (bio !== undefined) dataToUpdate.bio = bio;
     if (profession !== undefined) dataToUpdate.profession = profession;
     if (location !== undefined) dataToUpdate.location = location;
-    if (radiusKm !== undefined && !isNaN(parseInt(radiusKm, 10))) dataToUpdate.radiusKm = parseInt(radiusKm, 10);
+    if (radiusKm !== undefined && !Number.isNaN(Number.parseInt(radiusKm, 10))) {
+      dataToUpdate.radiusKm = Number.parseInt(radiusKm, 10);
+    }
     if (latitude !== undefined) dataToUpdate.latitude = latitude;
     if (longitude !== undefined) dataToUpdate.longitude = longitude;
     if (country !== undefined) dataToUpdate.country = country;
     if (specialties !== undefined) dataToUpdate.specialties = specialties;
     if (typeEtablissement !== undefined) dataToUpdate.typeEtablissement = typeEtablissement;
 
-    // ✅ Champs média : on mappe correctement vers les colonnes Prisma
-    // Priorité aux champs "nouveaux" (avatar/banner), sinon on prend les alias (avatarUrl/bannerUrl)
+    // ✅ Médias (nouveaux champs prioritaires)
     if (avatar !== undefined) dataToUpdate.avatar = avatar;
     else if (avatarUrl !== undefined) dataToUpdate.avatar = avatarUrl;
 
@@ -168,8 +188,8 @@ router.put('/:id', authenticate, async (req, res) => {
     else if (bannerUrl !== undefined) dataToUpdate.banner = bannerUrl;
 
     const updatedProfile = await prisma.profile.update({
-      where: { id: parseInt(id, 10) },
-      data: dataToUpdate
+      where: { id },
+      data: dataToUpdate,
     });
 
     console.log('✅ Profil mis à jour avec succès');
