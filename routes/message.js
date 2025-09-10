@@ -22,7 +22,6 @@ const upload = multer({ storage });
 /* ------------ Helpers ------------ */
 function pickUserPublic(u) {
   if (!u) return null;
-  // Ajuste ces champs selon ton schéma User
   return {
     id: u.id,
     name: u.name,
@@ -31,10 +30,25 @@ function pickUserPublic(u) {
     profile: u.profile ? { avatar: u.profile.avatar || null } : null,
   };
 }
+const isAdminUser = (u) => !!u && String(u.role).toUpperCase() === 'ADMIN';
+
+/* Petite utilitaire : vérifie si une conversation implique un ADMIN */
+async function conversationHasAdmin(conversationId) {
+  const conv = await prisma.conversation.findUnique({
+    where: { id: Number(conversationId) },
+    include: {
+      participants: {
+        include: { user: true },
+      },
+    },
+  });
+  if (!conv) return false;
+  return conv.participants.some((p) => isAdminUser(p.user));
+}
 
 /* =========================================================
    GET /api/messages/conversations
-   ➜ conversations de l’utilisateur connecté
+   ➜ conversations de l’utilisateur connecté (ADMIN invisible)
 ========================================================= */
 router.get('/conversations', authenticateToken, async (req, res) => {
   try {
@@ -49,9 +63,7 @@ router.get('/conversations', authenticateToken, async (req, res) => {
             participants: {
               include: {
                 user: {
-                  include: {
-                    profile: true, // doit contenir avatar
-                  },
+                  include: { profile: true },
                 },
               },
             },
@@ -64,17 +76,20 @@ router.get('/conversations', authenticateToken, async (req, res) => {
       },
     });
 
-    const conversations = participations.map((p) => {
-      const c = p.conversation;
-      return {
-        id: c.id,
-        participants: c.participants.map((part) => pickUserPublic(part.user)),
-        lastMessage: c.messages[0]?.content || '',
-        updatedAt: c.updatedAt,
-      };
-    });
+    // Normalisation + filtre ADMIN
+    const conversations = participations
+      .map((p) => {
+        const c = p.conversation;
+        return {
+          id: c.id,
+          participants: c.participants.map((part) => pickUserPublic(part.user)),
+          lastMessage: c.messages[0]?.content || '',
+          updatedAt: c.updatedAt,
+        };
+      })
+      // Exclusion TOTALE si un ADMIN participe
+      .filter((c) => c.participants.every((u) => !isAdminUser(u)));
 
-    // Optionnel : tri par updatedAt DESC (au cas où)
     conversations.sort(
       (a, b) =>
         new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime()
@@ -89,7 +104,7 @@ router.get('/conversations', authenticateToken, async (req, res) => {
 
 /* =========================================================
    GET /api/messages/messages/:conversationId
-   ➜ messages d’une conversation
+   ➜ messages d’une conversation (refus si ADMIN impliqué)
 ========================================================= */
 router.get('/messages/:conversationId', authenticateToken, async (req, res) => {
   try {
@@ -100,24 +115,32 @@ router.get('/messages/:conversationId', authenticateToken, async (req, res) => {
     if (!conversationId) return res.status(400).json({ error: 'conversationId invalide' });
 
     // Vérifie que l’utilisateur est bien participant
-    const isParticipant = await prisma.conversationParticipant.findFirst({
+    const participation = await prisma.conversationParticipant.findFirst({
       where: { conversationId, userId },
+      include: {
+        conversation: {
+          include: {
+            participants: { include: { user: true } },
+          },
+        },
+      },
     });
-    if (!isParticipant) return res.status(403).json({ error: 'Forbidden' });
+    if (!participation) return res.status(403).json({ error: 'Forbidden' });
+
+    // ADMIN invisible : si un admin est dans la conversation, on refuse
+    const hasAdmin = participation.conversation.participants.some((p) => isAdminUser(p.user));
+    if (hasAdmin) {
+      return res.status(404).json({ error: 'Conversation introuvable' });
+    }
 
     const messages = await prisma.message.findMany({
       where: { conversationId },
       orderBy: { createdAt: 'asc' },
       include: {
-        sender: {
-          include: {
-            profile: true, // pour récupérer avatar si tu veux l’exposer ici
-          },
-        },
+        sender: { include: { profile: true } },
       },
     });
 
-    // Normalise la forme attendue par le front (sender.image)
     const payload = messages.map((m) => ({
       id: String(m.id),
       content: m.content,
@@ -126,7 +149,7 @@ router.get('/messages/:conversationId', authenticateToken, async (req, res) => {
       sender: {
         id: m.senderId,
         name: m.sender?.name || 'Utilisateur',
-        image: (m.sender?.profile?.avatar || m.sender?.image || null),
+        image: m.sender?.profile?.avatar || m.sender?.image || null,
       },
     }));
 
@@ -140,6 +163,7 @@ router.get('/messages/:conversationId', authenticateToken, async (req, res) => {
 /* =========================================================
    POST /api/messages/send
    ➜ créer/rouvrir conversation + envoyer message texte
+   (refus si le destinataire est ADMIN)
 ========================================================= */
 router.post('/send', authenticateToken, async (req, res) => {
   try {
@@ -151,7 +175,17 @@ router.post('/send', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'recipientId et content requis' });
     }
 
-    // Trouve une conv entre ces 2 utilisateurs (peu importe l’ordre)
+    // Refus si le destinataire est ADMIN (invisible)
+    const recipient = await prisma.user.findUnique({
+      where: { id: Number(recipientId) },
+      select: { id: true, role: true },
+    });
+    if (!recipient) return res.status(404).json({ error: 'Destinataire introuvable' });
+    if (isAdminUser(recipient)) {
+      return res.status(403).json({ error: 'Action non autorisée' });
+    }
+
+    // Trouve/Crée une conv entre ces 2 utilisateurs
     let conversation = await prisma.conversation.findFirst({
       where: {
         AND: [
@@ -159,16 +193,31 @@ router.post('/send', authenticateToken, async (req, res) => {
           { participants: { some: { userId: Number(recipientId) } } },
         ],
       },
+      include: { participants: { include: { user: true } } },
     });
 
-    if (!conversation) {
+    if (conversation) {
+      // Si la conv existante contient un ADMIN (sécurité), refuse
+      const hasAdmin = conversation.participants.some((p) => isAdminUser(p.user));
+      if (hasAdmin) {
+        return res.status(403).json({ error: 'Action non autorisée' });
+      }
+    } else {
       conversation = await prisma.conversation.create({
         data: {
           participants: {
             create: [{ userId: senderId }, { userId: Number(recipientId) }],
           },
         },
+        include: { participants: { include: { user: true } } },
       });
+      // Sécurité (au cas où) : si création a mis un admin, refuse
+      const hasAdmin = conversation.participants.some((p) => isAdminUser(p.user));
+      if (hasAdmin) {
+        // rollback : supprime la conversation créée
+        await prisma.conversation.delete({ where: { id: conversation.id } });
+        return res.status(403).json({ error: 'Action non autorisée' });
+      }
     }
 
     const message = await prisma.message.create({
@@ -179,7 +228,6 @@ router.post('/send', authenticateToken, async (req, res) => {
       },
     });
 
-    // Met à jour updatedAt pour l’ordre des conversations
     await prisma.conversation.update({
       where: { id: conversation.id },
       data: { updatedAt: new Date() },
@@ -203,6 +251,7 @@ router.post('/send', authenticateToken, async (req, res) => {
 /* =========================================================
    POST /api/messages/send-file
    ➜ envoyer message avec fichier (content facultatif)
+   (refus si la conversation implique un ADMIN)
 ========================================================= */
 router.post('/send-file', authenticateToken, upload.single('file'), async (req, res) => {
   try {
@@ -214,6 +263,11 @@ router.post('/send-file', authenticateToken, upload.single('file'), async (req, 
 
     if (!conversationId || (!content && !file)) {
       return res.status(400).json({ error: 'conversationId et (content ou file) requis' });
+    }
+
+    // ADMIN invisible : refuse si conv contient ADMIN
+    if (await conversationHasAdmin(conversationId)) {
+      return res.status(403).json({ error: 'Action non autorisée' });
     }
 
     // URL publique (adapter selon ton hébergeur)
@@ -258,6 +312,7 @@ router.post('/send-file', authenticateToken, upload.single('file'), async (req, 
 /* =========================================================
    POST /api/messages/mark-seen/:conversationId
    ➜ marquer comme vus tous les messages reçus
+   (refus si la conversation implique un ADMIN)
 ========================================================= */
 router.post('/mark-seen/:conversationId', authenticateToken, async (req, res) => {
   try {
@@ -267,17 +322,19 @@ router.post('/mark-seen/:conversationId', authenticateToken, async (req, res) =>
     const conversationId = Number(req.params.conversationId);
     if (!conversationId) return res.status(400).json({ error: 'conversationId invalide' });
 
-    // L’utilisateur doit être participant
     const isParticipant = await prisma.conversationParticipant.findFirst({
       where: { conversationId, userId },
     });
     if (!isParticipant) return res.status(403).json({ error: 'Forbidden' });
 
+    if (await conversationHasAdmin(conversationId)) {
+      return res.status(404).json({ error: 'Conversation introuvable' });
+    }
+
     const result = await prisma.message.updateMany({
       where: {
         conversationId,
         seen: false,
-        // on ne marque pas “vu” ses propres messages
         NOT: { senderId: userId },
       },
       data: { seen: true },
@@ -293,6 +350,7 @@ router.post('/mark-seen/:conversationId', authenticateToken, async (req, res) =>
 /* =========================================================
    DELETE /api/messages/conversations/:id
    ➜ supprime la conversation (et messages)
+   (refus si la conversation implique un ADMIN)
 ========================================================= */
 router.delete('/conversations/:id', authenticateToken, async (req, res) => {
   try {
@@ -304,10 +362,22 @@ router.delete('/conversations/:id', authenticateToken, async (req, res) => {
 
     const isParticipant = await prisma.conversationParticipant.findFirst({
       where: { conversationId, userId },
+      include: {
+        conversation: {
+          include: {
+            participants: { include: { user: true } },
+          },
+        },
+      },
     });
     if (!isParticipant) return res.status(403).json({ error: 'Forbidden' });
 
-    // Supprime messages + participations + conversation
+    const hasAdmin = isParticipant.conversation.participants.some((p) => isAdminUser(p.user));
+    if (hasAdmin) {
+      // On fait comme si la conversation n’existait pas
+      return res.status(404).json({ error: 'Conversation introuvable' });
+    }
+
     await prisma.$transaction([
       prisma.message.deleteMany({ where: { conversationId } }),
       prisma.conversationParticipant.deleteMany({ where: { conversationId } }),

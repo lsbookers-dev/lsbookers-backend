@@ -1,13 +1,14 @@
+// routes/search.js
 const express = require('express')
 const router = express.Router()
 const { PrismaClient } = require('@prisma/client')
 const prisma = new PrismaClient()
 const authenticate = require('../middleware/authenticate')
 
-// ✅ Correctif : fetch compatible CommonJS
+// ✅ fetch compatible CommonJS
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args))
 
-// ✅ Fonction utilitaire : Haversine
+// ✅ Haversine util
 function getDistance(lat1, lon1, lat2, lon2) {
   const R = 6371
   const dLat = (lat2 - lat1) * Math.PI / 180
@@ -20,24 +21,33 @@ function getDistance(lat1, lon1, lat2, lon2) {
   return R * c
 }
 
-// ✅ Route principale de recherche
+/**
+ * GET /api/search
+ * Auth requis. Recherche d’utilisateurs avec filtres (nom, rôle, spécialité, type, zone, rayon, pays).
+ * 🔒 L’utilisateur ADMIN est toujours exclu des résultats.
+ */
 router.get('/', authenticate, async (req, res) => {
   const { name, role, specialty, typeEtablissement, zone, radius, country } = req.query
 
   let lat = null
   let lon = null
-  let effectiveRadius = radius ? parseFloat(radius) : 50
+  const effectiveRadius = radius ? parseFloat(radius) : 50
   let resolvedCountry = country || null
 
   try {
-    // 🌍 Géocodage si zone présente
+    // ⛔ Si on essaie de filtrer explicitement sur ADMIN, on renvoie vide
+    if (String(role).toUpperCase() === 'ADMIN') {
+      return res.json({ users: [] })
+    }
+
+    // 🌍 Géocodage si zone fournie
     if (zone) {
       const geoRes = await fetch(
         `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(zone)}`
       )
       const geoData = await geoRes.json()
 
-      if (geoData.length > 0) {
+      if (Array.isArray(geoData) && geoData.length > 0) {
         lat = parseFloat(geoData[0].lat)
         lon = parseFloat(geoData[0].lon)
         if (!resolvedCountry) {
@@ -48,63 +58,61 @@ router.get('/', authenticate, async (req, res) => {
       }
     }
 
-    // 🔍 Recherche générale
+    // 🔍 Recherche Prisma — ADMIN exclu par défaut
     const users = await prisma.user.findMany({
       where: {
+        // Exclure l'admin dans tous les cas
+        role: { not: 'ADMIN' },
+
         ...(name && {
           name: {
             contains: name,
-            mode: 'insensitive'
-          }
+            mode: 'insensitive',
+          },
         }),
-        ...(role && { role }),
+
+        // si role est précisé (et ≠ ADMIN), on filtre dessus
+        ...(role && String(role).toUpperCase() !== 'ADMIN' && { role: String(role).toUpperCase() }),
+
         profile: {
           ...(specialty && {
-            specialties: {
-              has: specialty
-            }
+            specialties: { has: specialty },
           }),
           ...(typeEtablissement && {
-            typeEtablissement: {
-              equals: typeEtablissement
-            }
+            typeEtablissement: { equals: typeEtablissement },
           }),
           ...(resolvedCountry && {
-            country: {
-              equals: resolvedCountry
-            }
-          })
-        }
+            country: { equals: resolvedCountry },
+          }),
+        },
       },
       include: {
-        profile: true
+        profile: true,
       },
-      orderBy: {
-        name: 'asc'
-      }
+      orderBy: { name: 'asc' },
     })
 
+    // 📏 Filtre “zone & rayon” (Haversine) si coordonnées connues
     let finalUsers = users
-
-    if (lat && lon && effectiveRadius) {
-      finalUsers = users.filter(user => {
+    if (lat != null && lon != null && !Number.isNaN(effectiveRadius)) {
+      finalUsers = users.filter((user) => {
         const p = user.profile
         if (!p?.latitude || !p?.longitude) return false
 
         const distance = getDistance(lat, lon, p.latitude, p.longitude)
 
+        // ARTIST : respecter aussi son rayon perso s’il existe
         if (user.role === 'ARTIST' && p.radiusKm) {
           return distance <= effectiveRadius && distance <= p.radiusKm
         }
-
         return distance <= effectiveRadius
       })
     }
 
-    res.json({ users: finalUsers })
+    return res.json({ users: finalUsers })
   } catch (err) {
     console.error('❌ Erreur lors de la recherche :', err)
-    res.status(500).json({ error: 'Erreur serveur lors de la recherche' })
+    return res.status(500).json({ error: 'Erreur serveur lors de la recherche' })
   }
 })
 

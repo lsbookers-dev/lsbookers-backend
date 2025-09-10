@@ -8,9 +8,12 @@ const authenticate = require('../middleware/authenticate');
 // Import fetch (CommonJS compatible)
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
+const isAdminRole = (role) => String(role || '').toUpperCase() === 'ADMIN';
+
 /**
  * GET /api/profile/user/:userId
  * Public : récupérer un profil par userId
+ * 👉 Invisibilité ADMIN : si le profil appartient à un ADMIN, on renvoie 404
  */
 router.get('/user/:userId', async (req, res) => {
   const raw = req.params.userId;
@@ -27,7 +30,11 @@ router.get('/user/:userId', async (req, res) => {
       },
     });
 
-    if (!profile) return res.status(404).json({ error: 'Profil introuvable' });
+    if (!profile || isAdminRole(profile?.user?.role)) {
+      // ADMIN invisible sur les pages publiques
+      return res.status(404).json({ error: 'Profil introuvable' });
+    }
+
     res.json({ profile });
   } catch (error) {
     console.error('❌ Erreur récupération profil public /user/:userId :', error);
@@ -38,6 +45,7 @@ router.get('/user/:userId', async (req, res) => {
 /**
  * GET /api/profile/calendar/:userId
  * Public : calendrier d’un artiste (via userId)
+ * 👉 Invisibilité ADMIN : 404 si le profil est ADMIN
  */
 router.get('/calendar/:userId', async (req, res) => {
   const raw = req.params.userId;
@@ -47,10 +55,16 @@ router.get('/calendar/:userId', async (req, res) => {
   }
 
   try {
+    // On inclut l'user pour tester le rôle
     const profile = await prisma.profile.findUnique({
       where: { userId },
+      include: {
+        user: { select: { id: true, role: true } },
+      },
     });
-    if (!profile) return res.status(404).json({ error: 'Profil introuvable' });
+    if (!profile || isAdminRole(profile?.user?.role)) {
+      return res.status(404).json({ error: 'Profil introuvable' });
+    }
 
     const events = await prisma.event.findMany({
       where: { profileId: profile.id },
@@ -67,6 +81,7 @@ router.get('/calendar/:userId', async (req, res) => {
 /**
  * GET /api/profile/:id
  * Privé : récupérer un profil par id interne
+ * 👉 Invisibilité ADMIN sur privé aussi si l’appelant n’est pas ADMIN
  */
 router.get('/:id', authenticate, async (req, res) => {
   const raw = req.params.id;
@@ -83,7 +98,16 @@ router.get('/:id', authenticate, async (req, res) => {
       },
     });
 
-    if (!profile) return res.status(404).json({ error: 'Profil introuvable' });
+    if (!profile) {
+      return res.status(404).json({ error: 'Profil introuvable' });
+    }
+
+    // Si le profil appartient à un ADMIN et que l’appelant n’est pas ADMIN → 404 (invisible)
+    const callerRole = String(req.user?.role || '').toUpperCase();
+    if (isAdminRole(profile.user?.role) && callerRole !== 'ADMIN') {
+      return res.status(404).json({ error: 'Profil introuvable' });
+    }
+
     res.json({ profile });
   } catch (error) {
     console.error('❌ Erreur récupération profil sécurisé /:id :', error);
@@ -128,7 +152,10 @@ router.put('/:id', authenticate, async (req, res) => {
   console.log('🟢 Données reçues PUT /profile/:id', req.body);
 
   try {
-    const profile = await prisma.profile.findUnique({ where: { id } });
+    const profile = await prisma.profile.findUnique({
+      where: { id },
+      include: { user: { select: { role: true, id: true } } },
+    });
 
     if (!profile || profile.userId !== userId) {
       return res.status(403).json({ error: 'Accès interdit' });
