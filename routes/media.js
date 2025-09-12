@@ -1,89 +1,120 @@
+// routes/media.js
 const express = require('express');
 const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const authenticate = require('../middleware/authenticate');
 
-// ✅ Ajouter un média (photo ou vidéo)
-router.post('/', authenticate, async (req, res) => {
-  const { url, type, isPromoted } = req.body;
-  const userId = req.user.id;
+/**
+ * MODELE PRISMA ATTENDU (à titre indicatif) :
+ * model Media {
+ *   id         Int      @id @default(autoincrement())
+ *   userId     Int
+ *   title      String
+ *   url        String
+ *   caption    String?   // optionnel
+ *   createdAt  DateTime  @default(now())
+ *   user       User      @relation(fields: [userId], references: [id])
+ *   // (optionnel) profileId Int?
+ * }
+ */
+
+/* ============================================
+ * GET /api/media/user/:userId
+ * Liste publique des publications d'un utilisateur
+ * ============================================ */
+router.get('/user/:userId', async (req, res) => {
+  const userId = Number.parseInt(req.params.userId, 10);
+  if (Number.isNaN(userId)) {
+    return res.status(400).json({ error: 'userId invalide' });
+  }
 
   try {
-    // 🔍 On récupère le profil lié à l'utilisateur
-    const profile = await prisma.profile.findUnique({
-      where: { userId }
+    const items = await prisma.media.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, title: true, url: true, caption: true, createdAt: true },
     });
 
-    if (!profile) {
-      return res.status(404).json({ error: 'Profil introuvable' });
+    // Normalisation simple pour le front (image=url)
+    const publications = items.map((m) => ({
+      id: m.id,
+      title: m.title,
+      image: m.url,
+      caption: m.caption || null,
+      createdAt: m.createdAt,
+    }));
+
+    return res.json({ publications });
+  } catch (err) {
+    console.error('❌ /media/user/:userId', err);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+/* ============================================
+ * POST /api/media
+ * Créer une publication (auth requise)
+ * Body: { title: string, url: string, caption?: string }
+ * ============================================ */
+router.post('/', authenticate, async (req, res) => {
+  try {
+    const userId = Number(req.user?.id);
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { title, url, caption } = req.body;
+    if (!title || !String(title).trim()) {
+      return res.status(400).json({ error: 'title requis' });
+    }
+    if (!url || !String(url).trim()) {
+      return res.status(400).json({ error: 'url requis' });
     }
 
-    const media = await prisma.media.create({
+    const created = await prisma.media.create({
       data: {
-        url,
-        type,
-        isPromoted: isPromoted === true,
         userId,
-        profileId: profile.id  // ✅ association au profil
-      }
+        title: String(title),
+        url: String(url),
+        caption: caption ? String(caption) : null,
+      },
+      select: { id: true, title: true, url: true, caption: true, createdAt: true },
     });
 
-    res.json({ message: 'Média ajouté ✅', media });
-  } catch (error) {
-    console.error('Erreur lors de l’ajout du média :', error);
-    res.status(500).json({ error: 'Erreur serveur ❌' });
-  }
-});
-
-// ✅ Récupérer tous les médias de l’utilisateur connecté
-router.get('/my', authenticate, async (req, res) => {
-  const userId = req.user.id;
-
-  try {
-    const media = await prisma.media.findMany({
-      where: { userId },
-      orderBy: { createdAt: 'desc' }
+    return res.json({
+      publication: {
+        id: created.id,
+        title: created.title,
+        image: created.url,
+        caption: created.caption,
+        createdAt: created.createdAt,
+      },
     });
-
-    res.json({ media });
-  } catch (error) {
-    console.error('Erreur lors de la récupération des médias :', error);
-    res.status(500).json({ error: 'Erreur serveur ❌' });
-  }
-});
-
-// ✅ Récupérer tous les médias publics d’un utilisateur via userId
-router.get('/user/:userId', async (req, res) => {
-  const { userId } = req.params;
-
-  try {
-    const media = await prisma.media.findMany({
-      where: { userId: parseInt(userId) },
-      orderBy: { createdAt: 'desc' }
-    });
-
-    res.json({ media });
   } catch (err) {
-    console.error('Erreur lors de la récupération des médias publics :', err);
-    res.status(500).json({ error: 'Erreur serveur' });
+    console.error('❌ POST /media', err);
+    return res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 
-// ✅ Récupérer tous les médias liés à un profil (optionnel)
-router.get('/profile/:profileId', async (req, res) => {
-  const { profileId } = req.params;
-
+/* ============================================
+ * DELETE /api/media/:id
+ * Supprimer une publication (propriétaire uniquement)
+ * ============================================ */
+router.delete('/:id', authenticate, async (req, res) => {
   try {
-    const media = await prisma.media.findMany({
-      where: { profileId: parseInt(profileId) },
-      orderBy: { createdAt: 'desc' }
-    });
+    const userId = Number(req.user?.id);
+    const id = Number.parseInt(req.params.id, 10);
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'id invalide' });
 
-    res.json({ media });
+    const media = await prisma.media.findUnique({ where: { id } });
+    if (!media) return res.status(404).json({ error: 'Publication introuvable' });
+    if (media.userId !== userId) return res.status(403).json({ error: 'Forbidden' });
+
+    await prisma.media.delete({ where: { id } });
+    return res.status(204).end();
   } catch (err) {
-    console.error('Erreur récupération médias par profil :', err);
-    res.status(500).json({ error: 'Erreur serveur' });
+    console.error('❌ DELETE /media/:id', err);
+    return res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 
