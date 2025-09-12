@@ -5,7 +5,7 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const authenticate = require('../middleware/authenticate');
 
-// ---- helper: require ADMIN ----
+/** Vérifie le rôle ADMIN sur les routes protégées */
 function requireAdmin(req, res, next) {
   if (!req.user || req.user.role !== 'ADMIN') {
     return res.status(403).json({ error: 'Accès réservé aux administrateurs' });
@@ -14,136 +14,150 @@ function requireAdmin(req, res, next) {
 }
 
 /* =========================================================
- *  STATS — SUMMARY
+ *  STATS — Récapitulatif
  *  GET /api/admin/stats/summary
  * =======================================================*/
-router.get('/stats/summary', authenticate, requireAdmin, async (req, res) => {
+router.get('/stats/summary', authenticate, requireAdmin, async (_req, res) => {
   try {
-    // Comptes utilisateurs (sans ADMIN pour les métriques publiques)
+    // Comptes par rôle (sans ADMIN dans le total “public”)
     const usersTotal = await prisma.user.count({ where: { role: { not: 'ADMIN' } } });
-    const artists     = await prisma.user.count({ where: { role: 'ARTIST' } });
-    const organizers  = await prisma.user.count({ where: { role: 'ORGANIZER' } });
-    const providers   = await prisma.user.count({ where: { role: 'PROVIDER' } });
+    const artists = await prisma.user.count({ where: { role: 'ARTIST' } });
+    const organizers = await prisma.user.count({ where: { role: 'ORGANIZER' } });
+    const providers = await prisma.user.count({ where: { role: 'PROVIDER' } });
 
-    // Abonnés payants (si table Subscription existe, sinon 0)
+    // Valeurs par défaut (si tables d’abonnement/paiement n’existent pas)
     let payingUsers = 0;
-    try {
-      payingUsers = await prisma.subscription.count({ where: { status: 'ACTIVE' } });
-    } catch { /* table absente → 0 */ }
+    let conversations = 0;
+    let messages = 0;
+    let mrrCents = 0;
+    let revenueMonthCents = 0;
+    let revenueOffersCents = 0;
 
-    // Conversations / messages (si tables existent)
-    let conversations = 0, messages = 0;
+    // Conversations / messages
     try {
       conversations = await prisma.conversation.count();
       messages = await prisma.message.count();
-    } catch { /* ignore */ }
+    } catch {
+      // tables absentes : on ignore
+    }
 
-    // Revenus (si tables Payment/Subscription existent)
-    let mrrCents = 0, revenueMonthCents = 0, revenueOffersCents = 0;
-    const now = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    // Abonnements / paiements
     try {
-      // Exemple simple : addition des payments du mois
-      const payments = await prisma.payment.findMany({
-        where: { createdAt: { gte: monthStart } },
-        select: { amountCents: true, kind: true } // kind: 'SUBSCRIPTION' | 'OFFER'
-      });
-      revenueMonthCents = payments.reduce((sum, p) => sum + (p.amountCents || 0), 0);
-      revenueOffersCents = payments
-        .filter(p => p.kind === 'OFFER')
-        .reduce((sum, p) => sum + (p.amountCents || 0), 0);
+      const now = new Date();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
-      // MRR (exemple : somme des subscriptions actives)
+      // Souscriptions actives (pour MRR & nombre d'abonnés)
       const activeSubs = await prisma.subscription.findMany({
         where: { status: 'ACTIVE' },
-        select: { priceCents: true }
+        select: { priceCents: true },
       });
+      payingUsers = activeSubs.length;
       mrrCents = activeSubs.reduce((sum, s) => sum + (s.priceCents || 0), 0);
-    } catch { /* tables absentes */ }
 
-    // Logins & signups du jour (si table LoginEvent existe, sinon 0)
-    let loginsToday = 0, signupsToday = 0;
-    try {
-      const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      loginsToday = await prisma.loginEvent.count({ where: { createdAt: { gte: dayStart } } });
-      signupsToday = await prisma.user.count({ where: { createdAt: { gte: dayStart }, role: { not: 'ADMIN' } } });
-    } catch { /* ignore */ }
+      // Paiements du mois (si table Payment existe)
+      const payments = await prisma.payment.findMany({
+        where: { createdAt: { gte: monthStart } },
+        select: { amountCents: true, kind: true },
+      });
+
+      revenueMonthCents = payments.reduce((sum, p) => sum + (p.amountCents || 0), 0);
+      revenueOffersCents = payments
+        .filter((p) => p.kind === 'OFFER')
+        .reduce((sum, p) => sum + (p.amountCents || 0), 0);
+    } catch {
+      // tables absentes : on ignore
+    }
 
     return res.json({
       summary: {
-        usersTotal, artists, organizers, providers,
+        usersTotal,
+        artists,
+        organizers,
+        providers,
         payingUsers,
-        conversations, messages,
-        mrrCents, revenueMonthCents, revenueOffersCents,
-        loginsToday, signupsToday,
-      }
+        conversations,
+        messages,
+        mrrCents,
+        revenueMonthCents,
+        revenueOffersCents,
+      },
     });
   } catch (err) {
+    // eslint-disable-next-line no-console
     console.error('❌ /stats/summary', err);
     return res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 
 /* =========================================================
- *  STATS — SERIES (30 jours par défaut)
+ *  STATS — Séries (par jour)
  *  GET /api/admin/stats/series?days=30
- *  retourne [{ date, users, revenueCents, logins }]
+ *  → { series: [{ date, users, revenueCents, logins }] }
  * =======================================================*/
 router.get('/stats/series', authenticate, requireAdmin, async (req, res) => {
-  const days = Math.min(90, Math.max(1, parseInt(req.query.days, 10) || 30));
+  const daysParam = parseInt(String(req.query.days || ''), 10);
+  const days = Number.isFinite(daysParam) ? Math.min(90, Math.max(1, daysParam)) : 30;
+
   try {
     const today = new Date();
     const start = new Date(today);
     start.setDate(today.getDate() - (days - 1));
     start.setHours(0, 0, 0, 0);
 
+    /** Index par date */
     const byDate = {};
-    for (let i = 0; i < days; i++) {
+    for (let i = 0; i < days; i += 1) {
       const d = new Date(start);
       d.setDate(start.getDate() + i);
-      const key = d.toISOString().slice(0,10);
+      const key = d.toISOString().slice(0, 10);
       byDate[key] = { date: key, users: 0, revenueCents: 0, logins: 0 };
     }
 
-    // Nouveaux users/jour (sans ADMIN)
+    // Nouveaux utilisateurs / jour (sans ADMIN)
     try {
       const users = await prisma.user.findMany({
         where: { createdAt: { gte: start }, role: { not: 'ADMIN' } },
-        select: { createdAt: true }
+        select: { createdAt: true },
       });
-      users.forEach(u => {
-        const key = u.createdAt.toISOString().slice(0,10);
+      users.forEach((u) => {
+        const key = u.createdAt.toISOString().slice(0, 10);
         if (byDate[key]) byDate[key].users += 1;
       });
-    } catch {}
+    } catch {
+      // ignore
+    }
 
-    // Revenus/jour (si table Payment existe)
+    // Revenus / jour
     try {
       const pays = await prisma.payment.findMany({
         where: { createdAt: { gte: start } },
-        select: { createdAt: true, amountCents: true }
+        select: { createdAt: true, amountCents: true },
       });
-      pays.forEach(p => {
-        const key = p.createdAt.toISOString().slice(0,10);
-        if (byDate[key]) byDate[key].revenueCents += (p.amountCents || 0);
+      pays.forEach((p) => {
+        const key = p.createdAt.toISOString().slice(0, 10);
+        if (byDate[key]) byDate[key].revenueCents += p.amountCents || 0;
       });
-    } catch {}
+    } catch {
+      // ignore
+    }
 
-    // Logins/jour (si table LoginEvent existe)
+    // Connexions / jour (si table loginEvent)
     try {
       const logs = await prisma.loginEvent.findMany({
         where: { createdAt: { gte: start } },
-        select: { createdAt: true }
+        select: { createdAt: true },
       });
-      logs.forEach(l => {
-        const key = l.createdAt.toISOString().slice(0,10);
+      logs.forEach((l) => {
+        const key = l.createdAt.toISOString().slice(0, 10);
         if (byDate[key]) byDate[key].logins += 1;
       });
-    } catch {}
+    } catch {
+      // ignore
+    }
 
-    const series = Object.values(byDate);
-    return res.json({ series });
+    return res.json({ series: Object.values(byDate) });
   } catch (err) {
+    // eslint-disable-next-line no-console
     console.error('❌ /stats/series', err);
     return res.status(500).json({ error: 'Erreur serveur' });
   }
@@ -155,18 +169,22 @@ router.get('/stats/series', authenticate, requireAdmin, async (req, res) => {
  * =======================================================*/
 router.get('/users', authenticate, requireAdmin, async (req, res) => {
   try {
-    const q = (req.query.q || '').toString().trim();
-    const limit = Math.min(100, parseInt(req.query.limit, 10) || 50);
-    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+    const qRaw = (req.query.q || '').toString().trim();
+    const limRaw = parseInt(String(req.query.limit || ''), 10);
+    const offRaw = parseInt(String(req.query.offset || ''), 10);
+    const limit = Number.isFinite(limRaw) ? Math.min(100, Math.max(1, limRaw)) : 50;
+    const offset = Number.isFinite(offRaw) ? Math.max(0, offRaw) : 0;
 
     const where = {
       role: { not: 'ADMIN' },
-      ...(q ? {
-        OR: [
-          { name: { contains: q, mode: 'insensitive' } },
-          { email: { contains: q, mode: 'insensitive' } },
-        ]
-      } : {})
+      ...(qRaw
+        ? {
+            OR: [
+              { name: { contains: qRaw, mode: 'insensitive' } },
+              { email: { contains: qRaw, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
     };
 
     const [total, users] = await Promise.all([
@@ -177,48 +195,60 @@ router.get('/users', authenticate, requireAdmin, async (req, res) => {
         skip: offset,
         take: limit,
         select: {
-          id: true, name: true, email: true, role: true, createdAt: true,
+          id: true,
+          name: true,
+          email: true,
+          role: true,
+          createdAt: true,
           profile: { select: { id: true, avatar: true, banner: true } },
-          // si tu as un lien subscription
-          subscription: { select: { status: true, planId: true } }
+          // Si ta DB possède ces relations, elles seront renvoyées ;
+          // sinon simplement ignorées côté code appelant.
+          subscription: { select: { status: true, planId: true } },
         },
       }),
     ]);
 
     return res.json({ total, users });
   } catch (err) {
+    // eslint-disable-next-line no-console
     console.error('❌ /admin/users', err);
     return res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 
 /* =========================================================
- *  USERS — suspendre / supprimer (exemples)
+ *  USERS — suspendre / supprimer
+ *  (⚠️ nécessite un champ "suspended" bool dans le modèle User)
  * =======================================================*/
 router.patch('/users/:id/suspend', authenticate, requireAdmin, async (req, res) => {
-  const id = parseInt(req.params.id, 10);
+  const id = parseInt(String(req.params.id || ''), 10);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'ID invalide' });
+
   try {
-    // nécessite un champ "suspended" bool sur User
     const user = await prisma.user.update({
       where: { id },
-      data: { suspended: true }
+      data: { suspended: true },
+      select: { id: true, name: true, suspended: true },
     });
     return res.json({ ok: true, user });
   } catch (err) {
+    // eslint-disable-next-line no-console
     console.error('❌ suspend', err);
-    return res.status(500).json({ error: 'Erreur serveur' });
+    return res.status(500).json({ error: "Impossible de suspendre l'utilisateur (champ manquant ?)" });
   }
 });
 
 router.delete('/users/:id', authenticate, requireAdmin, async (req, res) => {
-  const id = parseInt(req.params.id, 10);
+  const id = parseInt(String(req.params.id || ''), 10);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'ID invalide' });
+
   try {
-    // ⚠️ à adapter selon onDelete cascade/données associées
     await prisma.user.delete({ where: { id } });
     return res.json({ ok: true });
   } catch (err) {
+    // eslint-disable-next-line no-console
     console.error('❌ delete user', err);
-    return res.status(500).json({ error: 'Erreur serveur' });
+    return res.status(500).json({ error: "Impossible de supprimer l'utilisateur" });
   }
 });
 

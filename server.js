@@ -8,13 +8,13 @@ require('dotenv').config();
 const authRoutes = require('./routes/auth');
 const profileRoutes = require('./routes/profile');
 const mediaRoutes = require('./routes/media');
-const messageRoutes = require('./routes/message');   // assure-toi que le fichier s'appelle bien message.js
+const messageRoutes = require('./routes/message');
 const followRoutes = require('./routes/follow');
 const feedRoutes = require('./routes/feed');
 const searchRoutes = require('./routes/search');
 const usersRoutes = require('./routes/users');
 const adminRoutes = require('./routes/admin');
-const adminSettingsRoutes = require('./routes/adminSettings');
+const adminSettingsRoutes = require('./routes/adminSettings'); // <-- paramètres du site
 const eventRoutes = require('./routes/events');
 const uploadRoutes = require('./routes/upload');
 
@@ -22,24 +22,15 @@ const app = express();
 
 /* ===================== Middlewares globaux ===================== */
 
-// CORS — autorise credentials et origine dynamique (dev + prod)
+// CORS
 const corsOptions = {
-  origin: true,  // reflète l'origine appelante
+  origin: true,
   credentials: true,
   methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
-  // 👇 Ajout des en-têtes utilisés par ton front (corrige l’erreur)
-  allowedHeaders: [
-    'Authorization',
-    'Content-Type',
-    'Cache-Control',
-    'Pragma',
-    'Expires',
-  ],
+  allowedHeaders: ['Authorization','Content-Type','Cache-Control','Pragma','Expires'],
 };
 app.use(cors(corsOptions));
-// Important pour caches/CDN
 app.use((req, res, next) => { res.header('Vary', 'Origin'); next(); });
-// Préflights
 app.options('*', cors(corsOptions));
 
 // Parsers
@@ -49,7 +40,7 @@ app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 // Logs
 app.use(morgan('dev'));
 
-// Static (si utilisé)
+// Static
 app.use('/uploads', express.static('uploads'));
 
 /* ===================== Routes API ===================== */
@@ -61,8 +52,11 @@ app.use('/api/follow', followRoutes);
 app.use('/api/feed', feedRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api', usersRoutes);
-app.use('/api/admin', adminRoutes);
+
+// ⚠️ IMPORTANT : monter /api/admin/settings AVANT /api/admin
 app.use('/api/admin/settings', adminSettingsRoutes);
+app.use('/api/admin', adminRoutes);
+
 app.use('/api/events', eventRoutes);
 app.use('/api/upload', uploadRoutes);
 

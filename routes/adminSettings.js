@@ -1,102 +1,93 @@
 // routes/adminSettings.js
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
 const router = express.Router();
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+
 const authenticate = require('../middleware/authenticate');
 
-// --- Util: projection publique (pas d’infos sensibles) ---
-function toPublicSettings(s) {
-  if (!s) return null;
-  return {
-    mainColor: s.mainColor || '#111111',
-    secondaryColor: s.secondaryColor || '#ffffff',
-    welcomeText: s.welcomeText || '',
-    bannerUrl: s.bannerUrl || '',
-
-    // ✅ Nouveaux champs
-    landingBgUrl: s.landingBgUrl || '',
-    loginBgUrl: s.loginBgUrl || '',
-    registerBgUrl: s.registerBgUrl || '',
-    headerLogoUrl: s.headerLogoUrl || '',
-  };
+/** Vérifie ADMIN */
+function requireAdmin(req, res, next) {
+  if (!req.user || req.user.role !== 'ADMIN') {
+    return res.status(403).json({ error: 'Accès réservé aux administrateurs' });
+  }
+  next();
 }
 
-// --- GET /api/admin/settings (admin only) ---
-router.get('/', authenticate, async (req, res) => {
+const CONFIG_DIR = path.join(__dirname, '..', 'config');
+const SETTINGS_FILE = path.join(CONFIG_DIR, 'site-settings.json');
+
+const DEFAULT_SETTINGS = {
+  welcomeText: '',
+  landingBgUrl: '',
+  loginBgUrl: '',
+  registerBgUrl: '',
+  headerLogoUrl: '',
+};
+
+/** S’assure que le fichier existe */
+function ensureFile() {
+  if (!fs.existsSync(CONFIG_DIR)) fs.mkdirSync(CONFIG_DIR, { recursive: true });
+  if (!fs.existsSync(SETTINGS_FILE)) {
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(DEFAULT_SETTINGS, null, 2), 'utf8');
+  }
+}
+
+/** Lecture synchrone (petit fichier) */
+function readSettings() {
+  ensureFile();
   try {
-    if (!req.user || req.user.role !== 'ADMIN') {
-      return res.status(403).json({ error: 'Accès interdit' });
-    }
+    const raw = fs.readFileSync(SETTINGS_FILE, 'utf8');
+    const data = JSON.parse(raw);
+    return { ...DEFAULT_SETTINGS, ...(data || {}) };
+  } catch {
+    return { ...DEFAULT_SETTINGS };
+  }
+}
 
-    const s = await prisma.adminSettings.findFirst({
-      orderBy: { id: 'asc' },
-    });
+/** Écriture synchrone (petit fichier) */
+function writeSettings(next) {
+  ensureFile();
+  fs.writeFileSync(SETTINGS_FILE, JSON.stringify(next, null, 2), 'utf8');
+}
 
-    // s peut être null la 1ère fois
-    return res.json(toPublicSettings(s) || toPublicSettings({}));
-  } catch (e) {
-    console.error('❌ [GET /admin/settings]', e);
-    res.status(500).json({ error: 'Erreur serveur' });
+/* ==========================================
+ * GET /api/admin/settings
+ * ======================================== */
+router.get('/', authenticate, requireAdmin, (_req, res) => {
+  try {
+    const data = readSettings();
+    return res.json(data);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('❌ GET settings', err);
+    return res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 
-// --- GET /api/admin/settings/public (public, lecture seule) ---
-router.get('/public', async (_req, res) => {
+/* ==========================================
+ * PUT /api/admin/settings
+ * body: { welcomeText?, landingBgUrl?, loginBgUrl?, registerBgUrl?, headerLogoUrl? }
+ * ======================================== */
+router.put('/', authenticate, requireAdmin, (req, res) => {
   try {
-    const s = await prisma.adminSettings.findFirst({
-      orderBy: { id: 'asc' },
-    });
-    return res.json(toPublicSettings(s) || toPublicSettings({}));
-  } catch (e) {
-    console.error('❌ [GET /admin/settings/public]', e);
-    res.status(500).json({ error: 'Erreur serveur' });
-  }
-});
+    const current = readSettings();
 
-// --- PUT /api/admin/settings (admin only) ---
-router.put('/', authenticate, async (req, res) => {
-  try {
-    if (!req.user || req.user.role !== 'ADMIN') {
-      return res.status(403).json({ error: 'Accès interdit' });
-    }
-
-    const {
-      mainColor,
-      secondaryColor,
-      welcomeText,
-      bannerUrl,
-
-      // ✅ Nouveaux champs
-      landingBgUrl,
-      loginBgUrl,
-      registerBgUrl,
-      headerLogoUrl,
-    } = req.body || {};
-
-    const data = {
-      ...(mainColor !== undefined ? { mainColor } : {}),
-      ...(secondaryColor !== undefined ? { secondaryColor } : {}),
-      ...(welcomeText !== undefined ? { welcomeText } : {}),
-      ...(bannerUrl !== undefined ? { bannerUrl } : {}),
-
-      ...(landingBgUrl !== undefined ? { landingBgUrl } : {}),
-      ...(loginBgUrl !== undefined ? { loginBgUrl } : {}),
-      ...(registerBgUrl !== undefined ? { registerBgUrl } : {}),
-      ...(headerLogoUrl !== undefined ? { headerLogoUrl } : {}),
+    // Sécurise les champs (string uniquement)
+    const next = {
+      welcomeText: typeof req.body?.welcomeText === 'string' ? req.body.welcomeText : current.welcomeText,
+      landingBgUrl: typeof req.body?.landingBgUrl === 'string' ? req.body.landingBgUrl : current.landingBgUrl,
+      loginBgUrl: typeof req.body?.loginBgUrl === 'string' ? req.body.loginBgUrl : current.loginBgUrl,
+      registerBgUrl: typeof req.body?.registerBgUrl === 'string' ? req.body.registerBgUrl : current.registerBgUrl,
+      headerLogoUrl: typeof req.body?.headerLogoUrl === 'string' ? req.body.headerLogoUrl : current.headerLogoUrl,
     };
 
-    // upsert: si aucun settings, on le crée
-    const updated = await prisma.adminSettings.upsert({
-      where: { id: 1 },
-      update: data,
-      create: { id: 1, ...data },
-    });
-
-    return res.json(toPublicSettings(updated));
-  } catch (e) {
-    console.error('❌ [PUT /admin/settings]', e);
-    res.status(500).json({ error: 'Erreur serveur' });
+    writeSettings(next);
+    return res.json(next);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('❌ PUT settings', err);
+    return res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 
