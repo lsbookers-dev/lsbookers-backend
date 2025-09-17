@@ -1,4 +1,3 @@
-// server.js
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
@@ -17,6 +16,7 @@ const adminRoutes = require('./routes/admin');
 const adminSettingsRoutes = require('./routes/adminSettings'); // <-- paramètres du site
 const eventRoutes = require('./routes/events');
 const uploadRoutes = require('./routes/upload');
+const publicationRoutes = require('./routes/publications'); // Nouvelle ligne pour publications
 
 const app = express();
 
@@ -56,9 +56,9 @@ app.use('/api', usersRoutes);
 // ⚠️ IMPORTANT : monter /api/admin/settings AVANT /api/admin
 app.use('/api/admin/settings', adminSettingsRoutes);
 app.use('/api/admin', adminRoutes);
-
 app.use('/api/events', eventRoutes);
 app.use('/api/upload', uploadRoutes);
+app.use('/api/publications', publicationRoutes); // Nouvelle ligne pour activer les routes publications
 
 /* ===================== Gestion d’erreurs ===================== */
 app.use((err, req, res, next) => {
