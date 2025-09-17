@@ -4,57 +4,66 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+  url = env("DATABASE_URL")
 }
 
 model User {
-  id           Int      @id @default(autoincrement())
-  name         String
-  email        String   @unique
-  password     String
-  role         Role
-  isAdmin      Boolean  @default(false)
-  profile      Profile?
-  media        Media[]
-  followers    Follow[] @relation("followers")
-  following    Follow[] @relation("following")
-  messages     Message[] @relation("SentMessages")
+  id Int @id @default(autoincrement())
+  name String
+  email String @unique
+  password String
+  role Role
+  isAdmin Boolean @default(false)
+  profile Profile?
+  media Media[]
+  followers Follow[] @relation("followers")
+  following Follow[] @relation("following")
+  messages Message[] @relation("SentMessages")
   conversations ConversationParticipant[]
-  createdAt    DateTime @default(now())
+  createdAt DateTime @default(now())
 }
 
 model Profile {
-  id                Int       @id @default(autoincrement())
-  userId            Int       @unique
-  bio               String?
-  profession        String?
-  location          String?
-  country           String?
-  latitude          Float?
-  longitude         Float?
-  radiusKm          Int?
-  specialties       String[]
+  id Int @id @default(autoincrement())
+  userId Int @unique
+  bio String?
+  profession String?
+  location String?
+  country String?
+  latitude Float?
+  longitude Float?
+  radiusKm Int?
+  specialties String[]
   typeEtablissement String?
-  avatar            String?
-  banner            String?
+  avatar String?
+  banner String?
+  user User @relation(fields: [userId], references: [id])
+  events Event[]
+  media Media[] // ✅ Galerie liée à ce profil
+  publications Publication[] // Nouvelle relation pour les publications
+}
 
-  user              User      @relation(fields: [userId], references: [id])
-  events            Event[]
-  media             Media[]   // ✅ Galerie liée à ce profil
+model Publication {
+  id Int @id @default(autoincrement())
+  title String
+  media String
+  mediaType String
+  caption String?
+  profileId Int
+  profile Profile @relation(fields: [profileId], references: [id])
+  createdAt DateTime @default(now())
 }
 
 model Media {
-  id        Int      @id @default(autoincrement())
-  url       String
-  type      MediaType
-  caption   String?
+  id Int @id @default(autoincrement())
+  url String
+  type MediaType
+  caption String?
   createdAt DateTime @default(now())
-
-  userId    Int
-  user      User     @relation(fields: [userId], references: [id])
-
+  userId Int
+  user User @relation(fields: [userId], references: [id])
   profileId Int
-  profile   Profile  @relation(fields: [profileId], references: [id])
+  profile Profile @relation(fields: [profileId], references: [id])
 }
 
 enum MediaType {
@@ -63,71 +72,67 @@ enum MediaType {
 }
 
 model Follow {
-  id           Int    @id @default(autoincrement())
-  followerId   Int
-  followingId  Int
-  createdAt    DateTime @default(now())
-
-  follower     User @relation("followers", fields: [followerId], references: [id])
-  following    User @relation("following", fields: [followingId], references: [id])
+  id Int @id @default(autoincrement())
+  followerId Int
+  followingId Int
+  createdAt DateTime @default(now())
+  follower User @relation("followers", fields: [followerId], references: [id])
+  following User @relation("following", fields: [followingId], references: [id])
 }
 
 model Message {
-  id             Int          @id @default(autoincrement())
-  content        String
-  senderId       Int
+  id Int @id @default(autoincrement())
+  content String
+  senderId Int
   conversationId Int
-  createdAt      DateTime     @default(now())
-
-  sender         User         @relation("SentMessages", fields: [senderId], references: [id])
-  conversation   Conversation @relation(fields: [conversationId], references: [id])
+  createdAt DateTime @default(now())
+  sender User @relation("SentMessages", fields: [senderId], references: [id])
+  conversation Conversation @relation(fields: [conversationId], references: [id])
 }
 
 model Conversation {
-  id           Int                        @id @default(autoincrement())
+  id Int @id @default(autoincrement())
   participants ConversationParticipant[]
-  messages     Message[]
-  updatedAt    DateTime                  @updatedAt
-  createdAt    DateTime                  @default(now())
+  messages Message[]
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
 }
 
 model ConversationParticipant {
-  id             Int           @id @default(autoincrement())
-  userId         Int
+  id Int @id @default(autoincrement())
+  userId Int
   conversationId Int
-
-  user           User          @relation(fields: [userId], references: [id])
-  conversation   Conversation  @relation(fields: [conversationId], references: [id])
-
+  user User @relation(fields: [userId], references: [id])
+  conversation Conversation @relation(fields: [conversationId], references: [id])
   @@unique([userId, conversationId])
 }
 
 model Event {
-  id        Int      @id @default(autoincrement())
-  title     String
-  start     DateTime
-  end       DateTime
-  allDay    Boolean  @default(false)
-  lieu      String?
-  type      String?
-  profile   Profile  @relation(fields: [profileId], references: [id])
+  id Int @id @default(autoincrement())
+  title String
+  start DateTime
+  end DateTime
+  allDay Boolean @default(false)
+  lieu String?
+  type String?
+  profile Profile @relation(fields: [profileId], references: [id])
   profileId Int
   createdAt DateTime @default(now())
 }
 
 model AdminSettings {
-  id             Int      @id @default(1)
-  mainColor      String?  @default("#FF0055")
-  secondaryColor String?  @default("#000000")
-  bannerUrl      String?
-  welcomeText    String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id Int @id @default(1)
+  mainColor String? @default("#FF0055")
+  secondaryColor String? @default("#000000")
+  bannerUrl String?
+  welcomeText String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 enum Role {
   ARTIST
   ORGANIZER
   PROVIDER
-  ADMIN 
+  ADMIN
 }
