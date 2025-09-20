@@ -1,12 +1,10 @@
 generator client {
   provider = "prisma-client-js"
 }
-
 datasource db {
   provider = "postgresql"
   url = env("DATABASE_URL")
 }
-
 model User {
   id Int @id @default(autoincrement())
   name String
@@ -22,7 +20,6 @@ model User {
   conversations ConversationParticipant[]
   createdAt DateTime @default(now())
 }
-
 model Profile {
   id Int @id @default(autoincrement())
   userId Int @unique
@@ -41,9 +38,8 @@ model Profile {
   events Event[]
   media Media[] // ✅ Galerie liée à ce profil
   publications Publication[] // Nouvelle relation pour les publications
-  offers Offer[]              // ✅ Relation ajoutée vers les offres
+  offers Offer[] // ✅ Relation ajoutée vers les offres
 }
-
 model Publication {
   id Int @id @default(autoincrement())
   title String
@@ -54,7 +50,6 @@ model Publication {
   profile Profile @relation(fields: [profileId], references: [id])
   createdAt DateTime @default(now())
 }
-
 model Media {
   id Int @id @default(autoincrement())
   url String
@@ -66,12 +61,10 @@ model Media {
   profileId Int
   profile Profile @relation(fields: [profileId], references: [id])
 }
-
 enum MediaType {
   IMAGE
   VIDEO
 }
-
 model Follow {
   id Int @id @default(autoincrement())
   followerId Int
@@ -80,7 +73,6 @@ model Follow {
   follower User @relation("followers", fields: [followerId], references: [id])
   following User @relation("following", fields: [followingId], references: [id])
 }
-
 model Message {
   id Int @id @default(autoincrement())
   content String
@@ -90,7 +82,6 @@ model Message {
   sender User @relation("SentMessages", fields: [senderId], references: [id])
   conversation Conversation @relation(fields: [conversationId], references: [id])
 }
-
 model Conversation {
   id Int @id @default(autoincrement())
   participants ConversationParticipant[]
@@ -98,7 +89,6 @@ model Conversation {
   updatedAt DateTime @updatedAt
   createdAt DateTime @default(now())
 }
-
 model ConversationParticipant {
   id Int @id @default(autoincrement())
   userId Int
@@ -107,7 +97,6 @@ model ConversationParticipant {
   conversation Conversation @relation(fields: [conversationId], references: [id])
   @@unique([userId, conversationId])
 }
-
 model Event {
   id Int @id @default(autoincrement())
   title String
@@ -120,7 +109,6 @@ model Event {
   profileId Int
   createdAt DateTime @default(now())
 }
-
 model AdminSettings {
   id Int @id @default(1)
   mainColor String? @default("#FF0055")
@@ -130,36 +118,35 @@ model AdminSettings {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
-
 enum Role {
   ARTIST
   ORGANIZER
   PROVIDER
   ADMIN
 }
-
-//
-// ✅✅ AJOUT DU MODÈLE DES OFFRES JUSTE ICI
-//
-
 model Offer {
-  id           Int       @id @default(autoincrement())
-  title        String
-  description  String
-  type         OfferType
-  date         DateTime
-  location     String
-  country      String
-  radiusKm     Int?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-
-  organizer    Profile   @relation(fields: [organizerId], references: [id])
-  organizerId  Int
+  id Int @id @default(autoincrement())
+  title String
+  description String
+  type OfferType
+  date DateTime
+  location String
+  country String
+  radiusKm Int?
+  status OfferStatus @default(ACTIVE)  // ✅ Nouveau champ pour l'état
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  organizer Profile @relation(fields: [organizerId], references: [id])
+  organizerId Int
+  @@index([type])  // ✅ Index pour filtrer par type rapidement
+  @@index([createdAt])  // ✅ Index pour trier par date
 }
-
 enum OfferType {
   ARTIST
   PROVIDER
   ALL
+}
+enum OfferStatus {
+  ACTIVE
+  CLOSED
 }
