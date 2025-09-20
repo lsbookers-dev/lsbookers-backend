@@ -41,6 +41,7 @@ model Profile {
   events Event[]
   media Media[] // ✅ Galerie liée à ce profil
   publications Publication[] // Nouvelle relation pour les publications
+  offers Offer[]              // ✅ Relation ajoutée vers les offres
 }
 
 model Publication {
@@ -135,4 +136,30 @@ enum Role {
   ORGANIZER
   PROVIDER
   ADMIN
+}
+
+//
+// ✅✅ AJOUT DU MODÈLE DES OFFRES JUSTE ICI
+//
+
+model Offer {
+  id           Int       @id @default(autoincrement())
+  title        String
+  description  String
+  type         OfferType
+  date         DateTime
+  location     String
+  country      String
+  radiusKm     Int?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  organizer    Profile   @relation(fields: [organizerId], references: [id])
+  organizerId  Int
+}
+
+enum OfferType {
+  ARTIST
+  PROVIDER
+  ALL
 }

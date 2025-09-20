@@ -17,6 +17,7 @@ const adminSettingsRoutes = require('./routes/adminSettings'); // <-- paramètre
 const eventRoutes = require('./routes/events');
 const uploadRoutes = require('./routes/upload');
 const publicationRoutes = require('./routes/publications'); // Nouvelle ligne pour publications
+const offersRoutes = require('./routes/offers'); // ✅ Nouvelle ligne pour offres
 
 const app = express();
 
@@ -58,7 +59,8 @@ app.use('/api/admin/settings', adminSettingsRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/events', eventRoutes);
 app.use('/api/upload', uploadRoutes);
-app.use('/api/publications', publicationRoutes); // Nouvelle ligne pour activer les routes publications
+app.use('/api/publications', publicationRoutes);
+app.use('/api/offers', offersRoutes); // ✅ Activation de la route des offres
 
 /* ===================== Gestion d’erreurs ===================== */
 app.use((err, req, res, next) => {
