@@ -3,7 +3,7 @@ const express = require('express')
 const router = express.Router()
 const { PrismaClient } = require('@prisma/client')
 const prisma = new PrismaClient()
-const verifyToken = require('../middlewares/verifyToken') // 🔐 Vérifie le token JWT
+const verifyToken = require('../middleware/verifytoken') // 🔐 Vérifie le token JWT
 
 // 📌 Créer une nouvelle offre
 router.post('/', verifyToken, async (req, res) => {
