@@ -62,7 +62,7 @@ router.post('/', verifyToken, async (req, res) => {
 
 // 📌 Lister les offres avec filtres
 router.get('/', async (req, res) => {
-  const { type, location, country } = req.query
+  const { type, location, country, organizerId } = req.query
 
   try {
     // Construire les filtres
@@ -86,6 +86,10 @@ router.get('/', async (req, res) => {
         contains: country,
         mode: 'insensitive',
       }
+    }
+
+    if (organizerId) {
+      where.organizerId = parseInt(organizerId)
     }
 
     // Récupérer les offres
@@ -133,6 +137,46 @@ router.get('/:id', async (req, res) => {
     return res.status(200).json(offer)
   } catch (error) {
     console.error('Erreur récupération offre :', error)
+    return res.status(500).json({ error: 'ERREUR_SERVEUR' })
+  }
+})
+
+// 📌 Supprimer une offre
+router.delete('/:id', verifyToken, async (req, res) => {
+  const { id } = req.params
+
+  try {
+    // Vérifier que l’utilisateur est ORGANIZER
+    if (req.user.role !== 'ORGANIZER') {
+      return res.status(403).json({ error: 'ACCÈS_REFUSÉ (réservé aux organisateurs)' })
+    }
+
+    const profile = await prisma.profile.findUnique({
+      where: { userId: req.user.id },
+    })
+    if (!profile) {
+      return res.status(404).json({ error: 'PROFILE_INTROUVABLE' })
+    }
+
+    // Vérifier que l’offre existe et appartient à l’organisateur
+    const offer = await prisma.offer.findUnique({
+      where: { id: parseInt(id) },
+    })
+    if (!offer) {
+      return res.status(404).json({ error: 'OFFRE_INTROUVABLE' })
+    }
+    if (offer.organizerId !== profile.id) {
+      return res.status(403).json({ error: 'ACCÈS_REFUSÉ (non autorisé à supprimer cette offre)' })
+    }
+
+    // Supprimer l’offre
+    await prisma.offer.delete({
+      where: { id: parseInt(id) },
+    })
+
+    return res.status(204).json({})
+  } catch (error) {
+    console.error('Erreur suppression offre :', error)
     return res.status(500).json({ error: 'ERREUR_SERVEUR' })
   }
 })
