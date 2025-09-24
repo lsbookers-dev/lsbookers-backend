@@ -4,7 +4,10 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const authenticateToken = require('../middleware/authenticate');
 
-// Lister les notifications d'un utilisateur
+/* =========================================================
+   GET /api/notifications
+   ➜ Lister les notifications d’un utilisateur
+========================================================= */
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const userId = Number(req.user?.id);
@@ -34,7 +37,7 @@ router.get('/', authenticateToken, async (req, res) => {
     const formatted = notifications.map((n) => ({
       id: n.id,
       type: n.type,
-      content: n.content,
+      message: n.message || '', // ⚡️ le champ correct
       read: n.read,
       createdAt: n.createdAt,
       actor: n.actor
@@ -55,7 +58,10 @@ router.get('/', authenticateToken, async (req, res) => {
   }
 });
 
-// Marquer une notification comme lue
+/* =========================================================
+   PATCH /api/notifications/:id
+   ➜ Marquer une notification comme lue
+========================================================= */
 router.patch('/:id', authenticateToken, async (req, res) => {
   try {
     const userId = Number(req.user?.id);

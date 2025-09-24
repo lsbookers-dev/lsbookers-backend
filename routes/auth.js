@@ -12,14 +12,12 @@ router.post('/register', async (req, res) => {
 
   const { name, email, password, role, isAdmin } = req.body;
 
-  // DEBUG : afficher le rôle reçu
   console.log("📌 Rôle reçu :", role);
 
   if (!name || !email || !password || !role) {
     return res.status(400).json({ error: 'Champs requis manquants ❌' });
   }
 
-  // ✅ Vérification que le rôle est valide
   const validRoles = ['ARTIST', 'ORGANIZER', 'PROVIDER', 'ADMIN'];
   if (!validRoles.includes(role)) {
     return res.status(400).json({ error: `Rôle invalide ❌ (${role})` });
@@ -54,8 +52,23 @@ router.post('/register', async (req, res) => {
 
     console.log("✅ Utilisateur créé :", user.email);
 
+    // ✅ Générer un token directement à l'inscription
+    const token = jwt.sign(
+      {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        isAdmin: user.isAdmin,
+        name: user.name,
+        avatar: user.profile?.avatar || null,
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
     res.status(201).json({
       message: 'Inscription réussie ✅',
+      token,
       user,
     });
   } catch (err) {
@@ -91,8 +104,16 @@ router.post('/login', async (req, res) => {
       return res.status(500).json({ error: 'JWT secret non configuré ❌' });
     }
 
+    // ✅ Ajout du name et avatar dans le JWT
     const token = jwt.sign(
-      { id: user.id, email: user.email, role: user.role, isAdmin: user.isAdmin },
+      {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        isAdmin: user.isAdmin,
+        name: user.name,
+        avatar: user.profile?.avatar || null,
+      },
       process.env.JWT_SECRET,
       { expiresIn: '7d' }
     );
