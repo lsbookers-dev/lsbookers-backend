@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
 require('dotenv').config();
+
 // ✅ Importation des routes
 const authRoutes = require('./routes/auth');
 const profileRoutes = require('./routes/profile');
@@ -24,19 +25,25 @@ const app = express();
 /* ===================== Middlewares globaux ===================== */
 // CORS
 const corsOptions = {
-  origin: true,
+  origin: '*', // Simplifié pour éviter l'erreur. Pour une origine spécifique, définis FRONTEND_URL dans .env et utilise : origin: process.env.FRONTEND_URL
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Authorization', 'Content-Type', 'Cache-Control', 'Pragma', 'Expires'],
 };
 app.use(cors(corsOptions));
-app.use((req, res, next) => { res.header('Vary', 'Origin'); next(); });
+app.use((req, res, next) => { 
+  res.header('Vary', 'Origin'); 
+  next(); 
+});
 app.options('*', cors(corsOptions));
+
 // Parsers
 app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
+
 // Logs
 app.use(morgan('dev'));
+
 // Static
 app.use('/uploads', express.static('uploads'));
 

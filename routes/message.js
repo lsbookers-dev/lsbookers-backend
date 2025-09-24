@@ -5,6 +5,7 @@ const prisma = new PrismaClient();
 const authenticateToken = require('../middleware/authenticate');
 const multer = require('multer');
 const path = require('path');
+const cors = require('cors'); // ✅ Ajout pour gérer CORS
 
 /* ------------ Multer (upload local si besoin) ------------ */
 const storage = multer.diskStorage({
@@ -254,6 +255,37 @@ router.post('/send-file', authenticateToken, upload.single('file'), async (req, 
     });
   } catch (err) {
     console.error('❌ [POST /send-file] Error:', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+/* =========================================================
+   POST /api/messages/mark-seen/:conversationId
+   ➜ Marquer tous les messages d'une conversation comme lus
+========================================================= */
+router.post('/mark-seen/:conversationId', authenticateToken, async (req, res) => {
+  try {
+    const userId = Number(req.user?.id);
+    const conversationId = Number(req.params.conversationId);
+    if (!userId || !conversationId) return res.status(400).json({ error: 'Paramètres invalides' });
+
+    const participation = await prisma.conversationParticipant.findFirst({
+      where: { conversationId, userId },
+    });
+    if (!participation) return res.status(403).json({ error: 'Accès interdit' });
+
+    await prisma.message.updateMany({
+      where: {
+        conversationId,
+        seen: false,
+        NOT: { senderId: userId },
+      },
+      data: { seen: true },
+    });
+
+    res.json({ message: 'Messages marqués comme lus' });
+  } catch (err) {
+    console.error('❌ [POST /mark-seen] Error:', err);
     res.status(500).json({ error: 'Erreur serveur' });
   }
 });
