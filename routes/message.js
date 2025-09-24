@@ -48,7 +48,6 @@ router.get('/conversations', authenticateToken, async (req, res) => {
   try {
     const userId = Number(req.user?.id);
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
-
     const participations = await prisma.conversationParticipant.findMany({
       where: { userId },
       include: {
@@ -60,7 +59,6 @@ router.get('/conversations', authenticateToken, async (req, res) => {
         },
       },
     });
-
     const conversations = participations
       .map((p) => {
         const c = p.conversation;
@@ -72,13 +70,10 @@ router.get('/conversations', authenticateToken, async (req, res) => {
         };
       })
       .filter((c) => c.participants.every((u) => !isAdminUser(u)));
-
     conversations.sort(
       (a, b) =>
-        new Date(b.updatedAt || 0).getTime() -
-        new Date(a.updatedAt || 0).getTime()
+        new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime()
     );
-
     res.json({ conversations });
   } catch (err) {
     console.error('❌ [GET /conversations] Error:', err);
@@ -93,7 +88,6 @@ router.get('/unread-count', authenticateToken, async (req, res) => {
   try {
     const userId = Number(req.user?.id);
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
-
     const convs = await prisma.conversation.findMany({
       where: { participants: { some: { userId } } },
       select: {
@@ -105,13 +99,11 @@ router.get('/unread-count', authenticateToken, async (req, res) => {
         },
       },
     });
-
     const unreadCount = convs.reduce((acc, c) => {
       const last = c.messages[0];
       if (!last) return acc;
       return last.senderId !== userId ? acc + 1 : acc;
     }, 0);
-
     res.json({ count: unreadCount });
   } catch (err) {
     console.error('❌ [GET /unread-count] Error:', err);
@@ -128,23 +120,19 @@ router.get('/messages/:conversationId', authenticateToken, async (req, res) => {
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
     const conversationId = Number(req.params.conversationId);
     if (!conversationId) return res.status(400).json({ error: 'conversationId invalide' });
-
     const participation = await prisma.conversationParticipant.findFirst({
       where: { conversationId, userId },
       include: { conversation: { include: { participants: { include: { user: true } } } } },
     });
     if (!participation) return res.status(403).json({ error: 'Forbidden' });
-
     if (participation.conversation.participants.some((p) => isAdminUser(p.user))) {
       return res.status(404).json({ error: 'Conversation introuvable' });
     }
-
     const messages = await prisma.message.findMany({
       where: { conversationId },
       orderBy: { createdAt: 'asc' },
       include: { sender: { include: { profile: true } } },
     });
-
     const payload = messages.map((m) => ({
       id: String(m.id),
       content: m.content,
@@ -156,7 +144,6 @@ router.get('/messages/:conversationId', authenticateToken, async (req, res) => {
         image: m.sender?.profile?.avatar || m.sender?.image || null,
       },
     }));
-
     res.json(payload);
   } catch (err) {
     console.error('❌ [GET /messages/:conversationId] Error:', err);
@@ -175,14 +162,12 @@ router.post('/send', authenticateToken, async (req, res) => {
     if (!recipientId || (!content || !String(content).trim())) {
       return res.status(400).json({ error: 'recipientId et content requis' });
     }
-
     const recipient = await prisma.user.findUnique({
       where: { id: Number(recipientId) },
-      select: { id: true, role: true, name: true },
+      select: { id: true, role: true },
     });
     if (!recipient) return res.status(404).json({ error: 'Destinataire introuvable' });
     if (isAdminUser(recipient)) return res.status(403).json({ error: 'Action non autorisée' });
-
     let conversation = await prisma.conversation.findFirst({
       where: {
         AND: [
@@ -192,7 +177,6 @@ router.post('/send', authenticateToken, async (req, res) => {
       },
       include: { participants: { include: { user: true } } },
     });
-
     if (!conversation) {
       conversation = await prisma.conversation.create({
         data: {
@@ -201,27 +185,13 @@ router.post('/send', authenticateToken, async (req, res) => {
         include: { participants: { include: { user: true } } },
       });
     }
-
     const message = await prisma.message.create({
       data: { content: String(content), senderId, conversationId: conversation.id },
     });
-
-    await prisma.notification.create({
-      data: {
-        userId: Number(recipientId),
-        type: 'NEW_MESSAGE',
-        content: `Nouveau message de ${req.user.name || 'Utilisateur'}`, // ✅ cohérence
-        read: false,
-        actorId: senderId,
-        messageId: message.id,
-      },
-    });
-
     await prisma.conversation.update({
       where: { id: conversation.id },
       data: { updatedAt: new Date() },
     });
-
     res.json({
       conversationId: conversation.id,
       message: {
@@ -244,60 +214,35 @@ router.post('/send-file', authenticateToken, upload.single('file'), async (req, 
   try {
     const senderId = Number(req.user?.id);
     if (!senderId) return res.status(401).json({ error: 'Unauthorized' });
-
     const { content, conversationId } = req.body;
     const file = req.file;
     if (!conversationId || (!content && !file)) {
       return res.status(400).json({ error: 'conversationId et (content ou file) requis' });
     }
-
     if (await conversationHasAdmin(Number(conversationId))) {
       return res.status(403).json({ error: 'Action non autorisée' });
     }
-
     const conversation = await prisma.conversation.findUnique({
       where: { id: Number(conversationId) },
       include: { participants: { include: { user: true } } },
     });
     if (!conversation) return res.status(404).json({ error: 'Conversation introuvable' });
-
     let fileUrl = null;
     if (file) {
       fileUrl = `https://lsbookers-backend-production.up.railway.app/uploads/${file.filename}`;
     }
-
     let finalContent = '';
     if (file && content) finalContent = `${content}\n${fileUrl}`;
     else if (file) finalContent = `Lien : ${fileUrl}`;
     else finalContent = String(content);
-
     const message = await prisma.message.create({
       data: { senderId, conversationId: Number(conversationId), content: finalContent },
     });
-
-    const recipients = conversation.participants
-      .filter((p) => p.userId !== senderId)
-      .map((p) => p.userId);
-
-    for (const recipientId of recipients) {
-      await prisma.notification.create({
-        data: {
-          userId: recipientId,
-          type: 'NEW_MESSAGE',
-          content: `Nouveau message de ${req.user.name || 'Utilisateur'}`, // ✅ cohérence
-          read: false,
-          actorId: senderId,
-          messageId: message.id,
-        },
-      });
-    }
-
     await prisma.conversation.update({
       where: { id: Number(conversationId) },
       data: { updatedAt: new Date() },
     });
-
-    return res.json({
+    res.json({
       conversationId: Number(conversationId),
       message: {
         id: message.id,
