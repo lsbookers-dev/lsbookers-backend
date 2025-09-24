@@ -2,7 +2,6 @@ const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
 require('dotenv').config();
-
 // ✅ Importation des routes
 const authRoutes = require('./routes/auth');
 const profileRoutes = require('./routes/profile');
@@ -18,29 +17,26 @@ const eventRoutes = require('./routes/events');
 const uploadRoutes = require('./routes/upload');
 const publicationRoutes = require('./routes/publications'); // Nouvelle ligne pour publications
 const offersRoutes = require('./routes/offers'); // ✅ Nouvelle ligne pour offres
+const notificationsRoutes = require('./routes/notifications'); // ✅ Nouvelle ligne pour notifications
 
 const app = express();
 
 /* ===================== Middlewares globaux ===================== */
-
 // CORS
 const corsOptions = {
   origin: true,
   credentials: true,
-  methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
-  allowedHeaders: ['Authorization','Content-Type','Cache-Control','Pragma','Expires'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Authorization', 'Content-Type', 'Cache-Control', 'Pragma', 'Expires'],
 };
 app.use(cors(corsOptions));
 app.use((req, res, next) => { res.header('Vary', 'Origin'); next(); });
 app.options('*', cors(corsOptions));
-
 // Parsers
 app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
-
 // Logs
 app.use(morgan('dev'));
-
 // Static
 app.use('/uploads', express.static('uploads'));
 
@@ -53,7 +49,6 @@ app.use('/api/follow', followRoutes);
 app.use('/api/feed', feedRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api', usersRoutes);
-
 // ⚠️ IMPORTANT : monter /api/admin/settings AVANT /api/admin
 app.use('/api/admin/settings', adminSettingsRoutes);
 app.use('/api/admin', adminRoutes);
@@ -61,6 +56,7 @@ app.use('/api/events', eventRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/publications', publicationRoutes);
 app.use('/api/offers', offersRoutes); // ✅ Activation de la route des offres
+app.use('/api/notifications', notificationsRoutes); // ✅ Activation de la route des notifications
 
 /* ===================== Gestion d’erreurs ===================== */
 app.use((err, req, res, next) => {

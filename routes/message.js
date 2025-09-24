@@ -1,4 +1,3 @@
-// routes/message.js
 const express = require('express');
 const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
@@ -30,6 +29,7 @@ function pickUserPublic(u) {
     profile: u.profile ? { avatar: u.profile.avatar || null } : null,
   };
 }
+
 const isAdminUser = (u) => !!u && String(u.role).toUpperCase() === 'ADMIN';
 
 /* Petite utilitaire : vérifie si une conversation implique un ADMIN */
@@ -54,7 +54,6 @@ router.get('/conversations', authenticateToken, async (req, res) => {
   try {
     const userId = Number(req.user?.id);
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
-
     const participations = await prisma.conversationParticipant.findMany({
       where: { userId },
       include: {
@@ -75,7 +74,6 @@ router.get('/conversations', authenticateToken, async (req, res) => {
         },
       },
     });
-
     // Normalisation + filtre ADMIN
     const conversations = participations
       .map((p) => {
@@ -89,12 +87,10 @@ router.get('/conversations', authenticateToken, async (req, res) => {
       })
       // Exclusion TOTALE si un ADMIN participe
       .filter((c) => c.participants.every((u) => !isAdminUser(u)));
-
     conversations.sort(
       (a, b) =>
         new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime()
     );
-
     res.json({ conversations });
   } catch (err) {
     console.error('❌ [GET /conversations] Error:', err);
@@ -110,10 +106,8 @@ router.get('/messages/:conversationId', authenticateToken, async (req, res) => {
   try {
     const userId = Number(req.user?.id);
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
-
     const conversationId = Number(req.params.conversationId);
     if (!conversationId) return res.status(400).json({ error: 'conversationId invalide' });
-
     // Vérifie que l’utilisateur est bien participant
     const participation = await prisma.conversationParticipant.findFirst({
       where: { conversationId, userId },
@@ -126,13 +120,11 @@ router.get('/messages/:conversationId', authenticateToken, async (req, res) => {
       },
     });
     if (!participation) return res.status(403).json({ error: 'Forbidden' });
-
     // ADMIN invisible : si un admin est dans la conversation, on refuse
     const hasAdmin = participation.conversation.participants.some((p) => isAdminUser(p.user));
     if (hasAdmin) {
       return res.status(404).json({ error: 'Conversation introuvable' });
     }
-
     const messages = await prisma.message.findMany({
       where: { conversationId },
       orderBy: { createdAt: 'asc' },
@@ -140,7 +132,6 @@ router.get('/messages/:conversationId', authenticateToken, async (req, res) => {
         sender: { include: { profile: true } },
       },
     });
-
     const payload = messages.map((m) => ({
       id: String(m.id),
       content: m.content,
@@ -152,7 +143,6 @@ router.get('/messages/:conversationId', authenticateToken, async (req, res) => {
         image: m.sender?.profile?.avatar || m.sender?.image || null,
       },
     }));
-
     res.json(payload);
   } catch (err) {
     console.error('❌ [GET /messages/:conversationId] Error:', err);
@@ -169,22 +159,19 @@ router.post('/send', authenticateToken, async (req, res) => {
   try {
     const senderId = Number(req.user?.id);
     if (!senderId) return res.status(401).json({ error: 'Unauthorized' });
-
     const { recipientId, content } = req.body;
     if (!recipientId || (!content || !String(content).trim())) {
       return res.status(400).json({ error: 'recipientId et content requis' });
     }
-
     // Refus si le destinataire est ADMIN (invisible)
     const recipient = await prisma.user.findUnique({
       where: { id: Number(recipientId) },
-      select: { id: true, role: true },
+      select: { id: true, role: true, name: true }, // Ajout de name pour la notification
     });
     if (!recipient) return res.status(404).json({ error: 'Destinataire introuvable' });
     if (isAdminUser(recipient)) {
       return res.status(403).json({ error: 'Action non autorisée' });
     }
-
     // Trouve/Crée une conv entre ces 2 utilisateurs
     let conversation = await prisma.conversation.findFirst({
       where: {
@@ -195,7 +182,6 @@ router.post('/send', authenticateToken, async (req, res) => {
       },
       include: { participants: { include: { user: true } } },
     });
-
     if (conversation) {
       // Si la conv existante contient un ADMIN (sécurité), refuse
       const hasAdmin = conversation.participants.some((p) => isAdminUser(p.user));
@@ -219,7 +205,6 @@ router.post('/send', authenticateToken, async (req, res) => {
         return res.status(403).json({ error: 'Action non autorisée' });
       }
     }
-
     const message = await prisma.message.create({
       data: {
         content: String(content),
@@ -227,12 +212,19 @@ router.post('/send', authenticateToken, async (req, res) => {
         conversationId: conversation.id,
       },
     });
-
+    // Créer une notification pour le destinataire
+    await prisma.notification.create({
+      data: {
+        userId: Number(recipientId),
+        type: 'NEW_MESSAGE',
+        message: `Nouveau message de ${req.user.name || 'Utilisateur'}`,
+        read: false,
+      },
+    });
     await prisma.conversation.update({
       where: { id: conversation.id },
       data: { updatedAt: new Date() },
     });
-
     res.json({
       conversationId: conversation.id,
       message: {
@@ -257,29 +249,31 @@ router.post('/send-file', authenticateToken, upload.single('file'), async (req, 
   try {
     const senderId = Number(req.user?.id);
     if (!senderId) return res.status(401).json({ error: 'Unauthorized' });
-
     const { content, conversationId } = req.body;
     const file = req.file;
-
     if (!conversationId || (!content && !file)) {
       return res.status(400).json({ error: 'conversationId et (content ou file) requis' });
     }
-
     // ADMIN invisible : refuse si conv contient ADMIN
-    if (await conversationHasAdmin(conversationId)) {
+    if (await conversationHasAdmin(Number(conversationId))) {
       return res.status(403).json({ error: 'Action non autorisée' });
     }
-
+    // Trouver les participants pour la notification
+    const conversation = await prisma.conversation.findUnique({
+      where: { id: Number(conversationId) },
+      include: {
+        participants: { include: { user: { select: { id: true, name: true } } } },
+      },
+    });
+    if (!conversation) return res.status(404).json({ error: 'Conversation introuvable' });
     // URL publique (adapter selon ton hébergeur)
     const fileUrl = file
       ? `https://lsbookers-backend-production.up.railway.app/uploads/${file.filename}`
       : null;
-
     let finalContent = '';
     if (file && content) finalContent = `${content}\n${fileUrl}`;
     else if (file) finalContent = `Lien : ${fileUrl}`;
     else finalContent = String(content);
-
     const message = await prisma.message.create({
       data: {
         senderId,
@@ -287,12 +281,24 @@ router.post('/send-file', authenticateToken, upload.single('file'), async (req, 
         content: finalContent,
       },
     });
-
+    // Créer une notification pour les autres participants
+    const recipients = conversation.participants
+      .filter((p) => p.userId !== senderId)
+      .map((p) => p.userId);
+    for (const recipientId of recipients) {
+      await prisma.notification.create({
+        data: {
+          userId: recipientId,
+          type: 'NEW_MESSAGE',
+          message: `Nouveau message de ${req.user.name || 'Utilisateur'}`,
+          read: false,
+        },
+      });
+    }
     await prisma.conversation.update({
       where: { id: Number(conversationId) },
       data: { updatedAt: new Date() },
     });
-
     return res.json({
       conversationId: Number(conversationId),
       message: {
@@ -318,19 +324,15 @@ router.post('/mark-seen/:conversationId', authenticateToken, async (req, res) =>
   try {
     const userId = Number(req.user?.id);
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
-
     const conversationId = Number(req.params.conversationId);
     if (!conversationId) return res.status(400).json({ error: 'conversationId invalide' });
-
     const isParticipant = await prisma.conversationParticipant.findFirst({
       where: { conversationId, userId },
     });
     if (!isParticipant) return res.status(403).json({ error: 'Forbidden' });
-
     if (await conversationHasAdmin(conversationId)) {
       return res.status(404).json({ error: 'Conversation introuvable' });
     }
-
     const result = await prisma.message.updateMany({
       where: {
         conversationId,
@@ -339,7 +341,6 @@ router.post('/mark-seen/:conversationId', authenticateToken, async (req, res) =>
       },
       data: { seen: true },
     });
-
     res.json({ updated: result.count });
   } catch (err) {
     console.error('❌ [POST /mark-seen] Error:', err);
@@ -356,10 +357,8 @@ router.delete('/conversations/:id', authenticateToken, async (req, res) => {
   try {
     const userId = Number(req.user?.id);
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
-
     const conversationId = Number(req.params.id);
     if (!conversationId) return res.status(400).json({ error: 'conversationId invalide' });
-
     const isParticipant = await prisma.conversationParticipant.findFirst({
       where: { conversationId, userId },
       include: {
@@ -371,19 +370,16 @@ router.delete('/conversations/:id', authenticateToken, async (req, res) => {
       },
     });
     if (!isParticipant) return res.status(403).json({ error: 'Forbidden' });
-
     const hasAdmin = isParticipant.conversation.participants.some((p) => isAdminUser(p.user));
     if (hasAdmin) {
       // On fait comme si la conversation n’existait pas
       return res.status(404).json({ error: 'Conversation introuvable' });
     }
-
     await prisma.$transaction([
       prisma.message.deleteMany({ where: { conversationId } }),
       prisma.conversationParticipant.deleteMany({ where: { conversationId } }),
       prisma.conversation.delete({ where: { id: conversationId } }),
     ]);
-
     res.status(204).end();
   } catch (err) {
     console.error('❌ [DELETE /conversations/:id] Error:', err);

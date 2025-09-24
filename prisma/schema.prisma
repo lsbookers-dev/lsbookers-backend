@@ -18,6 +18,7 @@ model User {
   following Follow[] @relation("following")
   messages Message[] @relation("SentMessages")
   conversations ConversationParticipant[]
+  notifications Notification[] // ✅ Relation pour les notifications
   createdAt DateTime @default(now())
 }
 model Profile {
@@ -34,11 +35,12 @@ model Profile {
   typeEtablissement String?
   avatar String?
   banner String?
+  notificationPreferences NotificationPreferences? // ✅ Préférences de notification
   user User @relation(fields: [userId], references: [id])
   events Event[]
-  media Media[] // ✅ Galerie liée à ce profil
-  publications Publication[] // Nouvelle relation pour les publications
-  offers Offer[] // ✅ Relation ajoutée vers les offres
+  media Media[]
+  publications Publication[]
+  offers Offer[]
 }
 model Publication {
   id Int @id @default(autoincrement())
@@ -129,17 +131,19 @@ model Offer {
   title String
   description String
   type OfferType
+  specialty String? // ✅ Champ pour spécialité
   date DateTime
   location String
   country String
   radiusKm Int?
-  status OfferStatus @default(ACTIVE)  // ✅ Nouveau champ pour l'état
+  status OfferStatus @default(ACTIVE)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   organizer Profile @relation(fields: [organizerId], references: [id])
   organizerId Int
-  @@index([type])  // ✅ Index pour filtrer par type rapidement
-  @@index([createdAt])  // ✅ Index pour trier par date
+  notifications Notification[] // ✅ Relation pour les notifications liées à l’offre
+  @@index([type])
+  @@index([createdAt])
 }
 enum OfferType {
   ARTIST
@@ -149,4 +153,23 @@ enum OfferType {
 enum OfferStatus {
   ACTIVE
   CLOSED
+}
+// ✅ Modèle pour les notifications
+model Notification {
+  id Int @id @default(autoincrement())
+  userId Int
+  type String // Ex: "NEW_OFFER", "NEW_FOLLOWER", "NEW_MESSAGE"
+  message String
+  read Boolean @default(false)
+  createdAt DateTime @default(now())
+  user User @relation(fields: [userId], references: [id])
+  offerId Int? // Lien optionnel vers une offre
+  offer Offer? @relation(fields: [offerId], references: [id])
+}
+// ✅ Modèle pour les préférences de notification
+model NotificationPreferences {
+  id Int @id @default(autoincrement())
+  profileId Int @unique
+  locationScope String @default("INTERNATIONAL") // REGION, FRANCE, INTERNATIONAL
+  profile Profile @relation(fields: [profileId], references: [id])
 }
