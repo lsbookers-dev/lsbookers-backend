@@ -25,7 +25,7 @@ const app = express();
 /* ===================== Middlewares globaux ===================== */
 // CORS
 const corsOptions = {
-  origin: '*', // Simplifié pour éviter l'erreur. Pour une origine spécifique, définis FRONTEND_URL dans .env et utilise : origin: process.env.FRONTEND_URL
+  origin: process.env.FRONTEND_URL || 'http://localhost:3000', // Origine spécifique, ajuste FRONTEND_URL dans .env
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Authorization', 'Content-Type', 'Cache-Control', 'Pragma', 'Expires'],
