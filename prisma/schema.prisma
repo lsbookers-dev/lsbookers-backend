@@ -1,175 +1,209 @@
 generator client {
   provider = "prisma-client-js"
 }
+
 datasource db {
   provider = "postgresql"
-  url = env("DATABASE_URL")
+  url      = env("DATABASE_URL")
 }
+
 model User {
-  id Int @id @default(autoincrement())
-  name String
-  email String @unique
-  password String
-  role Role
-  isAdmin Boolean @default(false)
-  profile Profile?
-  media Media[]
-  followers Follow[] @relation("followers")
-  following Follow[] @relation("following")
-  messages Message[] @relation("SentMessages")
-  conversations ConversationParticipant[]
-  notifications Notification[] // ✅ Relation pour les notifications
-  createdAt DateTime @default(now())
+  id                Int                     @id @default(autoincrement())
+  name              String
+  email             String                  @unique
+  password          String
+  role              Role
+  isAdmin           Boolean                 @default(false)
+  profile           Profile?
+  media             Media[]
+  followers         Follow[]                @relation("followers")
+  following         Follow[]                @relation("following")
+  messages          Message[]               @relation("SentMessages")
+  conversations     ConversationParticipant[]
+  notifications     Notification[]          // ✅ Notifications reçues
+  notificationsSent Notification[]          @relation("NotificationActor") // ✅ Notifications envoyées comme acteur
+  createdAt         DateTime                @default(now())
 }
+
 model Profile {
-  id Int @id @default(autoincrement())
-  userId Int @unique
-  bio String?
-  profession String?
-  location String?
-  country String?
-  latitude Float?
-  longitude Float?
-  radiusKm Int?
-  specialties String[]
-  typeEtablissement String?
-  avatar String?
-  banner String?
-  notificationPreferences NotificationPreferences? // ✅ Préférences de notification
-  user User @relation(fields: [userId], references: [id])
-  events Event[]
-  media Media[]
-  publications Publication[]
-  offers Offer[]
+  id                      Int                       @id @default(autoincrement())
+  userId                  Int                       @unique
+  bio                     String?
+  profession              String?
+  location                String?
+  country                 String?
+  latitude                Float?
+  longitude               Float?
+  radiusKm                Int?
+  specialties             String[]
+  typeEtablissement       String?
+  avatar                  String?
+  banner                  String?
+  notificationPreferences NotificationPreferences?
+  user                    User                      @relation(fields: [userId], references: [id])
+  events                  Event[]
+  media                   Media[]
+  publications            Publication[]
+  offers                  Offer[]
 }
+
 model Publication {
-  id Int @id @default(autoincrement())
-  title String
-  media String
+  id        Int      @id @default(autoincrement())
+  title     String
+  media     String
   mediaType String
-  caption String?
+  caption   String?
   profileId Int
-  profile Profile @relation(fields: [profileId], references: [id])
+  profile   Profile  @relation(fields: [profileId], references: [id])
   createdAt DateTime @default(now())
 }
+
 model Media {
-  id Int @id @default(autoincrement())
-  url String
-  type MediaType
-  caption String?
+  id        Int      @id @default(autoincrement())
+  url       String
+  type      MediaType
+  caption   String?
   createdAt DateTime @default(now())
-  userId Int
-  user User @relation(fields: [userId], references: [id])
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
   profileId Int
-  profile Profile @relation(fields: [profileId], references: [id])
+  profile   Profile  @relation(fields: [profileId], references: [id])
 }
+
 enum MediaType {
   IMAGE
   VIDEO
 }
+
 model Follow {
-  id Int @id @default(autoincrement())
-  followerId Int
+  id          Int   @id @default(autoincrement())
+  followerId  Int
   followingId Int
-  createdAt DateTime @default(now())
-  follower User @relation("followers", fields: [followerId], references: [id])
-  following User @relation("following", fields: [followingId], references: [id])
+  createdAt   DateTime @default(now())
+
+  follower    User @relation("followers", fields: [followerId], references: [id])
+  following   User @relation("following", fields: [followingId], references: [id])
 }
+
 model Message {
-  id Int @id @default(autoincrement())
-  content String
-  senderId Int
+  id             Int          @id @default(autoincrement())
+  content        String
+  senderId       Int
   conversationId Int
-  createdAt DateTime @default(now())
-  sender User @relation("SentMessages", fields: [senderId], references: [id])
-  conversation Conversation @relation(fields: [conversationId], references: [id])
+  createdAt      DateTime     @default(now())
+
+  sender         User         @relation("SentMessages", fields: [senderId], references: [id])
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+  notifications  Notification[] // ✅ Notifications liées à ce message
 }
+
 model Conversation {
-  id Int @id @default(autoincrement())
+  id           Int                       @id @default(autoincrement())
   participants ConversationParticipant[]
-  messages Message[]
-  updatedAt DateTime @updatedAt
-  createdAt DateTime @default(now())
+  messages     Message[]
+  updatedAt    DateTime                  @updatedAt
+  createdAt    DateTime                  @default(now())
 }
+
 model ConversationParticipant {
-  id Int @id @default(autoincrement())
-  userId Int
+  id             Int          @id @default(autoincrement())
+  userId         Int
   conversationId Int
-  user User @relation(fields: [userId], references: [id])
-  conversation Conversation @relation(fields: [conversationId], references: [id])
+
+  user           User         @relation(fields: [userId], references: [id])
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+
   @@unique([userId, conversationId])
 }
+
 model Event {
-  id Int @id @default(autoincrement())
-  title String
-  start DateTime
-  end DateTime
-  allDay Boolean @default(false)
-  lieu String?
-  type String?
-  profile Profile @relation(fields: [profileId], references: [id])
+  id        Int      @id @default(autoincrement())
+  title     String
+  start     DateTime
+  end       DateTime
+  allDay    Boolean  @default(false)
+  lieu      String?
+  type      String?
+  profile   Profile  @relation(fields: [profileId], references: [id])
   profileId Int
   createdAt DateTime @default(now())
 }
+
 model AdminSettings {
-  id Int @id @default(1)
-  mainColor String? @default("#FF0055")
-  secondaryColor String? @default("#000000")
-  bannerUrl String?
-  welcomeText String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id             Int      @id @default(1)
+  mainColor      String?  @default("#FF0055")
+  secondaryColor String?  @default("#000000")
+  bannerUrl      String?
+  welcomeText    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 }
+
 enum Role {
   ARTIST
   ORGANIZER
   PROVIDER
   ADMIN
 }
+
 model Offer {
-  id Int @id @default(autoincrement())
-  title String
-  description String
-  type OfferType
-  specialty String? // ✅ Champ pour spécialité
-  date DateTime
-  location String
-  country String
-  radiusKm Int?
-  status OfferStatus @default(ACTIVE)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  organizer Profile @relation(fields: [organizerId], references: [id])
-  organizerId Int
-  notifications Notification[] // ✅ Relation pour les notifications liées à l’offre
+  id           Int           @id @default(autoincrement())
+  title        String
+  description  String
+  type         OfferType
+  specialty    String?
+  date         DateTime
+  location     String
+  country      String
+  radiusKm     Int?
+  status       OfferStatus   @default(ACTIVE)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  organizer    Profile       @relation(fields: [organizerId], references: [id])
+  organizerId  Int
+  notifications Notification[]
+
   @@index([type])
   @@index([createdAt])
 }
+
 enum OfferType {
   ARTIST
   PROVIDER
   ALL
 }
+
 enum OfferStatus {
   ACTIVE
   CLOSED
 }
-// ✅ Modèle pour les notifications
+
+// ✅ Notifications enrichies
 model Notification {
-  id Int @id @default(autoincrement())
-  userId Int
-  type String // Ex: "NEW_OFFER", "NEW_FOLLOWER", "NEW_MESSAGE"
-  message String
-  read Boolean @default(false)
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  type      String   // Ex: "NEW_OFFER", "NEW_FOLLOWER", "NEW_MESSAGE"
+  content   String   // ancien "message"
+  read      Boolean  @default(false)
   createdAt DateTime @default(now())
-  user User @relation(fields: [userId], references: [id])
-  offerId Int? // Lien optionnel vers une offre
-  offer Offer? @relation(fields: [offerId], references: [id])
+
+  // Relations
+  user      User     @relation(fields: [userId], references: [id])
+  offerId   Int?
+  offer     Offer?   @relation(fields: [offerId], references: [id])
+
+  actorId   Int?
+  actor     User?    @relation("NotificationActor", fields: [actorId], references: [id])
+
+  messageId Int?
+  message   Message? @relation(fields: [messageId], references: [id])
 }
-// ✅ Modèle pour les préférences de notification
+
 model NotificationPreferences {
-  id Int @id @default(autoincrement())
-  profileId Int @unique
-  locationScope String @default("INTERNATIONAL") // REGION, FRANCE, INTERNATIONAL
-  profile Profile @relation(fields: [profileId], references: [id])
+  id            Int      @id @default(autoincrement())
+  profileId     Int      @unique
+  locationScope String   @default("INTERNATIONAL")
+
+  profile       Profile  @relation(fields: [profileId], references: [id])
 }

@@ -13,9 +13,42 @@ router.get('/', authenticateToken, async (req, res) => {
     const notifications = await prisma.notification.findMany({
       where: { userId },
       orderBy: { createdAt: 'desc' },
+      include: {
+        actor: {
+          select: {
+            id: true,
+            name: true,
+            profile: { select: { avatar: true } },
+          },
+        },
+        message: {
+          select: {
+            id: true,
+            conversationId: true,
+          },
+        },
+      },
     });
 
-    res.json({ notifications });
+    // Mapper pour renvoyer un format plus pratique au frontend
+    const formatted = notifications.map((n) => ({
+      id: n.id,
+      type: n.type,
+      content: n.content,
+      read: n.read,
+      createdAt: n.createdAt,
+      actor: n.actor
+        ? {
+            id: n.actor.id,
+            name: n.actor.name,
+            avatar: n.actor.profile?.avatar || null,
+          }
+        : null,
+      conversationId: n.message?.conversationId || null,
+      offerId: n.offerId || null,
+    }));
+
+    res.json({ notifications: formatted });
   } catch (err) {
     console.error('❌ [GET /notifications] Error:', err);
     res.status(500).json({ error: 'Erreur serveur' });
@@ -27,7 +60,8 @@ router.patch('/:id', authenticateToken, async (req, res) => {
   try {
     const userId = Number(req.user?.id);
     const notificationId = Number(req.params.id);
-    if (!userId || !notificationId) return res.status(400).json({ error: 'Paramètres invalides' });
+    if (!userId || !notificationId)
+      return res.status(400).json({ error: 'Paramètres invalides' });
 
     const notification = await prisma.notification.findUnique({
       where: { id: notificationId },
