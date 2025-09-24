@@ -32,15 +32,10 @@ function pickUserPublic(u) {
 
 const isAdminUser = (u) => !!u && String(u.role).toUpperCase() === 'ADMIN';
 
-/* Petite utilitaire : vérifie si une conversation implique un ADMIN */
 async function conversationHasAdmin(conversationId) {
   const conv = await prisma.conversation.findUnique({
     where: { id: Number(conversationId) },
-    include: {
-      participants: {
-        include: { user: true },
-      },
-    },
+    include: { participants: { include: { user: true } } },
   });
   if (!conv) return false;
   return conv.participants.some((p) => isAdminUser(p.user));
@@ -53,24 +48,19 @@ router.get('/conversations', authenticateToken, async (req, res) => {
   try {
     const userId = Number(req.user?.id);
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
     const participations = await prisma.conversationParticipant.findMany({
       where: { userId },
       include: {
         conversation: {
           include: {
-            participants: {
-              include: {
-                user: { include: { profile: true } },
-              },
-            },
-            messages: {
-              orderBy: { createdAt: 'desc' },
-              take: 1,
-            },
+            participants: { include: { user: { include: { profile: true } } } },
+            messages: { orderBy: { createdAt: 'desc' }, take: 1 },
           },
         },
       },
     });
+
     const conversations = participations
       .map((p) => {
         const c = p.conversation;
@@ -82,11 +72,13 @@ router.get('/conversations', authenticateToken, async (req, res) => {
         };
       })
       .filter((c) => c.participants.every((u) => !isAdminUser(u)));
+
     conversations.sort(
       (a, b) =>
         new Date(b.updatedAt || 0).getTime() -
         new Date(a.updatedAt || 0).getTime()
     );
+
     res.json({ conversations });
   } catch (err) {
     console.error('❌ [GET /conversations] Error:', err);
@@ -139,11 +131,7 @@ router.get('/messages/:conversationId', authenticateToken, async (req, res) => {
 
     const participation = await prisma.conversationParticipant.findFirst({
       where: { conversationId, userId },
-      include: {
-        conversation: {
-          include: { participants: { include: { user: true } } },
-        },
-      },
+      include: { conversation: { include: { participants: { include: { user: true } } } } },
     });
     if (!participation) return res.status(403).json({ error: 'Forbidden' });
 
@@ -168,6 +156,7 @@ router.get('/messages/:conversationId', authenticateToken, async (req, res) => {
         image: m.sender?.profile?.avatar || m.sender?.image || null,
       },
     }));
+
     res.json(payload);
   } catch (err) {
     console.error('❌ [GET /messages/:conversationId] Error:', err);
@@ -192,9 +181,7 @@ router.post('/send', authenticateToken, async (req, res) => {
       select: { id: true, role: true, name: true },
     });
     if (!recipient) return res.status(404).json({ error: 'Destinataire introuvable' });
-    if (isAdminUser(recipient)) {
-      return res.status(403).json({ error: 'Action non autorisée' });
-    }
+    if (isAdminUser(recipient)) return res.status(403).json({ error: 'Action non autorisée' });
 
     let conversation = await prisma.conversation.findFirst({
       where: {
@@ -209,27 +196,21 @@ router.post('/send', authenticateToken, async (req, res) => {
     if (!conversation) {
       conversation = await prisma.conversation.create({
         data: {
-          participants: {
-            create: [{ userId: senderId }, { userId: Number(recipientId) }],
-          },
+          participants: { create: [{ userId: senderId }, { userId: Number(recipientId) }] },
         },
         include: { participants: { include: { user: true } } },
       });
     }
 
     const message = await prisma.message.create({
-      data: {
-        content: String(content),
-        senderId,
-        conversationId: conversation.id,
-      },
+      data: { content: String(content), senderId, conversationId: conversation.id },
     });
 
     await prisma.notification.create({
       data: {
         userId: Number(recipientId),
         type: 'NEW_MESSAGE',
-        message: `Nouveau message de ${req.user.name || 'Utilisateur'}`,
+        content: `Nouveau message de ${req.user.name || 'Utilisateur'}`, // ✅ cohérence
         read: false,
         actorId: senderId,
         messageId: message.id,
@@ -263,6 +244,7 @@ router.post('/send-file', authenticateToken, upload.single('file'), async (req, 
   try {
     const senderId = Number(req.user?.id);
     if (!senderId) return res.status(401).json({ error: 'Unauthorized' });
+
     const { content, conversationId } = req.body;
     const file = req.file;
     if (!conversationId || (!content && !file)) {
@@ -279,9 +261,10 @@ router.post('/send-file', authenticateToken, upload.single('file'), async (req, 
     });
     if (!conversation) return res.status(404).json({ error: 'Conversation introuvable' });
 
-    const fileUrl = file
-      ? `https://lsbookers-backend-production.up.railway.app/uploads/${file.filename}`
-      : null;
+    let fileUrl = null;
+    if (file) {
+      fileUrl = `https://lsbookers-backend-production.up.railway.app/uploads/${file.filename}`;
+    }
 
     let finalContent = '';
     if (file && content) finalContent = `${content}\n${fileUrl}`;
@@ -289,11 +272,7 @@ router.post('/send-file', authenticateToken, upload.single('file'), async (req, 
     else finalContent = String(content);
 
     const message = await prisma.message.create({
-      data: {
-        senderId,
-        conversationId: Number(conversationId),
-        content: finalContent,
-      },
+      data: { senderId, conversationId: Number(conversationId), content: finalContent },
     });
 
     const recipients = conversation.participants
@@ -305,7 +284,7 @@ router.post('/send-file', authenticateToken, upload.single('file'), async (req, 
         data: {
           userId: recipientId,
           type: 'NEW_MESSAGE',
-          message: `Nouveau message de ${req.user.name || 'Utilisateur'}`,
+          content: `Nouveau message de ${req.user.name || 'Utilisateur'}`, // ✅ cohérence
           read: false,
           actorId: senderId,
           messageId: message.id,

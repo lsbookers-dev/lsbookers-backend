@@ -33,11 +33,11 @@ router.get('/', authenticateToken, async (req, res) => {
       },
     });
 
-    // Mapper pour renvoyer un format plus pratique au frontend
+    // ⚡️ Normalisation du format
     const formatted = notifications.map((n) => ({
       id: n.id,
       type: n.type,
-      message: n.message || '', // ⚡️ le champ correct
+      content: n.content || '', // ✅ le texte de la notif
       read: n.read,
       createdAt: n.createdAt,
       actor: n.actor
@@ -47,7 +47,8 @@ router.get('/', authenticateToken, async (req, res) => {
             avatar: n.actor.profile?.avatar || null,
           }
         : null,
-      conversationId: n.message?.conversationId || null,
+      conversationId: n.message?.conversationId || null, // ✅ conversation liée
+      messageId: n.message?.id || null, // ✅ identifiant du message lié
       offerId: n.offerId || null,
     }));
 
