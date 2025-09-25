@@ -94,7 +94,7 @@ router.get('/unread-count', authenticateToken, async (req, res) => {
       select: {
         id: true,
         messages: {
-          select: { id: true, senderId: true, createdAt: true },
+          select: { id: true, senderId: true, createdAt: true, seen: true },
           orderBy: { createdAt: 'desc' },
           take: 1,
         },
@@ -103,8 +103,9 @@ router.get('/unread-count', authenticateToken, async (req, res) => {
     const unreadCount = convs.reduce((acc, c) => {
       const last = c.messages[0];
       if (!last) return acc;
-      return last.senderId !== userId ? acc + 1 : acc;
+      return last.senderId !== userId && !last.seen ? acc + 1 : acc;
     }, 0);
+    console.log(`Unread count for user ${userId}: ${unreadCount}`); // ✅ Log pour débogage
     res.json({ count: unreadCount });
   } catch (err) {
     console.error('❌ [GET /unread-count] Error:', err);
@@ -268,12 +269,10 @@ router.post('/mark-seen/:conversationId', authenticateToken, async (req, res) =>
     const userId = Number(req.user?.id);
     const conversationId = Number(req.params.conversationId);
     if (!userId || !conversationId) return res.status(400).json({ error: 'Paramètres invalides' });
-
     const participation = await prisma.conversationParticipant.findFirst({
       where: { conversationId, userId },
     });
     if (!participation) return res.status(403).json({ error: 'Accès interdit' });
-
     await prisma.message.updateMany({
       where: {
         conversationId,
@@ -282,7 +281,6 @@ router.post('/mark-seen/:conversationId', authenticateToken, async (req, res) =>
       },
       data: { seen: true },
     });
-
     res.json({ message: 'Messages marqués comme lus' });
   } catch (err) {
     console.error('❌ [POST /mark-seen] Error:', err);
