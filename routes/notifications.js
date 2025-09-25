@@ -12,7 +12,6 @@ router.get('/', authenticateToken, async (req, res) => {
   try {
     const userId = Number(req.user?.id);
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
-
     const notifications = await prisma.notification.findMany({
       where: { userId },
       orderBy: { createdAt: 'desc' },
@@ -32,7 +31,6 @@ router.get('/', authenticateToken, async (req, res) => {
         },
       },
     });
-
     // ⚡️ Normalisation du format
     const formatted = notifications.map((n) => ({
       id: n.id,
@@ -51,7 +49,7 @@ router.get('/', authenticateToken, async (req, res) => {
       messageId: n.message?.id || null, // ✅ identifiant du message lié
       offerId: n.offerId || null,
     }));
-
+    console.log(`Notifications retournées pour user ${userId}: ${formatted.length}`); // ✅ Log pour débogage
     res.json({ notifications: formatted });
   } catch (err) {
     console.error('❌ [GET /notifications] Error:', err);
@@ -69,20 +67,16 @@ router.patch('/:id', authenticateToken, async (req, res) => {
     const notificationId = Number(req.params.id);
     if (!userId || !notificationId)
       return res.status(400).json({ error: 'Paramètres invalides' });
-
     const notification = await prisma.notification.findUnique({
       where: { id: notificationId },
     });
-
     if (!notification || notification.userId !== userId) {
       return res.status(404).json({ error: 'Notification introuvable' });
     }
-
     await prisma.notification.update({
       where: { id: notificationId },
       data: { read: true },
     });
-
     res.json({ message: 'Notification marquée comme lue ✅' });
   } catch (err) {
     console.error('❌ [PATCH /notifications/:id] Error:', err);
