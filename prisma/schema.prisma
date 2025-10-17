@@ -23,6 +23,8 @@ model User {
   notifications     Notification[]          // ✅ Notifications reçues
   notificationsSent Notification[]          @relation("NotificationActor") // ✅ Notifications envoyées comme acteur
   createdAt         DateTime                @default(now())
+  // 🔐 Réinitialisations de mot de passe
+  passwordResets    PasswordReset[]
 }
 
 model Profile {
@@ -76,13 +78,13 @@ enum MediaType {
 }
 
 model Follow {
-  id          Int   @id @default(autoincrement())
+  id          Int      @id @default(autoincrement())
   followerId  Int
   followingId Int
   createdAt   DateTime @default(now())
 
-  follower    User @relation("followers", fields: [followerId], references: [id])
-  following   User @relation("following", fields: [followingId], references: [id])
+  follower    User     @relation("followers", fields: [followerId], references: [id])
+  following   User     @relation("following", fields: [followingId], references: [id])
 }
 
 model Message {
@@ -147,21 +149,21 @@ enum Role {
 }
 
 model Offer {
-  id           Int           @id @default(autoincrement())
-  title        String
-  description  String
-  type         OfferType
-  specialty    String?
-  date         DateTime
-  location     String
-  country      String
-  radiusKm     Int?
-  status       OfferStatus   @default(ACTIVE)
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+  id            Int           @id @default(autoincrement())
+  title         String
+  description   String
+  type          OfferType
+  specialty     String?
+  date          DateTime
+  location      String
+  country       String
+  radiusKm      Int?
+  status        OfferStatus   @default(ACTIVE)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
 
-  organizer    Profile       @relation(fields: [organizerId], references: [id])
-  organizerId  Int
+  organizer     Profile       @relation(fields: [organizerId], references: [id])
+  organizerId   Int
   notifications Notification[]
 
   @@index([type])
@@ -206,4 +208,19 @@ model NotificationPreferences {
   locationScope String   @default("INTERNATIONAL")
 
   profile       Profile  @relation(fields: [profileId], references: [id])
+}
+
+//
+// 🔐 Réinitialisation de mot de passe
+//
+model PasswordReset {
+  id         String   @id @default(cuid())
+  userId     Int
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String   @unique
+  expiresAt  DateTime
+  usedAt     DateTime?
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
 }
