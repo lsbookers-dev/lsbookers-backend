@@ -20,10 +20,9 @@ model User {
   following         Follow[]                @relation("following")
   messages          Message[]               @relation("SentMessages")
   conversations     ConversationParticipant[]
-  notifications     Notification[]          // ✅ Notifications reçues
-  notificationsSent Notification[]          @relation("NotificationActor") // ✅ Notifications envoyées comme acteur
+  notifications     Notification[]
+  notificationsSent Notification[]          @relation("NotificationActor")
   createdAt         DateTime                @default(now())
-  // 🔐 Réinitialisations de mot de passe
   passwordResets    PasswordReset[]
 }
 
@@ -41,6 +40,8 @@ model Profile {
   typeEtablissement       String?
   avatar                  String?
   banner                  String?
+  soundcloudUrl           String?
+  showSoundcloud          Boolean                   @default(false)
   notificationPreferences NotificationPreferences?
   user                    User                      @relation(fields: [userId], references: [id])
   events                  Event[]
@@ -96,7 +97,7 @@ model Message {
 
   sender         User         @relation("SentMessages", fields: [senderId], references: [id])
   conversation   Conversation @relation(fields: [conversationId], references: [id])
-  notifications  Notification[] // ✅ Notifications liées à ce message
+  notifications  Notification[]
 }
 
 model Conversation {
@@ -181,16 +182,15 @@ enum OfferStatus {
   CLOSED
 }
 
-// ✅ Notifications enrichies
 model Notification {
-  id        Int      @id @default(autoincrement())
-  userId    Int
-  type      String   // Ex: "NEW_OFFER", "NEW_FOLLOWER", "NEW_MESSAGE"
-  content   String   // ancien "message"
-  read      Boolean  @default(false)
-  createdAt DateTime @default(now())
+  id            Int      @id @default(autoincrement())
+  userId        Int
+  type          String
+  content       String?
+  legacyMessage String?  @map("message")
+  read          Boolean  @default(false)
+  createdAt     DateTime @default(now())
 
-  // Relations
   user      User     @relation(fields: [userId], references: [id])
   offerId   Int?
   offer     Offer?   @relation(fields: [offerId], references: [id])
@@ -210,9 +210,6 @@ model NotificationPreferences {
   profile       Profile  @relation(fields: [profileId], references: [id])
 }
 
-//
-// 🔐 Réinitialisation de mot de passe
-//
 model PasswordReset {
   id         String   @id @default(cuid())
   userId     Int

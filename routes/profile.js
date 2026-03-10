@@ -57,6 +57,7 @@ router.get('/user/:userId', async (req, res) => {
       where: { userId },
       include: {
         user: { select: { id: true, name: true, email: true, role: true } },
+        notificationPreferences: true,
       },
     });
 
@@ -98,7 +99,7 @@ router.get('/calendar/:userId', async (req, res) => {
 
     const events = await prisma.event.findMany({
       where: { profileId: profile.id },
-      orderBy: { start: 'asc' }, // ✅ ton modèle Event utilise "start"
+      orderBy: { start: 'asc' },
     });
 
     return res.json({ events });
@@ -126,6 +127,7 @@ router.get('/:id', authenticate, async (req, res) => {
       where: { id },
       include: {
         user: { select: { id: true, name: true, email: true, role: true } },
+        notificationPreferences: true,
       },
     });
 
@@ -174,6 +176,9 @@ router.put('/:id', authenticate, async (req, res) => {
     banner,
     avatarUrl,
     bannerUrl,
+    soundcloudUrl,
+    showSoundcloud,
+    notificationPreferences,
   } = req.body;
 
   console.log('🟢 Données reçues PUT /profile/:id', req.body);
@@ -203,6 +208,7 @@ router.put('/:id', authenticate, async (req, res) => {
     const sanitizedAvatarUrl = sanitizeString(avatarUrl);
     const sanitizedBannerUrl = sanitizeString(bannerUrl);
     const sanitizedCountry = sanitizeString(clientCountry);
+    const sanitizedSoundcloudUrl = sanitizeString(soundcloudUrl);
 
     const parsedRadiusKm = parseIntegerOrNull(radiusKm);
     const parsedClientLatitude = parseFloatOrNull(clientLatitude);
@@ -212,7 +218,9 @@ router.put('/:id', authenticate, async (req, res) => {
     // 🌍 Géocodage si "location" fourni
     if (sanitizedLocation) {
       const geoRes = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(sanitizedLocation)}`
+        `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(
+          sanitizedLocation
+        )}`
       );
       const geoData = await geoRes.json();
 
@@ -249,6 +257,7 @@ router.put('/:id', authenticate, async (req, res) => {
     if (sanitizedBio !== undefined) dataToUpdate.bio = sanitizedBio;
     if (sanitizedProfession !== undefined) dataToUpdate.profession = sanitizedProfession;
     if (sanitizedLocation !== undefined) dataToUpdate.location = sanitizedLocation;
+
     if (parsedRadiusKm !== null || radiusKm === null || radiusKm === '') {
       dataToUpdate.radiusKm = parsedRadiusKm;
     }
@@ -265,6 +274,14 @@ router.put('/:id', authenticate, async (req, res) => {
       dataToUpdate.typeEtablissement = sanitizedTypeEtablissement;
     }
 
+    if (sanitizedSoundcloudUrl !== undefined) {
+      dataToUpdate.soundcloudUrl = sanitizedSoundcloudUrl;
+    }
+
+    if (showSoundcloud !== undefined) {
+      dataToUpdate.showSoundcloud = Boolean(showSoundcloud);
+    }
+
     // ✅ Médias (nouveaux champs prioritaires)
     if (sanitizedAvatar !== undefined) dataToUpdate.avatar = sanitizedAvatar;
     else if (sanitizedAvatarUrl !== undefined) dataToUpdate.avatar = sanitizedAvatarUrl;
@@ -275,13 +292,31 @@ router.put('/:id', authenticate, async (req, res) => {
     const updatedProfile = await prisma.profile.update({
       where: { id },
       data: dataToUpdate,
+    });
+
+    if (notificationPreferences?.locationScope) {
+      await prisma.notificationPreferences.upsert({
+        where: { profileId: profile.id },
+        update: {
+          locationScope: String(notificationPreferences.locationScope),
+        },
+        create: {
+          profileId: profile.id,
+          locationScope: String(notificationPreferences.locationScope),
+        },
+      });
+    }
+
+    const fullUpdatedProfile = await prisma.profile.findUnique({
+      where: { id },
       include: {
         user: { select: { id: true, name: true, email: true, role: true } },
+        notificationPreferences: true,
       },
     });
 
     console.log('✅ Profil mis à jour avec succès');
-    return res.json({ profile: updatedProfile });
+    return res.json({ profile: fullUpdatedProfile || updatedProfile });
   } catch (error) {
     console.error('❌ Erreur mise à jour profil PUT /:id :', error);
     return res.status(500).json({ error: 'Erreur serveur' });
