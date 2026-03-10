@@ -10,6 +10,35 @@ const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fet
 
 const isAdminRole = (role) => String(role || '').toUpperCase() === 'ADMIN';
 
+const parseIntegerOrNull = (value) => {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isNaN(parsed) ? null : parsed;
+};
+
+const parseFloatOrNull = (value) => {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = Number.parseFloat(value);
+  return Number.isNaN(parsed) ? null : parsed;
+};
+
+const sanitizeString = (value) => {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (typeof value !== 'string') return String(value);
+  return value.trim();
+};
+
+const sanitizeStringArray = (value) => {
+  if (value === undefined) return undefined;
+  if (value === null) return [];
+  if (!Array.isArray(value)) return undefined;
+
+  return value
+    .map((item) => (typeof item === 'string' ? item.trim() : String(item).trim()))
+    .filter((item) => item.length > 0);
+};
+
 /**
  * GET /api/profile/user/:userId
  * Public : récupérer un profil par userId
@@ -18,6 +47,7 @@ const isAdminRole = (role) => String(role || '').toUpperCase() === 'ADMIN';
 router.get('/user/:userId', async (req, res) => {
   const raw = req.params.userId;
   const userId = Number.parseInt(raw, 10);
+
   if (Number.isNaN(userId)) {
     return res.status(400).json({ error: 'Paramètre userId invalide' });
   }
@@ -31,50 +61,50 @@ router.get('/user/:userId', async (req, res) => {
     });
 
     if (!profile || isAdminRole(profile?.user?.role)) {
-      // ADMIN invisible sur les pages publiques
       return res.status(404).json({ error: 'Profil introuvable' });
     }
 
-    res.json({ profile });
+    return res.json({ profile });
   } catch (error) {
     console.error('❌ Erreur récupération profil public /user/:userId :', error);
-    res.status(500).json({ error: 'Erreur serveur' });
+    return res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 
 /**
  * GET /api/profile/calendar/:userId
- * Public : calendrier d’un artiste (via userId)
+ * Public : calendrier d’un profil (via userId)
  * 👉 Invisibilité ADMIN : 404 si le profil est ADMIN
  */
 router.get('/calendar/:userId', async (req, res) => {
   const raw = req.params.userId;
   const userId = Number.parseInt(raw, 10);
+
   if (Number.isNaN(userId)) {
     return res.status(400).json({ error: 'Paramètre userId invalide' });
   }
 
   try {
-    // On inclut l'user pour tester le rôle
     const profile = await prisma.profile.findUnique({
       where: { userId },
       include: {
         user: { select: { id: true, role: true } },
       },
     });
+
     if (!profile || isAdminRole(profile?.user?.role)) {
       return res.status(404).json({ error: 'Profil introuvable' });
     }
 
     const events = await prisma.event.findMany({
       where: { profileId: profile.id },
-      orderBy: { date: 'asc' },
+      orderBy: { start: 'asc' }, // ✅ ton modèle Event utilise "start"
     });
 
-    res.json({ events });
+    return res.json({ events });
   } catch (error) {
     console.error('❌ Erreur récupération calendrier :', error);
-    res.status(500).json({ error: 'Erreur serveur' });
+    return res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 
@@ -86,6 +116,7 @@ router.get('/calendar/:userId', async (req, res) => {
 router.get('/:id', authenticate, async (req, res) => {
   const raw = req.params.id;
   const id = Number.parseInt(raw, 10);
+
   if (Number.isNaN(id)) {
     return res.status(400).json({ error: 'Paramètre id invalide' });
   }
@@ -102,16 +133,15 @@ router.get('/:id', authenticate, async (req, res) => {
       return res.status(404).json({ error: 'Profil introuvable' });
     }
 
-    // Si le profil appartient à un ADMIN et que l’appelant n’est pas ADMIN → 404 (invisible)
     const callerRole = String(req.user?.role || '').toUpperCase();
     if (isAdminRole(profile.user?.role) && callerRole !== 'ADMIN') {
       return res.status(404).json({ error: 'Profil introuvable' });
     }
 
-    res.json({ profile });
+    return res.json({ profile });
   } catch (error) {
     console.error('❌ Erreur récupération profil sécurisé /:id :', error);
-    res.status(500).json({ error: 'Erreur serveur' });
+    return res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 
@@ -119,6 +149,7 @@ router.get('/:id', authenticate, async (req, res) => {
  * PUT /api/profile/:id
  * Privé : mettre à jour le profil
  * NOTE : on accepte avatar/banner ET avatarUrl/bannerUrl (alias).
+ * Version V1 robuste, compatible avec le frontend actuel.
  */
 router.put('/:id', authenticate, async (req, res) => {
   const raw = req.params.id;
@@ -129,7 +160,6 @@ router.put('/:id', authenticate, async (req, res) => {
     return res.status(400).json({ error: 'Paramètre id invalide' });
   }
 
-  // Champs possibles en entrée
   const {
     bio,
     location,
@@ -139,12 +169,9 @@ router.put('/:id', authenticate, async (req, res) => {
     typeEtablissement,
     latitude: clientLatitude,
     longitude: clientLongitude,
-
-    // Nouveaux champs (col. Prisma)
+    country: clientCountry,
     avatar,
     banner,
-
-    // Aliases historiques acceptés
     avatarUrl,
     bannerUrl,
   } = req.body;
@@ -154,7 +181,9 @@ router.put('/:id', authenticate, async (req, res) => {
   try {
     const profile = await prisma.profile.findUnique({
       where: { id },
-      include: { user: { select: { role: true, id: true } } },
+      include: {
+        user: { select: { role: true, id: true } },
+      },
     });
 
     if (!profile || profile.userId !== userId) {
@@ -165,65 +194,97 @@ router.put('/:id', authenticate, async (req, res) => {
     let longitude = profile.longitude;
     let country = profile.country;
 
+    const sanitizedLocation = sanitizeString(location);
+    const sanitizedBio = sanitizeString(bio);
+    const sanitizedProfession = sanitizeString(profession);
+    const sanitizedTypeEtablissement = sanitizeString(typeEtablissement);
+    const sanitizedAvatar = sanitizeString(avatar);
+    const sanitizedBanner = sanitizeString(banner);
+    const sanitizedAvatarUrl = sanitizeString(avatarUrl);
+    const sanitizedBannerUrl = sanitizeString(bannerUrl);
+    const sanitizedCountry = sanitizeString(clientCountry);
+
+    const parsedRadiusKm = parseIntegerOrNull(radiusKm);
+    const parsedClientLatitude = parseFloatOrNull(clientLatitude);
+    const parsedClientLongitude = parseFloatOrNull(clientLongitude);
+    const sanitizedSpecialties = sanitizeStringArray(specialties);
+
     // 🌍 Géocodage si "location" fourni
-    if (location) {
+    if (sanitizedLocation) {
       const geoRes = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(location)}`
+        `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(sanitizedLocation)}`
       );
       const geoData = await geoRes.json();
 
       if (Array.isArray(geoData) && geoData.length > 0) {
         latitude = parseFloat(geoData[0].lat);
         longitude = parseFloat(geoData[0].lon);
-        country = geoData[0].address?.country || null;
+        country = geoData[0].address?.country || sanitizedCountry || null;
+
         console.log('📍 Coordonnées géocodées :', latitude, longitude, '🌐 Pays :', country);
       } else {
         return res.status(400).json({ error: 'Localisation invalide ou non reconnue' });
       }
-    } else if (clientLatitude != null && clientLongitude != null) {
-      latitude = Number(clientLatitude);
-      longitude = Number(clientLongitude);
+    } else if (parsedClientLatitude !== null && parsedClientLongitude !== null) {
+      latitude = parsedClientLatitude;
+      longitude = parsedClientLongitude;
 
-      const revRes = await fetch(
-        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=3&addressdetails=1`
-      );
-      const revData = await revRes.json();
-      country = revData?.address?.country || null;
-      console.log('🌐 Pays déterminé par coordonnées :', country);
+      try {
+        const revRes = await fetch(
+          `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=3&addressdetails=1`
+        );
+        const revData = await revRes.json();
+        country = sanitizedCountry || revData?.address?.country || profile.country || null;
+        console.log('🌐 Pays déterminé par coordonnées :', country);
+      } catch (reverseError) {
+        console.warn('⚠️ Reverse geocoding impossible, pays conservé si disponible');
+        country = sanitizedCountry || profile.country || null;
+      }
+    } else if (sanitizedCountry !== undefined) {
+      country = sanitizedCountry;
     }
 
-    // Prépare le payload de mise à jour
     const dataToUpdate = {};
 
-    if (bio !== undefined) dataToUpdate.bio = bio;
-    if (profession !== undefined) dataToUpdate.profession = profession;
-    if (location !== undefined) dataToUpdate.location = location;
-    if (radiusKm !== undefined && !Number.isNaN(Number.parseInt(radiusKm, 10))) {
-      dataToUpdate.radiusKm = Number.parseInt(radiusKm, 10);
+    if (sanitizedBio !== undefined) dataToUpdate.bio = sanitizedBio;
+    if (sanitizedProfession !== undefined) dataToUpdate.profession = sanitizedProfession;
+    if (sanitizedLocation !== undefined) dataToUpdate.location = sanitizedLocation;
+    if (parsedRadiusKm !== null || radiusKm === null || radiusKm === '') {
+      dataToUpdate.radiusKm = parsedRadiusKm;
     }
+
     if (latitude !== undefined) dataToUpdate.latitude = latitude;
     if (longitude !== undefined) dataToUpdate.longitude = longitude;
     if (country !== undefined) dataToUpdate.country = country;
-    if (specialties !== undefined) dataToUpdate.specialties = specialties;
-    if (typeEtablissement !== undefined) dataToUpdate.typeEtablissement = typeEtablissement;
+
+    if (sanitizedSpecialties !== undefined) {
+      dataToUpdate.specialties = sanitizedSpecialties;
+    }
+
+    if (sanitizedTypeEtablissement !== undefined) {
+      dataToUpdate.typeEtablissement = sanitizedTypeEtablissement;
+    }
 
     // ✅ Médias (nouveaux champs prioritaires)
-    if (avatar !== undefined) dataToUpdate.avatar = avatar;
-    else if (avatarUrl !== undefined) dataToUpdate.avatar = avatarUrl;
+    if (sanitizedAvatar !== undefined) dataToUpdate.avatar = sanitizedAvatar;
+    else if (sanitizedAvatarUrl !== undefined) dataToUpdate.avatar = sanitizedAvatarUrl;
 
-    if (banner !== undefined) dataToUpdate.banner = banner;
-    else if (bannerUrl !== undefined) dataToUpdate.banner = bannerUrl;
+    if (sanitizedBanner !== undefined) dataToUpdate.banner = sanitizedBanner;
+    else if (sanitizedBannerUrl !== undefined) dataToUpdate.banner = sanitizedBannerUrl;
 
     const updatedProfile = await prisma.profile.update({
       where: { id },
       data: dataToUpdate,
+      include: {
+        user: { select: { id: true, name: true, email: true, role: true } },
+      },
     });
 
     console.log('✅ Profil mis à jour avec succès');
-    res.json({ profile: updatedProfile });
+    return res.json({ profile: updatedProfile });
   } catch (error) {
     console.error('❌ Erreur mise à jour profil PUT /:id :', error);
-    res.status(500).json({ error: 'Erreur serveur' });
+    return res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 
