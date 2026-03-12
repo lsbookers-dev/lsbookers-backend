@@ -7,6 +7,13 @@ const authenticate = require('../middleware/authenticate')
 // fetch compatible CommonJS
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args))
 
+// Cache simple en mémoire pour éviter de géocoder 10 fois la même ville
+const geoCache = new Map()
+
+function normalizeText(value) {
+  return String(value || '').trim().toLowerCase()
+}
+
 // Haversine util
 function getDistance(lat1, lon1, lat2, lon2) {
   const R = 6371
@@ -21,28 +28,49 @@ function getDistance(lat1, lon1, lat2, lon2) {
   return R * c
 }
 
-// Géocodage simple d’une localisation texte
 async function geocodeLocation(query) {
-  if (!query || !String(query).trim()) return null
+  const normalized = normalizeText(query)
+  if (!normalized) return null
+
+  if (geoCache.has(normalized)) {
+    return geoCache.get(normalized)
+  }
 
   try {
     const res = await fetch(
-      `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(
+      `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=1&q=${encodeURIComponent(
         query
-      )}`
+      )}`,
+      {
+        headers: {
+          'User-Agent': 'LSBookers/1.0 (contact: support@lsbookers.com)',
+          'Accept-Language': 'fr,en',
+        },
+      }
     )
+
+    if (!res.ok) {
+      console.warn(`⚠️ Nominatim a répondu ${res.status} pour "${query}"`)
+      geoCache.set(normalized, null)
+      return null
+    }
+
     const data = await res.json()
 
     if (Array.isArray(data) && data.length > 0) {
-      return {
+      const result = {
         lat: parseFloat(data[0].lat),
         lon: parseFloat(data[0].lon),
       }
+      geoCache.set(normalized, result)
+      return result
     }
 
+    geoCache.set(normalized, null)
     return null
   } catch (err) {
     console.warn('⚠️ Géocodage impossible pour :', query)
+    geoCache.set(normalized, null)
     return null
   }
 }
@@ -61,23 +89,19 @@ async function geocodeLocation(query) {
 router.get('/', authenticate, async (req, res) => {
   const { name, role, specialty, typeEtablissement, zone, radius, country } = req.query
 
-  let searchLat = null
-  let searchLon = null
   const hasRadiusFilter = radius !== undefined && radius !== null && radius !== ''
   const effectiveRadius = hasRadiusFilter ? parseFloat(radius) : null
+  const zoneText = normalizeText(zone)
 
   try {
     if (String(role || '').toUpperCase() === 'ADMIN') {
       return res.json({ users: [] })
     }
 
-    // Géocoder la zone recherchée
-    if (zone) {
-      const geo = await geocodeLocation(String(zone))
-      if (geo) {
-        searchLat = geo.lat
-        searchLon = geo.lon
-      }
+    let searchCoords = null
+
+    if (zoneText && hasRadiusFilter) {
+      searchCoords = await geocodeLocation(String(zone))
     }
 
     const users = await prisma.user.findMany({
@@ -123,70 +147,58 @@ router.get('/', authenticate, async (req, res) => {
 
     let finalUsers = users
 
-    if (zone) {
-      const zoneText = String(zone).trim().toLowerCase()
+    // Cas 1 : zone seule => recherche texte sur la ville / zone
+    if (zoneText && !hasRadiusFilter) {
+      finalUsers = users.filter((user) => {
+        const p = user.profile
+        if (!p?.location) return false
+        return normalizeText(p.location).includes(zoneText)
+      })
 
-      if (!hasRadiusFilter) {
-        // Recherche ville simple = match texte sur location
-        finalUsers = users.filter((user) => {
-          const p = user.profile
-          if (!p?.location) return false
-          return p.location.toLowerCase().includes(zoneText)
-        })
-      } else {
-        // Recherche ville + rayon = distance réelle
-        const results = []
+      return res.json({ users: finalUsers })
+    }
 
-        for (const user of users) {
-          const p = user.profile
-          if (!p) continue
+    // Cas 2 : zone + rayon => distance réelle
+    if (zoneText && hasRadiusFilter) {
+      if (!searchCoords || Number.isNaN(effectiveRadius)) {
+        return res.json({ users: [] })
+      }
 
-          let userLat = p.latitude ?? null
-          let userLon = p.longitude ?? null
+      const results = []
 
-          // Si pas de coordonnées, on tente un géocodage à la volée
-          if (
-            (userLat == null || userLon == null) &&
-            p.location
-          ) {
-            const geo = await geocodeLocation(
-              `${p.location}${p.country ? `, ${p.country}` : ''}`
-            )
+      for (const user of users) {
+        const p = user.profile
+        if (!p) continue
 
-            if (geo) {
-              userLat = geo.lat
-              userLon = geo.lon
-            }
-          }
+        let userLat = p.latitude ?? null
+        let userLon = p.longitude ?? null
 
-          // Si malgré tout on n'a pas de coords → on ignore pour le rayon
-          if (
-            searchLat == null ||
-            searchLon == null ||
-            userLat == null ||
-            userLon == null ||
-            Number.isNaN(effectiveRadius)
-          ) {
-            continue
-          }
+        // Si le profil n'a pas déjà ses coordonnées, on géocode sa ville
+        if ((userLat == null || userLon == null) && p.location) {
+          const composedLocation = `${p.location}${p.country ? `, ${p.country}` : ''}`
+          const geo = await geocodeLocation(composedLocation)
 
-          const distance = getDistance(searchLat, searchLon, userLat, userLon)
-
-          if (user.role === 'ARTIST' && p.radiusKm) {
-            if (distance <= effectiveRadius && distance <= p.radiusKm) {
-              results.push(user)
-            }
-          } else {
-            if (distance <= effectiveRadius) {
-              results.push(user)
-            }
+          if (geo) {
+            userLat = geo.lat
+            userLon = geo.lon
           }
         }
 
-        finalUsers = results
+        if (userLat == null || userLon == null) {
+          continue
+        }
+
+        const distance = getDistance(searchCoords.lat, searchCoords.lon, userLat, userLon)
+
+        if (distance <= effectiveRadius) {
+          results.push(user)
+        }
       }
+
+      return res.json({ users: results })
     }
 
+    // Cas 3 : pas de zone
     return res.json({ users: finalUsers })
   } catch (err) {
     console.error('❌ Erreur lors de la recherche :', err)
