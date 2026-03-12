@@ -21,6 +21,32 @@ function getDistance(lat1, lon1, lat2, lon2) {
   return R * c
 }
 
+// Géocodage simple d’une localisation texte
+async function geocodeLocation(query) {
+  if (!query || !String(query).trim()) return null
+
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(
+        query
+      )}`
+    )
+    const data = await res.json()
+
+    if (Array.isArray(data) && data.length > 0) {
+      return {
+        lat: parseFloat(data[0].lat),
+        lon: parseFloat(data[0].lon),
+      }
+    }
+
+    return null
+  } catch (err) {
+    console.warn('⚠️ Géocodage impossible pour :', query)
+    return null
+  }
+}
+
 /**
  * GET /api/search
  * Filtres :
@@ -35,8 +61,8 @@ function getDistance(lat1, lon1, lat2, lon2) {
 router.get('/', authenticate, async (req, res) => {
   const { name, role, specialty, typeEtablissement, zone, radius, country } = req.query
 
-  let lat = null
-  let lon = null
+  let searchLat = null
+  let searchLon = null
   const hasRadiusFilter = radius !== undefined && radius !== null && radius !== ''
   const effectiveRadius = hasRadiusFilter ? parseFloat(radius) : null
 
@@ -45,20 +71,12 @@ router.get('/', authenticate, async (req, res) => {
       return res.json({ users: [] })
     }
 
-    // Géocodage seulement si zone fournie
+    // Géocoder la zone recherchée
     if (zone) {
-      try {
-        const geoRes = await fetch(
-          `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(zone)}`
-        )
-        const geoData = await geoRes.json()
-
-        if (Array.isArray(geoData) && geoData.length > 0) {
-          lat = parseFloat(geoData[0].lat)
-          lon = parseFloat(geoData[0].lon)
-        }
-      } catch (geoErr) {
-        console.warn('⚠️ Géocodage impossible, fallback texte utilisé')
+      const geo = await geocodeLocation(String(zone))
+      if (geo) {
+        searchLat = geo.lat
+        searchLon = geo.lon
       }
     }
 
@@ -105,43 +123,68 @@ router.get('/', authenticate, async (req, res) => {
 
     let finalUsers = users
 
-    // Si zone fournie
     if (zone) {
       const zoneText = String(zone).trim().toLowerCase()
 
-      finalUsers = users.filter((user) => {
-        const p = user.profile
-        if (!p) return false
+      if (!hasRadiusFilter) {
+        // Recherche ville simple = match texte sur location
+        finalUsers = users.filter((user) => {
+          const p = user.profile
+          if (!p?.location) return false
+          return p.location.toLowerCase().includes(zoneText)
+        })
+      } else {
+        // Recherche ville + rayon = distance réelle
+        const results = []
 
-        const textMatch =
-          !!p.location && p.location.toLowerCase().includes(zoneText)
+        for (const user of users) {
+          const p = user.profile
+          if (!p) continue
 
-        // Si aucun rayon n’est demandé :
-        // on privilégie la recherche textuelle simple par ville / zone
-        if (!hasRadiusFilter) {
-          return textMatch
-        }
+          let userLat = p.latitude ?? null
+          let userLon = p.longitude ?? null
 
-        // Si rayon demandé, on essaie le calcul GPS
-        if (
-          lat != null &&
-          lon != null &&
-          p.latitude != null &&
-          p.longitude != null &&
-          !Number.isNaN(effectiveRadius)
-        ) {
-          const distance = getDistance(lat, lon, p.latitude, p.longitude)
+          // Si pas de coordonnées, on tente un géocodage à la volée
+          if (
+            (userLat == null || userLon == null) &&
+            p.location
+          ) {
+            const geo = await geocodeLocation(
+              `${p.location}${p.country ? `, ${p.country}` : ''}`
+            )
 
-          if (user.role === 'ARTIST' && p.radiusKm) {
-            return distance <= effectiveRadius && distance <= p.radiusKm
+            if (geo) {
+              userLat = geo.lat
+              userLon = geo.lon
+            }
           }
 
-          return distance <= effectiveRadius
+          // Si malgré tout on n'a pas de coords → on ignore pour le rayon
+          if (
+            searchLat == null ||
+            searchLon == null ||
+            userLat == null ||
+            userLon == null ||
+            Number.isNaN(effectiveRadius)
+          ) {
+            continue
+          }
+
+          const distance = getDistance(searchLat, searchLon, userLat, userLon)
+
+          if (user.role === 'ARTIST' && p.radiusKm) {
+            if (distance <= effectiveRadius && distance <= p.radiusKm) {
+              results.push(user)
+            }
+          } else {
+            if (distance <= effectiveRadius) {
+              results.push(user)
+            }
+          }
         }
 
-        // Fallback texte si GPS absent
-        return textMatch
-      })
+        finalUsers = results
+      }
     }
 
     return res.json({ users: finalUsers })
