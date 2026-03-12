@@ -23,56 +23,52 @@ function getDistance(lat1, lon1, lat2, lon2) {
 
 /**
  * GET /api/search
- * Auth requis. Recherche d’utilisateurs avec filtres :
- * - nom
- * - rôle
- * - spécialité
+ * Filtres :
+ * - name
+ * - role
+ * - specialty
  * - typeEtablissement
  * - zone
- * - rayon
- * - pays
- *
- * L’utilisateur ADMIN est toujours exclu des résultats.
+ * - radius
+ * - country
  */
 router.get('/', authenticate, async (req, res) => {
   const { name, role, specialty, typeEtablissement, zone, radius, country } = req.query
 
   let lat = null
   let lon = null
-  const effectiveRadius = radius ? parseFloat(radius) : 50
-  let resolvedCountry = country || null
+  const hasRadiusFilter = radius !== undefined && radius !== null && radius !== ''
+  const effectiveRadius = hasRadiusFilter ? parseFloat(radius) : null
 
   try {
-    // Si on tente explicitement de chercher ADMIN → vide
     if (String(role || '').toUpperCase() === 'ADMIN') {
       return res.json({ users: [] })
     }
 
-    // Géocodage de la zone si fournie
+    // Géocodage seulement si zone fournie
     if (zone) {
-      const geoRes = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(zone)}`
-      )
-      const geoData = await geoRes.json()
+      try {
+        const geoRes = await fetch(
+          `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(zone)}`
+        )
+        const geoData = await geoRes.json()
 
-      if (Array.isArray(geoData) && geoData.length > 0) {
-        lat = parseFloat(geoData[0].lat)
-        lon = parseFloat(geoData[0].lon)
-
-        if (!resolvedCountry) {
-          resolvedCountry = geoData[0]?.address?.country || null
+        if (Array.isArray(geoData) && geoData.length > 0) {
+          lat = parseFloat(geoData[0].lat)
+          lon = parseFloat(geoData[0].lon)
         }
+      } catch (geoErr) {
+        console.warn('⚠️ Géocodage impossible, fallback texte utilisé')
       }
     }
 
-    // Requête Prisma de base
     const users = await prisma.user.findMany({
       where: {
         role: { not: 'ADMIN' },
 
         ...(name && {
           name: {
-            contains: name,
+            contains: String(name),
             mode: 'insensitive',
           },
         }),
@@ -84,12 +80,12 @@ router.get('/', authenticate, async (req, res) => {
 
         profile: {
           ...(specialty && {
-            specialties: { has: specialty },
+            specialties: { has: String(specialty) },
           }),
 
           ...(typeEtablissement && {
             typeEtablissement: {
-              equals: typeEtablissement,
+              equals: String(typeEtablissement),
             },
           }),
 
@@ -109,7 +105,7 @@ router.get('/', authenticate, async (req, res) => {
 
     let finalUsers = users
 
-    // Filtre géographique intelligent
+    // Si zone fournie
     if (zone) {
       const zoneText = String(zone).trim().toLowerCase()
 
@@ -117,7 +113,16 @@ router.get('/', authenticate, async (req, res) => {
         const p = user.profile
         if (!p) return false
 
-        // 1) Cas idéal : coordonnées présentes
+        const textMatch =
+          !!p.location && p.location.toLowerCase().includes(zoneText)
+
+        // Si aucun rayon n’est demandé :
+        // on privilégie la recherche textuelle simple par ville / zone
+        if (!hasRadiusFilter) {
+          return textMatch
+        }
+
+        // Si rayon demandé, on essaie le calcul GPS
         if (
           lat != null &&
           lon != null &&
@@ -127,7 +132,6 @@ router.get('/', authenticate, async (req, res) => {
         ) {
           const distance = getDistance(lat, lon, p.latitude, p.longitude)
 
-          // ARTIST : respecter aussi son rayon perso
           if (user.role === 'ARTIST' && p.radiusKm) {
             return distance <= effectiveRadius && distance <= p.radiusKm
           }
@@ -135,17 +139,11 @@ router.get('/', authenticate, async (req, res) => {
           return distance <= effectiveRadius
         }
 
-        // 2) Fallback texte si pas de coordonnées
-        if (p.location && p.location.toLowerCase().includes(zoneText)) {
-          return true
-        }
-
-        return false
+        // Fallback texte si GPS absent
+        return textMatch
       })
     }
 
-    // Si pas de zone mais pays résolu via frontend / filtre explicite,
-    // la requête Prisma a déjà filtré avec `country contains`
     return res.json({ users: finalUsers })
   } catch (err) {
     console.error('❌ Erreur lors de la recherche :', err)
