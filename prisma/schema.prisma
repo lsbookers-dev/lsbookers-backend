@@ -89,15 +89,31 @@ model Follow {
 }
 
 model Message {
-  id             Int          @id @default(autoincrement())
-  content        String
-  senderId       Int
-  conversationId Int
-  createdAt      DateTime     @default(now())
+  id                 Int             @id @default(autoincrement())
+  content            String?
+  attachmentUrl      String?
+  attachmentType     MessageFileType?
+  attachmentName     String?
+  attachmentMimeType String?
+  senderId           Int
+  conversationId     Int
+  seen               Boolean         @default(false)
+  seenAt             DateTime?
+  createdAt          DateTime        @default(now())
 
   sender         User         @relation("SentMessages", fields: [senderId], references: [id])
   conversation   Conversation @relation(fields: [conversationId], references: [id])
   notifications  Notification[]
+
+  @@index([conversationId, createdAt])
+  @@index([senderId])
+  @@index([seen])
+}
+
+enum MessageFileType {
+  IMAGE
+  VIDEO
+  DOCUMENT
 }
 
 model Conversation {
