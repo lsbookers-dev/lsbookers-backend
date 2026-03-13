@@ -25,7 +25,6 @@ router.get('/users', authenticateToken, async (req, res) => {
         id: true,
         name: true,
         role: true,
-        image: true,
         profile: {
           select: {
             avatar: true,
