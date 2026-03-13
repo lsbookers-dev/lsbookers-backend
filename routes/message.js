@@ -237,6 +237,82 @@ router.get('/messages/:conversationId', authenticateToken, async (req, res) => {
 })
 
 /* =========================================================
+   POST /api/messages/start
+   ➜ créer ou retrouver une conversation SANS envoyer de message auto
+========================================================= */
+router.post('/start', authenticateToken, async (req, res) => {
+  try {
+    const senderId = Number(req.user?.id)
+    const recipientId = Number(req.body?.recipientId)
+
+    if (!senderId) return res.status(401).json({ error: 'Unauthorized' })
+    if (!recipientId) return res.status(400).json({ error: 'recipientId requis' })
+    if (senderId === recipientId) {
+      return res.status(400).json({ error: 'Impossible de créer une conversation avec soi-même' })
+    }
+
+    const recipient = await prisma.user.findUnique({
+      where: { id: recipientId },
+      include: { profile: true },
+    })
+
+    if (!recipient) {
+      return res.status(404).json({ error: 'Destinataire introuvable' })
+    }
+
+    if (isAdminUser(recipient)) {
+      return res.status(403).json({ error: 'Action non autorisée' })
+    }
+
+    let conversation = await prisma.conversation.findFirst({
+      where: {
+        AND: [
+          { participants: { some: { userId: senderId } } },
+          { participants: { some: { userId: recipientId } } },
+        ],
+      },
+      include: {
+        participants: {
+          include: {
+            user: { include: { profile: true } },
+          },
+        },
+      },
+    })
+
+    if (!conversation) {
+      conversation = await prisma.conversation.create({
+        data: {
+          participants: {
+            create: [{ userId: senderId }, { userId: recipientId }],
+          },
+        },
+        include: {
+          participants: {
+            include: {
+              user: { include: { profile: true } },
+            },
+          },
+        },
+      })
+    }
+
+    return res.json({
+      conversationId: conversation.id,
+      conversation: {
+        id: conversation.id,
+        participants: conversation.participants.map((part) => pickUserPublic(part.user)),
+        updatedAt: conversation.updatedAt,
+        createdAt: conversation.createdAt,
+      },
+    })
+  } catch (err) {
+    console.error('❌ [POST /start] Error:', err)
+    return res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
+/* =========================================================
    POST /api/messages/send
    ➜ texte seul
 ========================================================= */
@@ -249,6 +325,10 @@ router.post('/send', authenticateToken, async (req, res) => {
 
     if (!recipientId || !content || !String(content).trim()) {
       return res.status(400).json({ error: 'recipientId et content requis' })
+    }
+
+    if (Number(recipientId) === senderId) {
+      return res.status(400).json({ error: 'Impossible de s’envoyer un message à soi-même' })
     }
 
     const recipient = await prisma.user.findUnique({
@@ -344,7 +424,6 @@ router.post('/send', authenticateToken, async (req, res) => {
 
 /* =========================================================
    POST /api/messages/send-file
-   ➜ texte + fichier ou fichier seul
 ========================================================= */
 router.post('/send-file', authenticateToken, upload.single('file'), async (req, res) => {
   try {
@@ -355,9 +434,7 @@ router.post('/send-file', authenticateToken, upload.single('file'), async (req, 
     const file = req.file
 
     if (!conversationId || (!content?.trim() && !file)) {
-      return res
-        .status(400)
-        .json({ error: 'conversationId et (content ou file) requis' })
+      return res.status(400).json({ error: 'conversationId et (content ou file) requis' })
     }
 
     if (await conversationHasAdmin(Number(conversationId))) {

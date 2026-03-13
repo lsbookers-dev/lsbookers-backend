@@ -2,34 +2,53 @@ const express = require('express')
 const router = express.Router()
 const { PrismaClient } = require('@prisma/client')
 const prisma = new PrismaClient()
-const authenticateToken = require('../middleware/authenticateToken.js') // ✅ Correction ici
+const authenticateToken = require('../middleware/authenticateToken.js')
 
-// ✅ Nouvelle route : GET /users → tous les utilisateurs sauf soi-même
+/* =========================================================
+   GET /api/users
+   ➜ tous les utilisateurs sauf soi-même, avec avatar profil
+========================================================= */
 router.get('/users', authenticateToken, async (req, res) => {
   try {
+    const currentUserId = Number(req.user?.id)
+
     const users = await prisma.user.findMany({
       where: {
         id: {
-          not: req.user.id, // exclure soi-même
+          not: currentUserId,
+        },
+        role: {
+          not: 'ADMIN',
         },
       },
       select: {
         id: true,
         name: true,
         role: true,
+        image: true,
+        profile: {
+          select: {
+            avatar: true,
+          },
+        },
+      },
+      orderBy: {
+        name: 'asc',
       },
     })
 
-    res.json(users)
+    return res.json({ users })
   } catch (err) {
     console.error('Erreur dans GET /users', err)
-    res.status(500).json({ error: 'Erreur serveur' })
+    return res.status(500).json({ error: 'Erreur serveur' })
   }
 })
 
-// ✅ Route déjà en place : GET /users/:id
+/* =========================================================
+   GET /api/users/:id
+========================================================= */
 router.get('/users/:id', async (req, res) => {
-  const userId = parseInt(req.params.id)
+  const userId = parseInt(req.params.id, 10)
 
   if (isNaN(userId)) {
     return res.status(400).json({ error: 'ID invalide' })
@@ -47,10 +66,10 @@ router.get('/users/:id', async (req, res) => {
       return res.status(404).json({ error: 'Utilisateur non trouvé' })
     }
 
-    res.json({ user })
+    return res.json({ user })
   } catch (error) {
     console.error('Erreur dans GET /users/:id', error)
-    res.status(500).json({ error: 'Erreur serveur' })
+    return res.status(500).json({ error: 'Erreur serveur' })
   }
 })
 
