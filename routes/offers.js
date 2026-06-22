@@ -2,10 +2,10 @@ const express = require('express');
 const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
-const verifyToken = require('../middleware/verifyToken');
+const { requireAuth } = require('../middleware/auth');
 
 // 📌 Créer une nouvelle offre
-router.post('/', verifyToken, async (req, res) => {
+router.post('/', requireAuth, async (req, res) => {
   const { title, description, type, specialty, date, location, country, radiusKm } = req.body;
 
   // Vérification des champs obligatoires
@@ -177,7 +177,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // 📌 Supprimer une offre
-router.delete('/:id', verifyToken, async (req, res) => {
+router.delete('/:id', requireAuth, async (req, res) => {
   const { id } = req.params;
 
   try {

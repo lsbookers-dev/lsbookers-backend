@@ -3,21 +3,13 @@ const express = require('express');
 const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
-const authenticate = require('../middleware/authenticate');
-
-/** Vérifie le rôle ADMIN sur les routes protégées */
-function requireAdmin(req, res, next) {
-  if (!req.user || req.user.role !== 'ADMIN') {
-    return res.status(403).json({ error: 'Accès réservé aux administrateurs' });
-  }
-  next();
-}
+const { requireAuth, requireAdmin } = require('../middleware/auth');
 
 /* =========================================================
  *  STATS — Récapitulatif
  *  GET /api/admin/stats/summary
  * =======================================================*/
-router.get('/stats/summary', authenticate, requireAdmin, async (_req, res) => {
+router.get('/stats/summary', requireAuth, requireAdmin, async (_req, res) => {
   try {
     // Comptes par rôle (sans ADMIN dans le total “public”)
     const usersTotal = await prisma.user.count({ where: { role: { not: 'ADMIN' } } });
@@ -94,7 +86,7 @@ router.get('/stats/summary', authenticate, requireAdmin, async (_req, res) => {
  *  GET /api/admin/stats/series?days=30
  *  → { series: [{ date, users, revenueCents, logins }] }
  * =======================================================*/
-router.get('/stats/series', authenticate, requireAdmin, async (req, res) => {
+router.get('/stats/series', requireAuth, requireAdmin, async (req, res) => {
   const daysParam = parseInt(String(req.query.days || ''), 10);
   const days = Number.isFinite(daysParam) ? Math.min(90, Math.max(1, daysParam)) : 30;
 
@@ -167,7 +159,7 @@ router.get('/stats/series', authenticate, requireAdmin, async (req, res) => {
  *  USERS — liste filtrée (admin invisible)
  *  GET /api/admin/users?q=...&limit=50&offset=0
  * =======================================================*/
-router.get('/users', authenticate, requireAdmin, async (req, res) => {
+router.get('/users', requireAuth, requireAdmin, async (req, res) => {
   try {
     const qRaw = (req.query.q || '').toString().trim();
     const limRaw = parseInt(String(req.query.limit || ''), 10);
@@ -220,7 +212,7 @@ router.get('/users', authenticate, requireAdmin, async (req, res) => {
  *  USERS — suspendre / supprimer
  *  (⚠️ nécessite un champ "suspended" bool dans le modèle User)
  * =======================================================*/
-router.patch('/users/:id/suspend', authenticate, requireAdmin, async (req, res) => {
+router.patch('/users/:id/suspend', requireAuth, requireAdmin, async (req, res) => {
   const id = parseInt(String(req.params.id || ''), 10);
   if (!Number.isFinite(id)) return res.status(400).json({ error: 'ID invalide' });
 
@@ -238,7 +230,7 @@ router.patch('/users/:id/suspend', authenticate, requireAdmin, async (req, res) 
   }
 });
 
-router.delete('/users/:id', authenticate, requireAdmin, async (req, res) => {
+router.delete('/users/:id', requireAuth, requireAdmin, async (req, res) => {
   const id = parseInt(String(req.params.id || ''), 10);
   if (!Number.isFinite(id)) return res.status(400).json({ error: 'ID invalide' });
 

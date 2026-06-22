@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
-const authenticate = require('../middleware/authenticate');
+const { requireAuth } = require('../middleware/auth');
 
 // GET /api/publications/profile/:profileId
 router.get('/profile/:profileId', async (req, res) => {
@@ -26,7 +26,7 @@ router.get('/profile/:profileId', async (req, res) => {
 });
 
 // POST /api/publications
-router.post('/', authenticate, async (req, res) => {
+router.post('/', requireAuth, async (req, res) => {
   const { title, media, mediaType, caption, profileId } = req.body;
   const parsedProfileId = parseInt(profileId, 10);
 
@@ -71,7 +71,7 @@ router.post('/', authenticate, async (req, res) => {
 });
 
 // DELETE /api/publications/:id
-router.delete('/:id', authenticate, async (req, res) => {
+router.delete('/:id', requireAuth, async (req, res) => {
   const id = parseInt(req.params.id, 10);
 
   if (isNaN(id)) {

@@ -2,10 +2,10 @@ const express = require('express');
 const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
-const authenticateToken = require('../middleware/authenticate');
+const { requireAuth } = require('../middleware/auth');
 
 // Suivre un utilisateur
-router.post('/:id', authenticateToken, async (req, res) => {
+router.post('/:id', requireAuth, async (req, res) => {
   const followerId = req.user.id;
   const followedId = parseInt(req.params.id);
 
@@ -44,7 +44,7 @@ router.post('/:id', authenticateToken, async (req, res) => {
 });
 
 // Voir les utilisateurs que je suis
-router.get('/following', authenticateToken, async (req, res) => {
+router.get('/following', requireAuth, async (req, res) => {
   try {
     const followings = await prisma.follow.findMany({
       where: { followerId: req.user.id },
@@ -58,7 +58,7 @@ router.get('/following', authenticateToken, async (req, res) => {
 });
 
 // Voir mes abonnés
-router.get('/followers', authenticateToken, async (req, res) => {
+router.get('/followers', requireAuth, async (req, res) => {
   try {
     const followers = await prisma.follow.findMany({
       where: { followingId: req.user.id },

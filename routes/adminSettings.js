@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const router = express.Router();
 
-const authenticate = require('../middleware/authenticate');
+const { requireAuth } = require('../middleware/auth');
 
 /** Vérifie ADMIN */
 function requireAdmin(req, res, next) {
@@ -54,7 +54,7 @@ function writeSettings(next) {
 /* ==========================================
  * GET /api/admin/settings
  * ======================================== */
-router.get('/', authenticate, requireAdmin, (_req, res) => {
+router.get('/', requireAuth, requireAdmin, (_req, res) => {
   try {
     const data = readSettings();
     return res.json(data);
@@ -69,7 +69,7 @@ router.get('/', authenticate, requireAdmin, (_req, res) => {
  * PUT /api/admin/settings
  * body: { welcomeText?, landingBgUrl?, loginBgUrl?, registerBgUrl?, headerLogoUrl? }
  * ======================================== */
-router.put('/', authenticate, requireAdmin, (req, res) => {
+router.put('/', requireAuth, requireAdmin, (req, res) => {
   try {
     const current = readSettings();
 

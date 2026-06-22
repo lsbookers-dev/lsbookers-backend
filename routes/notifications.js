@@ -2,13 +2,13 @@ const express = require('express');
 const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
-const authenticateToken = require('../middleware/authenticate');
+const { requireAuth } = require('../middleware/auth');
 
 /* =========================================================
    GET /api/notifications
    ➜ Lister les notifications d’un utilisateur
 ========================================================= */
-router.get('/', authenticateToken, async (req, res) => {
+router.get('/', requireAuth, async (req, res) => {
   try {
     const userId = Number(req.user?.id);
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
@@ -61,7 +61,7 @@ router.get('/', authenticateToken, async (req, res) => {
    PATCH /api/notifications/:id
    ➜ Marquer une notification comme lue
 ========================================================= */
-router.patch('/:id', authenticateToken, async (req, res) => {
+router.patch('/:id', requireAuth, async (req, res) => {
   try {
     const userId = Number(req.user?.id);
     const notificationId = Number(req.params.id);

@@ -2,10 +2,10 @@ const express = require('express');
 const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
-const authenticate = require('../middleware/authenticate');
+const { requireAuth } = require('../middleware/auth');
 
 // ✅ Ajouter un événement
-router.post('/', authenticate, async (req, res) => {
+router.post('/', requireAuth, async (req, res) => {
   const { title, start, end, allDay, lieu, type, profileId } = req.body;
 
   if (!title || !start || !profileId) {
@@ -33,7 +33,7 @@ router.post('/', authenticate, async (req, res) => {
 });
 
 // ✅ Supprimer un événement
-router.delete('/:eventId', authenticate, async (req, res) => {
+router.delete('/:eventId', requireAuth, async (req, res) => {
   const { eventId } = req.params;
 
   try {

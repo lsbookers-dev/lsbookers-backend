@@ -2,7 +2,7 @@ const express = require('express')
 const router = express.Router()
 const { PrismaClient } = require('@prisma/client')
 const prisma = new PrismaClient()
-const authenticateToken = require('../middleware/authenticate')
+const { requireAuth } = require('../middleware/auth')
 const multer = require('multer')
 const path = require('path')
 
@@ -64,7 +64,7 @@ function buildFileUrl(file) {
 /* =========================================================
    GET /api/messages/conversations
 ========================================================= */
-router.get('/conversations', authenticateToken, async (req, res) => {
+router.get('/conversations', requireAuth, async (req, res) => {
   try {
     const userId = Number(req.user?.id)
     if (!userId) return res.status(401).json({ error: 'Unauthorized' })
@@ -131,7 +131,7 @@ router.get('/conversations', authenticateToken, async (req, res) => {
 /* =========================================================
    GET /api/messages/unread-count
 ========================================================= */
-router.get('/unread-count', authenticateToken, async (req, res) => {
+router.get('/unread-count', requireAuth, async (req, res) => {
   try {
     const userId = Number(req.user?.id)
     if (!userId) return res.status(401).json({ error: 'Unauthorized' })
@@ -167,7 +167,7 @@ router.get('/unread-count', authenticateToken, async (req, res) => {
 /* =========================================================
    GET /api/messages/messages/:conversationId
 ========================================================= */
-router.get('/messages/:conversationId', authenticateToken, async (req, res) => {
+router.get('/messages/:conversationId', requireAuth, async (req, res) => {
   try {
     const userId = Number(req.user?.id)
     if (!userId) return res.status(401).json({ error: 'Unauthorized' })
@@ -240,7 +240,7 @@ router.get('/messages/:conversationId', authenticateToken, async (req, res) => {
    POST /api/messages/start
    ➜ créer ou retrouver une conversation SANS envoyer de message auto
 ========================================================= */
-router.post('/start', authenticateToken, async (req, res) => {
+router.post('/start', requireAuth, async (req, res) => {
   try {
     const senderId = Number(req.user?.id)
     const recipientId = Number(req.body?.recipientId)
@@ -316,7 +316,7 @@ router.post('/start', authenticateToken, async (req, res) => {
    POST /api/messages/send
    ➜ texte seul
 ========================================================= */
-router.post('/send', authenticateToken, async (req, res) => {
+router.post('/send', requireAuth, async (req, res) => {
   try {
     const senderId = Number(req.user?.id)
     if (!senderId) return res.status(401).json({ error: 'Unauthorized' })
@@ -425,7 +425,7 @@ router.post('/send', authenticateToken, async (req, res) => {
 /* =========================================================
    POST /api/messages/send-file
 ========================================================= */
-router.post('/send-file', authenticateToken, upload.single('file'), async (req, res) => {
+router.post('/send-file', requireAuth, upload.single('file'), async (req, res) => {
   try {
     const senderId = Number(req.user?.id)
     if (!senderId) return res.status(401).json({ error: 'Unauthorized' })
@@ -509,7 +509,7 @@ router.post('/send-file', authenticateToken, upload.single('file'), async (req, 
 /* =========================================================
    POST /api/messages/mark-seen/:conversationId
 ========================================================= */
-router.post('/mark-seen/:conversationId', authenticateToken, async (req, res) => {
+router.post('/mark-seen/:conversationId', requireAuth, async (req, res) => {
   try {
     const userId = Number(req.user?.id)
     const conversationId = Number(req.params.conversationId)
@@ -548,7 +548,7 @@ router.post('/mark-seen/:conversationId', authenticateToken, async (req, res) =>
 /* =========================================================
    DELETE /api/messages/conversations/:conversationId
 ========================================================= */
-router.delete('/conversations/:conversationId', authenticateToken, async (req, res) => {
+router.delete('/conversations/:conversationId', requireAuth, async (req, res) => {
   try {
     const userId = Number(req.user?.id)
     const conversationId = Number(req.params.conversationId)

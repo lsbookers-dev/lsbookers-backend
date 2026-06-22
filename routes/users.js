@@ -2,13 +2,13 @@ const express = require('express')
 const router = express.Router()
 const { PrismaClient } = require('@prisma/client')
 const prisma = new PrismaClient()
-const authenticateToken = require('../middleware/authenticateToken.js')
+const { requireAuth } = require('../middleware/auth')
 
 /* =========================================================
    GET /api/users
    ➜ tous les utilisateurs sauf soi-même, avec avatar profil
 ========================================================= */
-router.get('/users', authenticateToken, async (req, res) => {
+router.get('/users', requireAuth, async (req, res) => {
   try {
     const currentUserId = Number(req.user?.id)
 

@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
+const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
 // ✅ Importation des routes
@@ -24,30 +25,69 @@ const passwordRoutes = require('./routes/password'); // 🔐 forgot/reset passwo
 const app = express();
 
 /* ===================== Middlewares globaux ===================== */
-// CORS
+
+// CORS — autorise uniquement lsbookers.com et localhost en développement
+const allowedOrigins = [
+  'https://www.lsbookers.com',
+  'https://lsbookers.com',
+  'http://localhost:3000',
+  'http://localhost:3001',
+];
+
 const corsOptions = {
-  origin: true,
+  origin: (origin, callback) => {
+    // Autorise les requêtes sans origin (ex: Postman, Railway health checks)
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error(`Origine non autorisée: ${origin}`));
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Authorization', 'Content-Type', 'Cache-Control', 'Pragma', 'Expires'],
 };
 app.use(cors(corsOptions));
-app.use((req, res, next) => { res.header('Vary', 'Origin'); next(); });
 app.options('*', cors(corsOptions));
 
+// Rate limiting — protection anti-brute-force
+// Sur les routes sensibles (login, register, mot de passe)
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // fenêtre de 15 minutes
+  max: 10,                   // max 10 tentatives par IP sur cette fenêtre
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Trop de tentatives, réessayez dans 15 minutes ❌' },
+});
+
+// Sur l'ensemble de l'API — protection générale
+const globalLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 200,            // max 200 requêtes par IP par minute
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Trop de requêtes, ralentissez ❌' },
+});
+
+app.use(globalLimiter);
+
 // Parsers
-app.use(express.json({ limit: '15mb' }));
-app.use(express.urlencoded({ extended: true, limit: '15mb' }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Logs
-app.use(morgan('dev'));
+// Logs (désactivés en production pour les performances)
+if (process.env.NODE_ENV !== 'production') {
+  app.use(morgan('dev'));
+}
 
-// Static
+// Static (uploads locaux — à migrer vers Bunny.net)
 app.use('/uploads', express.static('uploads'));
 
 /* ===================== Routes API ===================== */
+// Rate limiting strict sur auth (login, register, mot de passe)
+app.use('/api/auth', authLimiter);
 app.use('/api/auth', authRoutes);
-app.use('/api/auth', passwordRoutes); // 🔐 Ajout des endpoints /forgot-password et /reset-password
+app.use('/api/auth', passwordRoutes);
 
 app.use('/api/profile', profileRoutes);
 app.use('/api/media', mediaRoutes);

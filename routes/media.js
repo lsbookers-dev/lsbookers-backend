@@ -3,7 +3,7 @@ const express = require('express');
 const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
-const authenticate = require('../middleware/authenticate');
+const { requireAuth } = require('../middleware/auth');
 
 /**
  * MODELE PRISMA ATTENDU (à titre indicatif) :
@@ -57,7 +57,7 @@ router.get('/user/:userId', async (req, res) => {
  * Créer une publication (auth requise)
  * Body: { title: string, url: string, caption?: string }
  * ============================================ */
-router.post('/', authenticate, async (req, res) => {
+router.post('/', requireAuth, async (req, res) => {
   try {
     const userId = Number(req.user?.id);
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
@@ -99,7 +99,7 @@ router.post('/', authenticate, async (req, res) => {
  * DELETE /api/media/:id
  * Supprimer une publication (propriétaire uniquement)
  * ============================================ */
-router.delete('/:id', authenticate, async (req, res) => {
+router.delete('/:id', requireAuth, async (req, res) => {
   try {
     const userId = Number(req.user?.id);
     const id = Number.parseInt(req.params.id, 10);

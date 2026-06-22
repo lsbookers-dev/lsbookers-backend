@@ -2,7 +2,7 @@ const express = require('express')
 const router = express.Router()
 const { PrismaClient } = require('@prisma/client')
 const prisma = new PrismaClient()
-const authenticate = require('../middleware/authenticate')
+const { requireAuth } = require('../middleware/auth')
 
 // fetch compatible CommonJS
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args))
@@ -86,7 +86,7 @@ async function geocodeLocation(query) {
  * - radius
  * - country
  */
-router.get('/', authenticate, async (req, res) => {
+router.get('/', requireAuth, async (req, res) => {
   const { name, role, specialty, typeEtablissement, zone, radius, country } = req.query
 
   const hasRadiusFilter = radius !== undefined && radius !== null && radius !== ''
