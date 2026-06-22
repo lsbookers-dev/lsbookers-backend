@@ -1,12 +1,12 @@
 /**
  * middleware/auth.js
- * Middleware d'authentification unique — remplace les 5 anciens fichiers
+ * Middleware d'authentification unique
  *
  * Utilisation :
  *   const { requireAuth, requireAdmin } = require('../middleware/auth');
  *
- *   router.get('/ma-route', requireAuth, handler)           // utilisateur connecté
- *   router.get('/admin-route', requireAuth, requireAdmin, handler) // admin uniquement
+ *   router.get('/ma-route', requireAuth, handler)
+ *   router.get('/admin-route', requireAuth, requireAdmin, handler)
  */
 
 const jwt = require('jsonwebtoken');
@@ -15,8 +15,8 @@ const prisma = new PrismaClient();
 
 /**
  * requireAuth
- * Vérifie que le token JWT est valide et que l'utilisateur existe en base.
- * Attache l'utilisateur complet à req.user.
+ * Verifie que le token JWT est valide et que l'utilisateur existe en base.
+ * Attache l'utilisateur a req.user.
  */
 const requireAuth = async (req, res, next) => {
   const authHeader = req.headers['authorization'];
@@ -25,13 +25,12 @@ const requireAuth = async (req, res, next) => {
     : null;
 
   if (!token) {
-    return res.status(401).json({ error: 'Authentification requise ❌' });
+    return res.status(401).json({ error: 'Authentification requise' });
   }
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    // Vérification en base pour s'assurer que l'utilisateur existe toujours
     const user = await prisma.user.findUnique({
       where: { id: decoded.id },
       select: {
@@ -47,33 +46,33 @@ const requireAuth = async (req, res, next) => {
     });
 
     if (!user) {
-      return res.status(401).json({ error: 'Utilisateur introuvable ❌' });
+      return res.status(401).json({ error: 'Utilisateur introuvable' });
     }
 
     req.user = user;
     next();
   } catch (err) {
     if (err.name === 'TokenExpiredError') {
-      return res.status(401).json({ error: 'Session expirée, veuillez vous reconnecter ❌' });
+      return res.status(401).json({ error: 'Session expiree, veuillez vous reconnecter' });
     }
-    return res.status(401).json({ error: 'Token invalide ❌' });
+    return res.status(401).json({ error: 'Token invalide' });
   }
 };
 
 /**
  * requireAdmin
- * À utiliser APRÈS requireAuth.
- * Vérifie que l'utilisateur a le rôle ADMIN ou isAdmin=true.
+ * A utiliser APRES requireAuth.
+ * Verifie que l'utilisateur a le role ADMIN ou isAdmin=true.
  */
 const requireAdmin = (req, res, next) => {
   if (!req.user) {
-    return res.status(401).json({ error: 'Authentification requise ❌' });
+    return res.status(401).json({ error: 'Authentification requise' });
   }
 
   const isAdmin = req.user.role === 'ADMIN' || req.user.isAdmin === true;
 
   if (!isAdmin) {
-    return res.status(403).json({ error: 'Accès réservé aux administrateurs ❌' });
+    return res.status(403).json({ error: 'Acces reserve aux administrateurs' });
   }
 
   next();
