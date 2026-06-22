@@ -87,8 +87,11 @@ if (process.env.NODE_ENV !== 'production') {
 app.use('/uploads', express.static('uploads'));
 
 /* ===================== Routes API ===================== */
-// Rate limiting strict sur auth (login, register, mot de passe)
-app.use('/api/auth', authLimiter);
+// Rate limiting uniquement sur login et register (pas sur /me)
+app.use('/api/auth/login', authLimiter);
+app.use('/api/auth/register', authLimiter);
+app.use('/api/auth/forgot-password', authLimiter);
+app.use('/api/auth/reset-password', authLimiter);
 app.use('/api/auth', authRoutes);
 app.use('/api/auth', passwordRoutes);
 
