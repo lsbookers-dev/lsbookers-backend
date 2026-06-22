@@ -18,6 +18,17 @@ enum Role {
   ADMIN
 }
 
+enum LegalStatus {
+  INDIVIDUAL        // Particulier
+  AUTO_ENTREPRENEUR // Auto-entrepreneur
+  COMPANY           // Societe
+}
+
+enum OrganizerType {
+  INDIVIDUAL    // Particulier (soiree privee)
+  PROFESSIONAL  // Professionnel (club, festival, societe)
+}
+
 enum MediaType {
   IMAGE
   VIDEO
@@ -86,29 +97,47 @@ enum StaffStatus {
 // ─────────────────────────────────────────────
 
 model User {
-  id                Int                      @id @default(autoincrement())
-  name              String
-  email             String                   @unique
-  password          String
-  role              Role
-  isAdmin           Boolean                  @default(false)
-  createdAt         DateTime                 @default(now())
+  id                  Int                      @id @default(autoincrement())
+  // Identifiants
+  email               String                   @unique
+  password            String
+  role                Role
+  isAdmin             Boolean                  @default(false)
+  createdAt           DateTime                 @default(now())
 
-  profile           Profile?
-  media             Media[]
-  followers         Follow[]                 @relation("followers")
-  following         Follow[]                 @relation("following")
-  messages          Message[]                @relation("SentMessages")
-  conversations     ConversationParticipant[]
-  notifications     Notification[]
-  notificationsSent Notification[]           @relation("NotificationActor")
-  passwordResets    PasswordReset[]
-  subscription      Subscription?
+  // Identite (collectee a l'etape 2 de l'inscription)
+  pseudo              String?                  @unique
+  firstName           String?
+  lastName            String?
+  dateOfBirth         DateTime?
+  phone               String?
+  countryOfResidence  String?
+
+  // Paiements Stripe (actives uniquement lors de la premiere transaction)
+  stripeAccountId     String?                  // ID Stripe Connect
+  isIdentityVerified  Boolean                  @default(false)
+  isPaymentEnabled    Boolean                  @default(false)
+
+  // Etapes d'inscription completes
+  registrationStep    Int                      @default(1) // 1=compte, 2=identite, 3=profil, 4=paiement
+
+  profile             Profile?
+  media               Media[]
+  followers           Follow[]                 @relation("followers")
+  following           Follow[]                 @relation("following")
+  messages            Message[]                @relation("SentMessages")
+  conversations       ConversationParticipant[]
+  notifications       Notification[]
+  notificationsSent   Notification[]           @relation("NotificationActor")
+  passwordResets      PasswordReset[]
+  subscription        Subscription?
 }
 
 model Profile {
   id                      Int                      @id @default(autoincrement())
   userId                  Int                      @unique
+
+  // Infos publiques (visibles sur le profil)
   bio                     String?
   profession              String?
   location                String?
@@ -122,6 +151,15 @@ model Profile {
   banner                  String?
   soundcloudUrl           String?
   showSoundcloud          Boolean                  @default(false)
+
+  // Infos legales (non visibles sur le profil, usage interne)
+  legalStatus             LegalStatus?             // Particulier / Auto-entrepreneur / Societe
+  siret                   String?                  // Numero SIRET ou KBIS
+  organizerType           OrganizerType?           // Pour les organisateurs : particulier ou professionnel
+  establishmentName       String?                  // Nom de l'etablissement (organisateurs pro)
+  address                 String?                  // Adresse postale complete
+  postalCode              String?
+  city                    String?
 
   user                    User                     @relation(fields: [userId], references: [id])
   notificationPreferences NotificationPreferences?

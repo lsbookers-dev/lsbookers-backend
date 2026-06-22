@@ -35,10 +35,13 @@ const requireAuth = async (req, res, next) => {
       where: { id: decoded.id },
       select: {
         id: true,
-        name: true,
+        pseudo: true,
+        firstName: true,
+        lastName: true,
         email: true,
         role: true,
         isAdmin: true,
+        registrationStep: true,
         profile: {
           select: { id: true, avatar: true, banner: true },
         },
