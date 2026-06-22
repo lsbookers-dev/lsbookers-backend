@@ -2,9 +2,11 @@ const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { requireAuth } = require('../middleware/auth');
+const { sendVerificationEmail } = require('../utils/email');
 
 // ─────────────────────────────────────────────
 // ETAPE 1 : CREATION DU COMPTE
@@ -38,6 +40,7 @@ router.post('/register', async (req, res) => {
     }
 
     const hashedPassword = await bcrypt.hash(password, 12);
+    const emailVerificationToken = crypto.randomBytes(32).toString('hex');
 
     const user = await prisma.user.create({
       data: {
@@ -46,6 +49,8 @@ router.post('/register', async (req, res) => {
         role,
         isAdmin: false,
         registrationStep: 1,
+        emailVerified: false,
+        emailVerificationToken,
         profile: { create: {} },
       },
       include: { profile: true },
@@ -55,6 +60,11 @@ router.post('/register', async (req, res) => {
       { id: user.id, email: user.email, role: user.role, isAdmin: user.isAdmin },
       process.env.JWT_SECRET,
       { expiresIn: '7d' }
+    );
+
+    // Envoi de l'email de verification (en arriere-plan)
+    sendVerificationEmail(user.email, emailVerificationToken).catch(err =>
+      console.error('Erreur envoi email verification:', err)
     );
 
     const { password: _pw, ...safeUser } = user;
@@ -205,6 +215,11 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Identifiants incorrects' });
     }
 
+    // Bloquer la connexion si email non verifie
+    if (!user.emailVerified) {
+      return res.status(403).json({ error: 'EMAIL_NOT_VERIFIED' });
+    }
+
     const token = jwt.sign(
       { id: user.id, email: user.email, role: user.role, isAdmin: user.isAdmin },
       process.env.JWT_SECRET,
@@ -216,6 +231,72 @@ router.post('/login', async (req, res) => {
     res.json({ message: 'Connexion reussie', token, user: safeUser });
   } catch (err) {
     console.error('Erreur serveur lors de la connexion :', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// ─────────────────────────────────────────────
+// VERIFICATION EMAIL
+// ─────────────────────────────────────────────
+router.get('/verify-email', async (req, res) => {
+  const { token } = req.query;
+
+  if (!token) {
+    return res.status(400).json({ error: 'Token manquant' });
+  }
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { emailVerificationToken: token },
+    });
+
+    if (!user) {
+      return res.status(400).json({ error: 'Lien invalide ou deja utilise' });
+    }
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { emailVerified: true, emailVerificationToken: null },
+    });
+
+    res.json({ message: 'Email verifie avec succes' });
+  } catch (err) {
+    console.error('Erreur dans /verify-email :', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// Renvoi de l'email de verification
+router.post('/resend-verification', async (req, res) => {
+  const { email } = req.body;
+
+  if (!email) {
+    return res.status(400).json({ error: 'Email requis' });
+  }
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { email: email.toLowerCase().trim() },
+    });
+
+    // Reponse generique pour ne pas exposer si l'email existe
+    if (!user || user.emailVerified) {
+      return res.json({ message: 'Si un compte non verifie existe, un email sera envoye.' });
+    }
+
+    const newToken = crypto.randomBytes(32).toString('hex');
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { emailVerificationToken: newToken },
+    });
+
+    sendVerificationEmail(user.email, newToken).catch(err =>
+      console.error('Erreur renvoi email verification:', err)
+    );
+
+    res.json({ message: 'Email de verification renvoye.' });
+  } catch (err) {
+    console.error('Erreur dans /resend-verification :', err);
     res.status(500).json({ error: 'Erreur serveur' });
   }
 });

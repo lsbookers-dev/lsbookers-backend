@@ -113,6 +113,10 @@ model User {
   phone               String?
   countryOfResidence  String?
 
+  // Verification email
+  emailVerified           Boolean   @default(false)
+  emailVerificationToken  String?   @unique
+
   // Paiements Stripe (actives uniquement lors de la premiere transaction)
   stripeAccountId     String?                  // ID Stripe Connect
   isIdentityVerified  Boolean                  @default(false)
