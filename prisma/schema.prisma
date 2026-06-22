@@ -7,28 +7,108 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ─────────────────────────────────────────────
+//  ENUMS
+// ─────────────────────────────────────────────
+
+enum Role {
+  ARTIST
+  ORGANIZER
+  PROVIDER
+  ADMIN
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+}
+
+enum MessageFileType {
+  IMAGE
+  VIDEO
+  DOCUMENT
+}
+
+enum OfferType {
+  ARTIST
+  PROVIDER
+  ALL
+}
+
+enum OfferStatus {
+  ACTIVE
+  CLOSED
+}
+
+enum ApplicationStatus {
+  PENDING   // En attente de reponse
+  ACCEPTED  // Acceptee par l'organisateur
+  REJECTED  // Refusee
+}
+
+enum ContractStatus {
+  PENDING   // Envoye, en attente de signature
+  SIGNED    // Signe par les deux parties
+  REJECTED  // Refuse
+  CANCELLED // Annule
+}
+
+enum PaymentStatus {
+  PENDING       // En attente
+  DEPOSIT_PAID  // Acompte paye
+  COMPLETED     // Paiement complet
+  REFUNDED      // Rembourse
+  FAILED        // Echec
+}
+
+enum SubscriptionStatus {
+  TRIAL     // Periode d'essai
+  ACTIVE    // Abonnement actif
+  CANCELLED // Annule
+  EXPIRED   // Expire
+}
+
+enum EventStatus {
+  DRAFT      // Brouillon (non visible)
+  PUBLISHED  // Visible publiquement
+  CANCELLED  // Annule
+  COMPLETED  // Termine
+}
+
+enum StaffStatus {
+  NEEDED    // Poste a pourvoir
+  BOOKED    // Personne confirmee
+  CANCELLED // Annule
+}
+
+// ─────────────────────────────────────────────
+//  USER & PROFILE
+// ─────────────────────────────────────────────
+
 model User {
-  id                Int                     @id @default(autoincrement())
+  id                Int                      @id @default(autoincrement())
   name              String
-  email             String                  @unique
+  email             String                   @unique
   password          String
   role              Role
-  isAdmin           Boolean                 @default(false)
+  isAdmin           Boolean                  @default(false)
+  createdAt         DateTime                 @default(now())
+
   profile           Profile?
   media             Media[]
-  followers         Follow[]                @relation("followers")
-  following         Follow[]                @relation("following")
-  messages          Message[]               @relation("SentMessages")
+  followers         Follow[]                 @relation("followers")
+  following         Follow[]                 @relation("following")
+  messages          Message[]                @relation("SentMessages")
   conversations     ConversationParticipant[]
   notifications     Notification[]
-  notificationsSent Notification[]          @relation("NotificationActor")
-  createdAt         DateTime                @default(now())
+  notificationsSent Notification[]           @relation("NotificationActor")
   passwordResets    PasswordReset[]
+  subscription      Subscription?
 }
 
 model Profile {
-  id                      Int                       @id @default(autoincrement())
-  userId                  Int                       @unique
+  id                      Int                      @id @default(autoincrement())
+  userId                  Int                      @unique
   bio                     String?
   profession              String?
   location                String?
@@ -41,42 +121,86 @@ model Profile {
   avatar                  String?
   banner                  String?
   soundcloudUrl           String?
-  showSoundcloud          Boolean                   @default(false)
+  showSoundcloud          Boolean                  @default(false)
+
+  user                    User                     @relation(fields: [userId], references: [id])
   notificationPreferences NotificationPreferences?
-  user                    User                      @relation(fields: [userId], references: [id])
   events                  Event[]
   media                   Media[]
   publications            Publication[]
   offers                  Offer[]
+
+  // Candidatures soumises (artiste/prestataire qui postule)
+  applicationsSubmitted   Application[]            @relation("ApplicationApplicant")
+
+  // Contrats
+  contractsSent           Contract[]               @relation("ContractSender")
+  contractsReceived       Contract[]               @relation("ContractRecipient")
+
+  // Paiements
+  paymentsMade            Payment[]                @relation("PaymentPayer")
+  paymentsReceived        Payment[]                @relation("PaymentRecipient")
+
+  // Avis
+  reviewsGiven            Review[]                 @relation("ReviewAuthor")
+  reviewsReceived         Review[]                 @relation("ReviewTarget")
+
+  // Staff d'evenements
+  eventStaffAssignments   EventStaff[]
+
+  // Likes
+  publicationLikes        PublicationLike[]
 }
 
+// ─────────────────────────────────────────────
+//  PUBLICATIONS
+// ─────────────────────────────────────────────
+
 model Publication {
-  id        Int      @id @default(autoincrement())
+  id        Int               @id @default(autoincrement())
   title     String
   media     String
   mediaType String
   caption   String?
   profileId Int
-  profile   Profile  @relation(fields: [profileId], references: [id])
-  createdAt DateTime @default(now())
+  createdAt DateTime          @default(now())
+
+  profile   Profile           @relation(fields: [profileId], references: [id])
+  likes     PublicationLike[]
 }
 
+model PublicationLike {
+  id            Int         @id @default(autoincrement())
+  publicationId Int
+  profileId     Int
+  createdAt     DateTime    @default(now())
+
+  publication   Publication @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+  profile       Profile     @relation(fields: [profileId], references: [id])
+
+  @@unique([publicationId, profileId]) // Un seul like par personne par publication
+}
+
+// ─────────────────────────────────────────────
+//  MEDIA
+// ─────────────────────────────────────────────
+
 model Media {
-  id        Int      @id @default(autoincrement())
+  id        Int       @id @default(autoincrement())
   url       String
   type      MediaType
   caption   String?
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
   userId    Int
-  user      User     @relation(fields: [userId], references: [id])
   profileId Int
-  profile   Profile  @relation(fields: [profileId], references: [id])
+
+  user      User      @relation(fields: [userId], references: [id])
+  profile   Profile   @relation(fields: [profileId], references: [id])
 }
 
-enum MediaType {
-  IMAGE
-  VIDEO
-}
+// ─────────────────────────────────────────────
+//  FOLLOW
+// ─────────────────────────────────────────────
 
 model Follow {
   id          Int      @id @default(autoincrement())
@@ -86,42 +210,21 @@ model Follow {
 
   follower    User     @relation("followers", fields: [followerId], references: [id])
   following   User     @relation("following", fields: [followingId], references: [id])
+
+  @@unique([followerId, followingId])
 }
 
-model Message {
-  id                 Int             @id @default(autoincrement())
-  content            String?
-  attachmentUrl      String?
-  attachmentType     MessageFileType?
-  attachmentName     String?
-  attachmentMimeType String?
-  senderId           Int
-  conversationId     Int
-  seen               Boolean         @default(false)
-  seenAt             DateTime?
-  createdAt          DateTime        @default(now())
-
-  sender         User         @relation("SentMessages", fields: [senderId], references: [id])
-  conversation   Conversation @relation(fields: [conversationId], references: [id])
-  notifications  Notification[]
-
-  @@index([conversationId, createdAt])
-  @@index([senderId])
-  @@index([seen])
-}
-
-enum MessageFileType {
-  IMAGE
-  VIDEO
-  DOCUMENT
-}
+// ─────────────────────────────────────────────
+//  MESSAGERIE
+// ─────────────────────────────────────────────
 
 model Conversation {
-  id           Int                       @id @default(autoincrement())
+  id           Int                      @id @default(autoincrement())
+  createdAt    DateTime                 @default(now())
+  updatedAt    DateTime                 @updatedAt
+
   participants ConversationParticipant[]
   messages     Message[]
-  updatedAt    DateTime                  @updatedAt
-  createdAt    DateTime                  @default(now())
 }
 
 model ConversationParticipant {
@@ -135,35 +238,76 @@ model ConversationParticipant {
   @@unique([userId, conversationId])
 }
 
+model Message {
+  id                 Int              @id @default(autoincrement())
+  content            String?
+  attachmentUrl      String?
+  attachmentType     MessageFileType?
+  attachmentName     String?
+  attachmentMimeType String?
+  senderId           Int
+  conversationId     Int
+  seen               Boolean          @default(false)
+  seenAt             DateTime?
+  createdAt          DateTime         @default(now())
+
+  sender             User             @relation("SentMessages", fields: [senderId], references: [id])
+  conversation       Conversation     @relation(fields: [conversationId], references: [id])
+  notifications      Notification[]
+
+  @@index([conversationId, createdAt])
+  @@index([senderId])
+  @@index([seen])
+}
+
+// ─────────────────────────────────────────────
+//  EVENEMENTS (AGENDA)
+// ─────────────────────────────────────────────
+
 model Event {
-  id        Int      @id @default(autoincrement())
-  title     String
-  start     DateTime
-  end       DateTime
-  allDay    Boolean  @default(false)
-  lieu      String?
-  type      String?
-  profile   Profile  @relation(fields: [profileId], references: [id])
-  profileId Int
-  createdAt DateTime @default(now())
+  id          Int         @id @default(autoincrement())
+  title       String
+  description String?
+  start       DateTime
+  end         DateTime
+  allDay      Boolean     @default(false)
+  lieu        String?
+  type        String?
+  isPrivate   Boolean     @default(false)  // Evenement prive (visible seulement par l'organisateur)
+  budget      Float?                       // Budget total de l'evenement
+  status      EventStatus @default(DRAFT)
+  profileId   Int
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  profile     Profile     @relation(fields: [profileId], references: [id])
+  staff       EventStaff[]
+  contracts   Contract[]
+  reviews     Review[]
 }
 
-model AdminSettings {
-  id             Int      @id @default(1)
-  mainColor      String?  @default("#FF0055")
-  secondaryColor String?  @default("#000000")
-  bannerUrl      String?
-  welcomeText    String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+// Postes requis dans un evenement prive
+model EventStaff {
+  id         Int         @id @default(autoincrement())
+  eventId    Int
+  role       String      // Ex: "DJ", "Traiteur", "Photographe"
+  count      Int         @default(1)
+  notes      String?
+  fee        Float?      // Cachet prevu pour ce poste
+  status     StaffStatus @default(NEEDED)
+  profileId  Int?        // Personne assignee (null si pas encore pourvu)
+  createdAt  DateTime    @default(now())
+
+  event      Event       @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  profile    Profile?    @relation(fields: [profileId], references: [id])
+  contract   Contract?
+
+  @@index([eventId])
 }
 
-enum Role {
-  ARTIST
-  ORGANIZER
-  PROVIDER
-  ADMIN
-}
+// ─────────────────────────────────────────────
+//  OFFRES D'EMPLOI & CANDIDATURES
+// ─────────────────────────────────────────────
 
 model Offer {
   id            Int           @id @default(autoincrement())
@@ -178,25 +322,130 @@ model Offer {
   status        OfferStatus   @default(ACTIVE)
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
+  organizerId   Int
 
   organizer     Profile       @relation(fields: [organizerId], references: [id])
-  organizerId   Int
+  applications  Application[]
   notifications Notification[]
 
   @@index([type])
   @@index([createdAt])
 }
 
-enum OfferType {
-  ARTIST
-  PROVIDER
-  ALL
+model Application {
+  id          Int               @id @default(autoincrement())
+  offerId     Int
+  applicantId Int               // Profile ID de l'artiste/prestataire
+  message     String?           // Message de motivation
+  status      ApplicationStatus @default(PENDING)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  offer       Offer             @relation(fields: [offerId], references: [id])
+  applicant   Profile           @relation("ApplicationApplicant", fields: [applicantId], references: [id])
+
+  @@unique([offerId, applicantId]) // Pas de double candidature
+  @@index([offerId])
+  @@index([applicantId])
 }
 
-enum OfferStatus {
-  ACTIVE
-  CLOSED
+// ─────────────────────────────────────────────
+//  CONTRATS
+// ─────────────────────────────────────────────
+
+model Contract {
+  id          Int            @id @default(autoincrement())
+  title       String
+  fileUrl     String         // URL du fichier PDF
+  amount      Float?         // Montant du contrat
+  status      ContractStatus @default(PENDING)
+  senderId    Int
+  recipientId Int
+  eventId     Int?
+  staffId     Int?           @unique
+  signedAt    DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  sender      Profile        @relation("ContractSender", fields: [senderId], references: [id])
+  recipient   Profile        @relation("ContractRecipient", fields: [recipientId], references: [id])
+  event       Event?         @relation(fields: [eventId], references: [id])
+  staff       EventStaff?    @relation(fields: [staffId], references: [id])
+  payments    Payment[]
+
+  @@index([senderId])
+  @@index([recipientId])
 }
+
+// ─────────────────────────────────────────────
+//  PAIEMENTS
+// ─────────────────────────────────────────────
+
+model Payment {
+  id           Int           @id @default(autoincrement())
+  amount       Float         // Montant total en euros
+  deposit      Float?        // Montant de l'acompte
+  commission   Float?        // Commission LSBookers
+  currency     String        @default("EUR")
+  status       PaymentStatus @default(PENDING)
+  stripeId     String?       // ID Stripe
+  payerId      Int
+  recipientId  Int
+  contractId   Int?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  payer        Profile       @relation("PaymentPayer", fields: [payerId], references: [id])
+  recipient    Profile       @relation("PaymentRecipient", fields: [recipientId], references: [id])
+  contract     Contract?     @relation(fields: [contractId], references: [id])
+
+  @@index([payerId])
+  @@index([recipientId])
+}
+
+// ─────────────────────────────────────────────
+//  AVIS
+// ─────────────────────────────────────────────
+
+model Review {
+  id        Int      @id @default(autoincrement())
+  rating    Int      // Note de 1 a 5
+  comment   String?
+  authorId  Int      // Qui ecrit l'avis
+  targetId  Int      // Qui est note
+  eventId   Int?     // Lien vers l'evenement (optionnel)
+  createdAt DateTime @default(now())
+
+  author    Profile  @relation("ReviewAuthor", fields: [authorId], references: [id])
+  target    Profile  @relation("ReviewTarget", fields: [targetId], references: [id])
+  event     Event?   @relation(fields: [eventId], references: [id])
+
+  @@unique([authorId, targetId, eventId])
+  @@index([targetId])
+}
+
+// ─────────────────────────────────────────────
+//  ABONNEMENTS
+// ─────────────────────────────────────────────
+
+model Subscription {
+  id          Int                @id @default(autoincrement())
+  userId      Int                @unique
+  status      SubscriptionStatus @default(TRIAL)
+  plan        String             @default("MONTHLY")
+  priceCents  Int                @default(1000) // 10 euros en centimes
+  stripeSubId String?            // ID abonnement Stripe
+  startDate   DateTime           @default(now())
+  endDate     DateTime?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  user        User               @relation(fields: [userId], references: [id])
+}
+
+// ─────────────────────────────────────────────
+//  NOTIFICATIONS
+// ─────────────────────────────────────────────
 
 model Notification {
   id            Int      @id @default(autoincrement())
@@ -210,30 +459,48 @@ model Notification {
   user      User     @relation(fields: [userId], references: [id])
   offerId   Int?
   offer     Offer?   @relation(fields: [offerId], references: [id])
-
   actorId   Int?
   actor     User?    @relation("NotificationActor", fields: [actorId], references: [id])
-
   messageId Int?
   message   Message? @relation(fields: [messageId], references: [id])
 }
 
 model NotificationPreferences {
-  id            Int      @id @default(autoincrement())
-  profileId     Int      @unique
-  locationScope String   @default("INTERNATIONAL")
+  id            Int     @id @default(autoincrement())
+  profileId     Int     @unique
+  locationScope String  @default("INTERNATIONAL")
 
-  profile       Profile  @relation(fields: [profileId], references: [id])
+  profile       Profile @relation(fields: [profileId], references: [id])
 }
 
+// ─────────────────────────────────────────────
+//  ADMIN
+// ─────────────────────────────────────────────
+
+model AdminSettings {
+  id             Int      @id @default(1)
+  mainColor      String?  @default("#FF0055")
+  secondaryColor String?  @default("#000000")
+  bannerUrl      String?
+  logoUrl        String?
+  welcomeText    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+// ─────────────────────────────────────────────
+//  AUTH
+// ─────────────────────────────────────────────
+
 model PasswordReset {
-  id         String   @id @default(cuid())
-  userId     Int
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tokenHash  String   @unique
-  expiresAt  DateTime
-  usedAt     DateTime?
-  createdAt  DateTime @default(now())
+  id        String    @id @default(cuid())
+  userId    Int
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
 }
