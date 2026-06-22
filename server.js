@@ -24,6 +24,9 @@ const passwordRoutes = require('./routes/password'); // 🔐 forgot/reset passwo
 
 const app = express();
 
+// Necesaire pour que le rate limiting fonctionne derriere le proxy de Railway
+app.set('trust proxy', 1);
+
 /* ===================== Middlewares globaux ===================== */
 
 // CORS — autorise uniquement lsbookers.com et localhost en développement
