@@ -56,11 +56,11 @@ app.options('*', cors(corsOptions));
 // Rate limiting — protection anti-brute-force
 // Sur les routes sensibles (login, register, mot de passe)
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // fenêtre de 15 minutes
-  max: 10,                   // max 10 tentatives par IP sur cette fenêtre
+  windowMs: 5 * 60 * 1000, // fenetre de 5 minutes
+  max: 10,                  // max 10 tentatives par IP sur cette fenetre
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'Trop de tentatives, réessayez dans 15 minutes ❌' },
+  message: { error: 'Trop de tentatives, reessayez dans 5 minutes' },
 });
 
 // Sur l'ensemble de l'API — protection générale
