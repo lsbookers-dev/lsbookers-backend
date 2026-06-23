@@ -69,6 +69,15 @@ router.post('/register', async (req, res) => {
 
     const { password: _pw, ...safeUser } = user;
 
+    // Cookie httpOnly dès l'inscription
+    const isProduction = process.env.NODE_ENV === 'production';
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: isProduction ? 'none' : 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+
     res.status(201).json({ message: 'Compte cree', token, user: safeUser });
   } catch (err) {
     console.error('Erreur dans /register :', err);
@@ -228,11 +237,33 @@ router.post('/login', async (req, res) => {
 
     const { password: _pw, ...safeUser } = user;
 
+    // Cookie httpOnly — non accessible par JavaScript
+    const isProduction = process.env.NODE_ENV === 'production';
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: isProduction ? 'none' : 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 jours
+    });
+
     res.json({ message: 'Connexion reussie', token, user: safeUser });
   } catch (err) {
     console.error('Erreur serveur lors de la connexion :', err);
     res.status(500).json({ error: 'Erreur serveur' });
   }
+});
+
+// ─────────────────────────────────────────────
+// DÉCONNEXION
+// ─────────────────────────────────────────────
+router.post('/logout', (req, res) => {
+  const isProduction = process.env.NODE_ENV === 'production';
+  res.clearCookie('token', {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax',
+  });
+  res.json({ message: 'Déconnecté' });
 });
 
 // ─────────────────────────────────────────────

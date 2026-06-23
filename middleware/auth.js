@@ -19,10 +19,20 @@ const prisma = new PrismaClient();
  * Attache l'utilisateur a req.user.
  */
 const requireAuth = async (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.startsWith('Bearer ')
-    ? authHeader.split(' ')[1]
-    : null;
+  // 1. Cookie httpOnly en priorité (sécurisé)
+  let token = req.cookies?.token || null;
+
+  // 2. Fallback : header Authorization (rétrocompatibilité)
+  if (!token) {
+    const authHeader = req.headers['authorization'];
+    const fromHeader = authHeader && authHeader.startsWith('Bearer ')
+      ? authHeader.split(' ')[1]
+      : null;
+    // Ignorer les valeurs invalides ("null", "undefined")
+    if (fromHeader && fromHeader !== 'null' && fromHeader !== 'undefined') {
+      token = fromHeader;
+    }
+  }
 
   if (!token) {
     return res.status(401).json({ error: 'Authentification requise' });
