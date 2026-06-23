@@ -22,6 +22,7 @@ const publicationRoutes = require('./routes/publications');
 const offersRoutes = require('./routes/offers'); // offres
 const notificationsRoutes = require('./routes/notifications'); // notifications
 const passwordRoutes = require('./routes/password'); // 🔐 forgot/reset password
+const reviewsRoutes = require('./routes/reviews'); // avis
 
 const app = express();
 
@@ -114,6 +115,7 @@ app.use('/api/upload', uploadRoutes);
 app.use('/api/publications', publicationRoutes);
 app.use('/api/offers', offersRoutes);
 app.use('/api/notifications', notificationsRoutes);
+app.use('/api/reviews', reviewsRoutes);
 
 /* ===================== Gestion d’erreurs ===================== */
 app.use((err, req, res, next) => {
