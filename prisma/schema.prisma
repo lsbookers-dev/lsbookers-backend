@@ -155,6 +155,10 @@ model Profile {
   banner                  String?
   soundcloudUrl           String?
   showSoundcloud          Boolean                  @default(false)
+  youtubeUrl              String?                  // Lien vidéo de prestation (YouTube/Vimeo)
+  styles                  String[]                 // Styles artistiques (RNB, Electro, Jazz...)
+  availableForBooking     Boolean                  @default(true)   // Disponible pour booking
+  showRealName            Boolean                  @default(false)  // Afficher nom/prénom au lieu du pseudo
 
   // Infos legales (non visibles sur le profil, usage interne)
   legalStatus             LegalStatus?             // Particulier / Auto-entrepreneur / Societe

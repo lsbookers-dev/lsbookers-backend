@@ -56,8 +56,15 @@ router.get('/user/:userId', async (req, res) => {
     const profile = await prisma.profile.findUnique({
       where: { userId },
       include: {
-        user: { select: { id: true, name: true, email: true, role: true } },
+        user: {
+          select: {
+            id: true, pseudo: true, firstName: true, lastName: true,
+            email: true, role: true,
+            _count: { select: { followers: true, following: true } },
+          },
+        },
         notificationPreferences: true,
+        _count: { select: { reviewsReceived: true } },
       },
     });
 
@@ -65,7 +72,22 @@ router.get('/user/:userId', async (req, res) => {
       return res.status(404).json({ error: 'Profil introuvable' });
     }
 
-    return res.json({ profile });
+    // Moyenne des avis
+    const reviews = await prisma.review.aggregate({
+      where: { targetId: profile.id },
+      _avg: { rating: true },
+      _count: { rating: true },
+    });
+
+    return res.json({
+      profile: {
+        ...profile,
+        followersCount: profile.user?._count?.followers ?? 0,
+        followingCount: profile.user?._count?.following ?? 0,
+        reviewsAvg: reviews._avg.rating ?? null,
+        reviewsCount: reviews._count.rating ?? 0,
+      },
+    });
   } catch (error) {
     console.error('❌ Erreur récupération profil public /user/:userId :', error);
     return res.status(500).json({ error: 'Erreur serveur' });
@@ -126,7 +148,7 @@ router.get('/:id', requireAuth, async (req, res) => {
     const profile = await prisma.profile.findUnique({
       where: { id },
       include: {
-        user: { select: { id: true, name: true, email: true, role: true } },
+        user: { select: { id: true, pseudo: true, firstName: true, lastName: true, email: true, role: true } },
         notificationPreferences: true,
       },
     });
@@ -178,6 +200,10 @@ router.put('/:id', requireAuth, async (req, res) => {
     bannerUrl,
     soundcloudUrl,
     showSoundcloud,
+    youtubeUrl,
+    styles,
+    availableForBooking,
+    showRealName,
     notificationPreferences,
   } = req.body;
 
@@ -282,6 +308,23 @@ router.put('/:id', requireAuth, async (req, res) => {
       dataToUpdate.showSoundcloud = Boolean(showSoundcloud);
     }
 
+    if (sanitizeString(youtubeUrl) !== undefined) {
+      dataToUpdate.youtubeUrl = sanitizeString(youtubeUrl);
+    }
+
+    const sanitizedStyles = sanitizeStringArray(styles);
+    if (sanitizedStyles !== undefined) {
+      dataToUpdate.styles = sanitizedStyles;
+    }
+
+    if (availableForBooking !== undefined) {
+      dataToUpdate.availableForBooking = Boolean(availableForBooking);
+    }
+
+    if (showRealName !== undefined) {
+      dataToUpdate.showRealName = Boolean(showRealName);
+    }
+
     // ✅ Médias (nouveaux champs prioritaires)
     if (sanitizedAvatar !== undefined) dataToUpdate.avatar = sanitizedAvatar;
     else if (sanitizedAvatarUrl !== undefined) dataToUpdate.avatar = sanitizedAvatarUrl;
@@ -310,7 +353,7 @@ router.put('/:id', requireAuth, async (req, res) => {
     const fullUpdatedProfile = await prisma.profile.findUnique({
       where: { id },
       include: {
-        user: { select: { id: true, name: true, email: true, role: true } },
+        user: { select: { id: true, pseudo: true, firstName: true, lastName: true, email: true, role: true } },
         notificationPreferences: true,
       },
     });
