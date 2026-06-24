@@ -228,8 +228,9 @@ router.delete('/users/:id', requireAuth, requireAdmin, async (req, res) => {
       // 14. Participations aux conversations
       await tx.conversationParticipant.deleteMany({ where: { userId: id } });
 
-      // 15. Follows
+      // 15. Follows + Blocks
       await tx.follow.deleteMany({ where: { OR: [{ followerId: id }, { followingId: id }] } });
+      await tx.block.deleteMany({ where: { OR: [{ blockerId: id }, { blockedId: id }] } });
 
       // 16. Media liés à l'utilisateur
       await tx.media.deleteMany({ where: { userId: id } });

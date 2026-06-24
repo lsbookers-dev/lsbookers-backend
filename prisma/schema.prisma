@@ -129,6 +129,8 @@ model User {
   media               Media[]
   followers           Follow[]                 @relation("followers")
   following           Follow[]                 @relation("following")
+  blocking            Block[]                  @relation("blocking")
+  blockedBy           Block[]                  @relation("blockedBy")
   messages            Message[]                @relation("SentMessages")
   conversations       ConversationParticipant[]
   notifications       Notification[]
@@ -258,6 +260,18 @@ model Follow {
   following   User     @relation("following", fields: [followingId], references: [id])
 
   @@unique([followerId, followingId])
+}
+
+model Block {
+  id        Int      @id @default(autoincrement())
+  blockerId Int
+  blockedId Int
+  createdAt DateTime @default(now())
+
+  blocker   User     @relation("blocking", fields: [blockerId], references: [id])
+  blocked   User     @relation("blockedBy", fields: [blockedId], references: [id])
+
+  @@unique([blockerId, blockedId])
 }
 
 // ─────────────────────────────────────────────

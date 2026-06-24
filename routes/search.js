@@ -104,10 +104,21 @@ router.get('/', requireAuth, async (req, res) => {
       searchCoords = await geocodeLocation(String(zone))
     }
 
+    // IDs bloqués dans les deux sens (moi→eux et eux→moi)
+    const blocks = await prisma.block.findMany({
+      where: {
+        OR: [{ blockerId: req.user.id }, { blockedId: req.user.id }],
+      },
+      select: { blockerId: true, blockedId: true },
+    })
+    const blockedIds = blocks.map(b =>
+      b.blockerId === req.user.id ? b.blockedId : b.blockerId
+    )
+
     const users = await prisma.user.findMany({
       where: {
         role: { not: 'ADMIN' },
-        id: { not: req.user.id },
+        id: { not: req.user.id, notIn: blockedIds.length ? blockedIds : undefined },
 
         ...(name && {
           OR: [
