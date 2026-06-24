@@ -11,20 +11,46 @@ const { requireAuth, requireAdmin } = require('../middleware/auth');
  * =======================================================*/
 router.get('/stats/summary', requireAuth, requireAdmin, async (_req, res) => {
   try {
-    const usersTotal = await prisma.user.count({ where: { role: { not: 'ADMIN' } } });
-    const artists   = await prisma.user.count({ where: { role: 'ARTIST' } });
-    const organizers = await prisma.user.count({ where: { role: 'ORGANIZER' } });
-    const providers  = await prisma.user.count({ where: { role: 'PROVIDER' } });
+    const usersTotal  = await prisma.user.count({ where: { role: { not: 'ADMIN' } } });
+    const artists     = await prisma.user.count({ where: { role: 'ARTIST' } });
+    const organizers  = await prisma.user.count({ where: { role: 'ORGANIZER' } });
+    const providers   = await prisma.user.count({ where: { role: 'PROVIDER' } });
 
-    let conversations = 0;
-    let messages = 0;
+    // Inscriptions aujourd'hui
+    const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+    const signupsToday = await prisma.user.count({
+      where: { role: { not: 'ADMIN' }, createdAt: { gte: todayStart } },
+    });
+
+    let conversations = 0, messages = 0;
     try {
       conversations = await prisma.conversation.count();
       messages      = await prisma.message.count();
     } catch { /* tables absentes */ }
 
+    // Abonnements / paiements (tables optionnelles)
+    let payingUsers = 0, mrrCents = 0, revenueMonthCents = 0, revenueOffersCents = 0;
+    try {
+      const monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0);
+      const activeSubs = await prisma.subscription.findMany({
+        where: { status: 'ACTIVE' }, select: { priceCents: true },
+      });
+      payingUsers = activeSubs.length;
+      mrrCents    = activeSubs.reduce((s, x) => s + (x.priceCents || 0), 0);
+      const payments = await prisma.payment.findMany({
+        where: { createdAt: { gte: monthStart } }, select: { amountCents: true, kind: true },
+      });
+      revenueMonthCents  = payments.reduce((s, p) => s + (p.amountCents || 0), 0);
+      revenueOffersCents = payments.filter(p => p.kind === 'OFFER').reduce((s, p) => s + (p.amountCents || 0), 0);
+    } catch { /* tables absentes */ }
+
     return res.json({
-      summary: { usersTotal, artists, organizers, providers, conversations, messages },
+      summary: {
+        usersTotal, artists, organizers, providers,
+        signupsToday, loginsToday: 0,
+        conversations, messages,
+        payingUsers, mrrCents, revenueMonthCents, revenueOffersCents,
+      },
     });
   } catch (err) {
     console.error('❌ /stats/summary', err);
