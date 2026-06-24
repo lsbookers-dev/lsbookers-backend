@@ -111,6 +111,38 @@ router.get('/users', requireAuth, requireAdmin, async (req, res) => {
 });
 
 /* =========================================================
+ *  USERS — changer le rôle
+ *  PATCH /api/admin/users/:id/role
+ * =======================================================*/
+router.patch('/users/:id/role', requireAuth, requireAdmin, async (req, res) => {
+  const id = parseInt(String(req.params.id || ''), 10);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'ID invalide' });
+
+  const { role } = req.body;
+  const ALLOWED = ['ARTIST', 'ORGANIZER', 'PROVIDER'];
+  if (!ALLOWED.includes(role)) {
+    return res.status(400).json({ error: 'Rôle invalide. Valeurs acceptées : ARTIST, ORGANIZER, PROVIDER' });
+  }
+
+  try {
+    const user = await prisma.user.findUnique({ where: { id }, select: { role: true } });
+    if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
+    if (user.role === 'ADMIN') return res.status(403).json({ error: 'Impossible de modifier un compte admin' });
+
+    const updated = await prisma.user.update({
+      where: { id },
+      data: { role },
+      select: { id: true, pseudo: true, email: true, role: true },
+    });
+
+    return res.json({ ok: true, user: updated });
+  } catch (err) {
+    console.error('❌ patch role', err);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+/* =========================================================
  *  USERS — supprimer (avec gestion des FK)
  *  DELETE /api/admin/users/:id
  * =======================================================*/
