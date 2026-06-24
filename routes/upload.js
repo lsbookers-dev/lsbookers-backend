@@ -80,22 +80,35 @@ router.post('/', (req, res) => {
 
       const cloudFolder = `lsbookers/${folder}`;
 
+      // Timeout de sécurité : si Cloudinary ne répond pas en 20s, on renvoie une erreur
+      let responded = false;
+      const cloudinaryTimeout = setTimeout(() => {
+        if (!responded) {
+          responded = true;
+          console.error('❌ Cloudinary timeout (20s)');
+          res.status(504).json({ error: 'CLOUDINARY_TIMEOUT' });
+        }
+      }, 20000);
+
       const stream = cloudinary.uploader.upload_stream(
         {
           folder: cloudFolder,
-          resource_type, // image | video | auto
+          resource_type,
           overwrite: true,
         },
         (cloudErr, result) => {
+          clearTimeout(cloudinaryTimeout);
+          if (responded) return; // timeout déjà déclenché
+          responded = true;
+
           if (cloudErr) {
             console.error('❌ Cloudinary error:', cloudErr);
             return res.status(502).json({
               error: 'CLOUDINARY_UPLOAD_FAILED',
-              details: cloudErr.message || cloudErr,
+              details: cloudErr.message || String(cloudErr),
             });
           }
 
-          // Réponse OK
           return res.json({
             url: result.secure_url,
             public_id: result.public_id,

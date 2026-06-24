@@ -242,36 +242,57 @@ router.put('/:id', requireAuth, async (req, res) => {
     const sanitizedSpecialties = sanitizeStringArray(specialties);
 
     // 🌍 Géocodage si "location" fourni
+    const NOMINATIM_HEADERS = {
+      'User-Agent': 'LSBookers/1.0 (contact@lsbookers.com)',
+      'Accept-Language': 'fr',
+    };
+
+    const fetchWithTimeout = (url, options = {}, timeoutMs = 5000) => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      return fetch(url, { ...options, signal: controller.signal })
+        .finally(() => clearTimeout(timer));
+    };
+
     if (sanitizedLocation) {
-      const geoRes = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(
-          sanitizedLocation
-        )}`
-      );
-      const geoData = await geoRes.json();
+      try {
+        const geoRes = await fetchWithTimeout(
+          `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(sanitizedLocation)}`,
+          { headers: NOMINATIM_HEADERS },
+          5000
+        );
+        const geoData = await geoRes.json();
 
-      if (Array.isArray(geoData) && geoData.length > 0) {
-        latitude = parseFloat(geoData[0].lat);
-        longitude = parseFloat(geoData[0].lon);
-        country = geoData[0].address?.country || sanitizedCountry || null;
-
-        console.log('📍 Coordonnées géocodées :', latitude, longitude, '🌐 Pays :', country);
-      } else {
-        return res.status(400).json({ error: 'Localisation invalide ou non reconnue' });
+        if (Array.isArray(geoData) && geoData.length > 0) {
+          latitude = parseFloat(geoData[0].lat);
+          longitude = parseFloat(geoData[0].lon);
+          country = geoData[0].address?.country || sanitizedCountry || null;
+          console.log('📍 Coordonnées géocodées :', latitude, longitude, '🌐 Pays :', country);
+        } else {
+          // Géocodage sans résultat — on sauvegarde quand même la ville telle quelle
+          console.warn('⚠️ Géocodage sans résultat pour :', sanitizedLocation);
+          country = sanitizedCountry || profile.country || null;
+        }
+      } catch (geoError) {
+        // Timeout ou erreur réseau — on sauvegarde quand même sans coordonnées
+        console.warn('⚠️ Géocodage impossible :', geoError.message);
+        country = sanitizedCountry || profile.country || null;
       }
     } else if (parsedClientLatitude !== null && parsedClientLongitude !== null) {
       latitude = parsedClientLatitude;
       longitude = parsedClientLongitude;
 
       try {
-        const revRes = await fetch(
-          `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=3&addressdetails=1`
+        const revRes = await fetchWithTimeout(
+          `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=3&addressdetails=1`,
+          { headers: NOMINATIM_HEADERS },
+          5000
         );
         const revData = await revRes.json();
         country = sanitizedCountry || revData?.address?.country || profile.country || null;
         console.log('🌐 Pays déterminé par coordonnées :', country);
       } catch (reverseError) {
-        console.warn('⚠️ Reverse geocoding impossible, pays conservé si disponible');
+        console.warn('⚠️ Reverse geocoding impossible :', reverseError.message);
         country = sanitizedCountry || profile.country || null;
       }
     } else if (sanitizedCountry !== undefined) {
