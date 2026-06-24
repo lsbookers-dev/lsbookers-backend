@@ -143,7 +143,7 @@ router.patch('/users/:id/role', requireAuth, requireAdmin, async (req, res) => {
 });
 
 /* =========================================================
- *  USERS — supprimer (avec gestion des FK)
+ *  USERS — supprimer (cascade manuelle complète)
  *  DELETE /api/admin/users/:id
  * =======================================================*/
 router.delete('/users/:id', requireAuth, requireAdmin, async (req, res) => {
@@ -151,16 +151,102 @@ router.delete('/users/:id', requireAuth, requireAdmin, async (req, res) => {
   if (!Number.isFinite(id)) return res.status(400).json({ error: 'ID invalide' });
 
   try {
-    // Vérifier que ce n'est pas un admin
-    const user = await prisma.user.findUnique({ where: { id }, select: { role: true } });
+    const user = await prisma.user.findUnique({
+      where: { id },
+      select: { role: true, profile: { select: { id: true } } },
+    });
     if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
     if (user.role === 'ADMIN') return res.status(403).json({ error: 'Impossible de supprimer un compte admin' });
 
-    // Supprimer dans l'ordre pour respecter les FK
-    const profile = await prisma.profile.findUnique({ where: { userId: id } });
-    if (profile) await prisma.profile.delete({ where: { id: profile.id } });
-    await prisma.passwordReset.deleteMany({ where: { userId: id } });
-    await prisma.user.delete({ where: { id } });
+    const profileId = user.profile?.id ?? null;
+
+    await prisma.$transaction(async (tx) => {
+
+      if (profileId) {
+        // IDs des offres, événements et contrats de ce profil
+        const offerIds = (await tx.offer.findMany({ where: { organizerId: profileId }, select: { id: true } })).map(o => o.id);
+        const eventIds = (await tx.event.findMany({ where: { profileId }, select: { id: true } })).map(e => e.id);
+
+        const contractWhere = { OR: [{ senderId: profileId }, { recipientId: profileId }] };
+        if (eventIds.length) contractWhere.OR.push({ eventId: { in: eventIds } });
+        const contractIds = (await tx.contract.findMany({ where: contractWhere, select: { id: true } })).map(c => c.id);
+
+        // 1. Paiements
+        await tx.payment.deleteMany({ where: { OR: [{ payerId: profileId }, { recipientId: profileId }] } });
+        if (contractIds.length) await tx.payment.deleteMany({ where: { contractId: { in: contractIds } } });
+
+        // 2. Notifications liées aux offres de ce profil
+        if (offerIds.length) await tx.notification.deleteMany({ where: { offerId: { in: offerIds } } });
+
+        // 3. Candidatures (envoyées par ce profil + reçues sur ses offres)
+        await tx.application.deleteMany({ where: { applicantId: profileId } });
+        if (offerIds.length) await tx.application.deleteMany({ where: { offerId: { in: offerIds } } });
+
+        // 4. Offres
+        if (offerIds.length) await tx.offer.deleteMany({ where: { id: { in: offerIds } } });
+
+        // 5. Avis (donnés/reçus + liés aux événements)
+        await tx.review.deleteMany({ where: { OR: [{ authorId: profileId }, { targetId: profileId }] } });
+        if (eventIds.length) await tx.review.deleteMany({ where: { eventId: { in: eventIds } } });
+
+        // 6. Contrats (staffId mis à null d'abord pour lever le lien avec EventStaff)
+        if (contractIds.length) {
+          await tx.contract.updateMany({ where: { id: { in: contractIds } }, data: { staffId: null } });
+          await tx.contract.deleteMany({ where: { id: { in: contractIds } } });
+        }
+
+        // 7. EventStaff
+        if (eventIds.length) await tx.eventStaff.deleteMany({ where: { eventId: { in: eventIds } } });
+        await tx.eventStaff.deleteMany({ where: { profileId } });
+
+        // 8. Événements
+        if (eventIds.length) await tx.event.deleteMany({ where: { id: { in: eventIds } } });
+
+        // 9. Likes + Publications
+        const pubIds = (await tx.publication.findMany({ where: { profileId }, select: { id: true } })).map(p => p.id);
+        if (pubIds.length) await tx.publicationLike.deleteMany({ where: { publicationId: { in: pubIds } } });
+        await tx.publicationLike.deleteMany({ where: { profileId } });
+        await tx.publication.deleteMany({ where: { profileId } });
+
+        // 10. Préférences de notification
+        await tx.notificationPreferences.deleteMany({ where: { profileId } });
+
+        // 11. Media liés au profil
+        await tx.media.deleteMany({ where: { profileId } });
+      }
+
+      // 12. Notifications liées à cet utilisateur (userId ou actorId)
+      await tx.notification.deleteMany({ where: { OR: [{ userId: id }, { actorId: id }] } });
+
+      // 13. Messages envoyés — mettre messageId à null dans les notifications d'autres users
+      const msgIds = (await tx.message.findMany({ where: { senderId: id }, select: { id: true } })).map(m => m.id);
+      if (msgIds.length) {
+        await tx.notification.updateMany({ where: { messageId: { in: msgIds } }, data: { messageId: null } });
+        await tx.message.deleteMany({ where: { senderId: id } });
+      }
+
+      // 14. Participations aux conversations
+      await tx.conversationParticipant.deleteMany({ where: { userId: id } });
+
+      // 15. Follows
+      await tx.follow.deleteMany({ where: { OR: [{ followerId: id }, { followingId: id }] } });
+
+      // 16. Media liés à l'utilisateur
+      await tx.media.deleteMany({ where: { userId: id } });
+
+      // 17. Abonnement
+      await tx.subscription.deleteMany({ where: { userId: id } });
+
+      // 18. Profil
+      if (profileId) await tx.profile.delete({ where: { id: profileId } });
+
+      // 19. Réinitialisations de mot de passe
+      await tx.passwordReset.deleteMany({ where: { userId: id } });
+
+      // 20. Utilisateur
+      await tx.user.delete({ where: { id } });
+
+    }, { timeout: 30000 });
 
     return res.json({ ok: true });
   } catch (err) {
