@@ -83,16 +83,37 @@ router.get('/status/:id', requireAuth, async (req, res) => {
 })
 
 /* =========================================================
- *  GET /api/block/list  — Liste des IDs que j'ai bloqués
+ *  GET /api/block/list  — Liste des utilisateurs bloqués (avec infos)
  * =======================================================*/
 router.get('/list', requireAuth, async (req, res) => {
   try {
     const blocks = await prisma.block.findMany({
       where: { blockerId: req.user.id },
-      select: { blockedId: true, createdAt: true },
       orderBy: { createdAt: 'desc' },
+      include: {
+        blocked: {
+          select: {
+            id: true,
+            pseudo: true,
+            firstName: true,
+            lastName: true,
+            role: true,
+            profile: { select: { avatar: true } },
+          },
+        },
+      },
     })
-    return res.json({ blocked: blocks.map(b => b.blockedId) })
+    return res.json({
+      blocked: blocks.map(b => ({
+        id: b.blocked.id,
+        pseudo: b.blocked.pseudo,
+        firstName: b.blocked.firstName,
+        lastName: b.blocked.lastName,
+        role: b.blocked.role,
+        avatar: b.blocked.profile?.avatar ?? null,
+        blockedAt: b.createdAt,
+      })),
+    })
   } catch (error) {
     console.error('Erreur block list :', error)
     return res.status(500).json({ error: 'Erreur serveur' })
