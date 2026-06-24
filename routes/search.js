@@ -107,12 +107,14 @@ router.get('/', requireAuth, async (req, res) => {
     const users = await prisma.user.findMany({
       where: {
         role: { not: 'ADMIN' },
+        id: { not: req.user.id },
 
         ...(name && {
-          name: {
-            contains: String(name),
-            mode: 'insensitive',
-          },
+          OR: [
+            { pseudo:     { contains: String(name), mode: 'insensitive' } },
+            { firstName:  { contains: String(name), mode: 'insensitive' } },
+            { lastName:   { contains: String(name), mode: 'insensitive' } },
+          ],
         }),
 
         ...(role &&
@@ -142,7 +144,7 @@ router.get('/', requireAuth, async (req, res) => {
       include: {
         profile: true,
       },
-      orderBy: { name: 'asc' },
+      orderBy: { createdAt: 'desc' },
     })
 
     let finalUsers = users
