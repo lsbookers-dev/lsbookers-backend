@@ -199,6 +199,132 @@ router.patch('/step3', requireAuth, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────
+// INSCRIPTION COMPLETE (toutes les données d'un coup)
+// POST /api/auth/register-complete
+// Collecte : email, password, role,
+//            pseudo, firstName, lastName, dateOfBirth, phone, countryOfResidence,
+//            legalStatus, organizerType, establishmentName, typeEtablissement, siret, city
+// ─────────────────────────────────────────────
+router.post('/register-complete', async (req, res) => {
+  const {
+    // Étape 1
+    email, password, role,
+    // Étape 2
+    pseudo, firstName, lastName, dateOfBirth, phone, countryOfResidence,
+    // Étape 3
+    legalStatus, organizerType, establishmentName, typeEtablissement, siret, city,
+  } = req.body;
+
+  // Validations obligatoires
+  if (!email || !password || !role) {
+    return res.status(400).json({ error: 'Email, mot de passe et rôle sont requis' });
+  }
+  if (!pseudo || !firstName || !lastName) {
+    return res.status(400).json({ error: 'Pseudo, prénom et nom sont requis' });
+  }
+
+  const validRoles = ['ARTIST', 'ORGANIZER', 'PROVIDER'];
+  if (!validRoles.includes(role)) {
+    return res.status(400).json({ error: 'Rôle invalide' });
+  }
+
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    return res.status(400).json({ error: 'Adresse email invalide' });
+  }
+
+  if (password.length < 8) {
+    return res.status(400).json({ error: 'Le mot de passe doit contenir au moins 8 caractères' });
+  }
+
+  const pseudoRegex = /^[a-zA-Z0-9_.\-]{3,30}$/;
+  if (!pseudoRegex.test(pseudo)) {
+    return res.status(400).json({ error: 'Pseudo invalide : 3-30 caractères, lettres/chiffres/tirets/underscores' });
+  }
+
+  const validLegalStatuses = ['INDIVIDUAL', 'AUTO_ENTREPRENEUR', 'COMPANY'];
+  if (legalStatus && !validLegalStatuses.includes(legalStatus)) {
+    return res.status(400).json({ error: 'Statut légal invalide' });
+  }
+
+  try {
+    // Vérifier email unique
+    const existingEmail = await prisma.user.findUnique({ where: { email: email.toLowerCase().trim() } });
+    if (existingEmail) {
+      return res.status(400).json({ error: 'Utilisateur déjà inscrit avec cet email' });
+    }
+
+    // Vérifier pseudo unique
+    const existingPseudo = await prisma.user.findUnique({ where: { pseudo } });
+    if (existingPseudo) {
+      return res.status(409).json({ error: 'Ce pseudo est déjà utilisé' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 12);
+    const emailVerificationToken = crypto.randomBytes(32).toString('hex');
+
+    // Construire les données du profil (étape 3)
+    const profileData = {};
+    if (legalStatus) profileData.legalStatus = legalStatus;
+    if (organizerType) profileData.organizerType = organizerType;
+    if (establishmentName) profileData.establishmentName = establishmentName.trim();
+    if (typeEtablissement) profileData.typeEtablissement = typeEtablissement.trim();
+    if (siret) profileData.siret = siret.trim();
+    if (city) profileData.city = city.trim();
+    if (countryOfResidence) profileData.country = countryOfResidence.trim();
+
+    // Construire les données utilisateur (étape 2)
+    const userData = {
+      email: email.toLowerCase().trim(),
+      password: hashedPassword,
+      role,
+      pseudo,
+      firstName: firstName.trim(),
+      lastName: lastName.trim(),
+      isAdmin: false,
+      registrationStep: 3,
+      emailVerified: false,
+      emailVerificationToken,
+      profile: { create: profileData },
+    };
+    if (dateOfBirth) userData.dateOfBirth = new Date(dateOfBirth);
+    if (phone) userData.phone = phone.trim();
+    if (countryOfResidence) userData.countryOfResidence = countryOfResidence.trim();
+
+    const user = await prisma.user.create({
+      data: userData,
+      include: { profile: true },
+    });
+
+    const token = jwt.sign(
+      { id: user.id, email: user.email, role: user.role, isAdmin: user.isAdmin },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    // Envoi de l'email de vérification
+    sendVerificationEmail(user.email, emailVerificationToken).catch(err =>
+      console.error('Erreur envoi email vérification:', err)
+    );
+
+    const { password: _pw, ...safeUser } = user;
+
+    const isProduction = process.env.NODE_ENV === 'production';
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: isProduction ? 'none' : 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+
+    res.status(201).json({ message: 'Compte créé', token, user: safeUser });
+  } catch (err) {
+    console.error('Erreur dans /register-complete :', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// ─────────────────────────────────────────────
 // CONNEXION
 // ─────────────────────────────────────────────
 router.post('/login', async (req, res) => {
