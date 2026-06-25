@@ -88,14 +88,37 @@ router.get('/conversations', requireAuth, async (req, res) => {
       },
     })
 
-    const conversations = participations
-      .map((p) => {
+    // Fix 1 : ne montrer que les conversations avec au moins 1 message
+    // (évite qu'une conversation vide apparaisse chez le destinataire)
+    const withMessages = participations.filter(
+      (p) => p.conversation.messages.length > 0
+    )
+
+    const conversations = await Promise.all(
+      withMessages.map(async (p) => {
         const c = p.conversation
         const lastMessage = c.messages[0] || null
 
+        // Construire la liste des participants
+        let participants = c.participants.map((part) => pickUserPublic(part.user))
+
+        // Fix 2 : si l'autre participant a supprimé sa copie de la conv,
+        // récupérer ses infos depuis l'historique des messages
+        const hasOther = participants.some((u) => u && u.id !== userId && !isAdminUser(u))
+        if (!hasOther) {
+          const otherMsg = await prisma.message.findFirst({
+            where: { conversationId: c.id, NOT: { senderId: userId } },
+            include: { sender: { include: { profile: true } } },
+            orderBy: { createdAt: 'desc' },
+          })
+          if (otherMsg?.sender) {
+            participants = [...participants, pickUserPublic(otherMsg.sender)]
+          }
+        }
+
         return {
           id: c.id,
-          participants: c.participants.map((part) => pickUserPublic(part.user)),
+          participants: participants.filter(Boolean),
           lastMessage:
             lastMessage?.content ||
             (lastMessage?.attachmentType === 'IMAGE' ? '📷 Image' : '') ||
@@ -114,14 +137,18 @@ router.get('/conversations', requireAuth, async (req, res) => {
           updatedAt: c.updatedAt,
         }
       })
-      .filter((c) => !c.participants.some((u) => isAdminUser(u)))
+    )
 
-    conversations.sort(
+    const filtered = conversations.filter(
+      (c) => !c.participants.some((u) => isAdminUser(u))
+    )
+
+    filtered.sort(
       (a, b) =>
         new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime()
     )
 
-    return res.json({ conversations })
+    return res.json({ conversations: filtered })
   } catch (err) {
     console.error('❌ [GET /conversations]', err)
     return res.status(500).json({ error: 'Erreur serveur' })
