@@ -4,61 +4,63 @@ const { PrismaClient } = require('@prisma/client')
 const prisma = new PrismaClient()
 const { requireAuth } = require('../middleware/auth')
 const multer = require('multer')
-const path = require('path')
+const cloudinary = require('../config/cloudinary')
 
-/* ------------ Multer (upload local temporaire) ------------ */
-const storage = multer.diskStorage({
-  destination: function (_req, _file, cb) {
-    cb(null, 'uploads/')
-  },
-  filename: function (_req, file, cb) {
-    const safeName = file.originalname.replace(/\s/g, '_')
-    cb(null, `${Date.now()}-${safeName}`)
-  },
+/* ─── Multer mémoire (pas de fichier sur disque) ─── */
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100 Mo max
 })
 
-const upload = multer({ storage })
+/* ─── Helpers ─────────────────────────────────────── */
+function getUserDisplayName(u) {
+  if (!u) return 'Utilisateur'
+  return u.pseudo || [u.firstName, u.lastName].filter(Boolean).join(' ') || 'Utilisateur'
+}
 
-/* ------------ Helpers ------------ */
 function pickUserPublic(u) {
   if (!u) return null
   return {
     id: u.id,
-    name: u.name,
+    name: getUserDisplayName(u),
+    pseudo: u.pseudo || null,
+    firstName: u.firstName || null,
+    lastName: u.lastName || null,
     role: u.role,
-    image: u.image || null,
     profile: u.profile ? { avatar: u.profile.avatar || null } : null,
   }
 }
 
 const isAdminUser = (u) => !!u && String(u.role).toUpperCase() === 'ADMIN'
 
-async function conversationHasAdmin(conversationId) {
-  const conv = await prisma.conversation.findUnique({
-    where: { id: Number(conversationId) },
-    include: {
-      participants: {
-        include: {
-          user: true,
-        },
-      },
-    },
-  })
-
-  if (!conv) return false
-  return conv.participants.some((p) => isAdminUser(p.user))
-}
-
-function detectAttachmentType(file) {
-  if (!file?.mimetype) return null
-  if (file.mimetype.startsWith('image/')) return 'IMAGE'
-  if (file.mimetype.startsWith('video/')) return 'VIDEO'
+function detectAttachmentType(mimetype) {
+  if (!mimetype) return 'DOCUMENT'
+  if (mimetype.startsWith('image/')) return 'IMAGE'
+  if (mimetype.startsWith('video/')) return 'VIDEO'
   return 'DOCUMENT'
 }
 
-function buildFileUrl(file) {
-  if (!file) return null
-  return `https://lsbookers-backend-production.up.railway.app/uploads/${file.filename}`
+/* Upload vers Cloudinary depuis un buffer en mémoire */
+function uploadBufferToCloudinary(buffer, mimetype, originalname) {
+  return new Promise((resolve, reject) => {
+    const type = detectAttachmentType(mimetype)
+    const resourceType =
+      type === 'IMAGE' ? 'image' : type === 'VIDEO' ? 'video' : 'raw'
+
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        folder: 'lsbookers/messages',
+        resource_type: resourceType,
+        public_id: `${Date.now()}-${(originalname || 'file').replace(/\s/g, '_')}`,
+      },
+      (error, result) => {
+        if (error) return reject(error)
+        resolve(result)
+      }
+    )
+
+    stream.end(buffer)
+  })
 }
 
 /* =========================================================
@@ -75,11 +77,7 @@ router.get('/conversations', requireAuth, async (req, res) => {
         conversation: {
           include: {
             participants: {
-              include: {
-                user: {
-                  include: { profile: true },
-                },
-              },
+              include: { user: { include: { profile: true } } },
             },
             messages: {
               orderBy: { createdAt: 'desc' },
@@ -100,8 +98,10 @@ router.get('/conversations', requireAuth, async (req, res) => {
           participants: c.participants.map((part) => pickUserPublic(part.user)),
           lastMessage:
             lastMessage?.content ||
-            lastMessage?.attachmentName ||
-            (lastMessage?.attachmentUrl ? 'Pièce jointe' : ''),
+            (lastMessage?.attachmentType === 'IMAGE' ? '📷 Image' : '') ||
+            (lastMessage?.attachmentType === 'VIDEO' ? '🎬 Vidéo' : '') ||
+            (lastMessage?.attachmentType === 'DOCUMENT' ? '📄 Document' : '') ||
+            '',
           lastMessageMeta: lastMessage
             ? {
                 id: lastMessage.id,
@@ -114,7 +114,7 @@ router.get('/conversations', requireAuth, async (req, res) => {
           updatedAt: c.updatedAt,
         }
       })
-      .filter((c) => c.participants.every((u) => !isAdminUser(u)))
+      .filter((c) => !c.participants.some((u) => isAdminUser(u)))
 
     conversations.sort(
       (a, b) =>
@@ -123,7 +123,7 @@ router.get('/conversations', requireAuth, async (req, res) => {
 
     return res.json({ conversations })
   } catch (err) {
-    console.error('❌ [GET /conversations] Error:', err)
+    console.error('❌ [GET /conversations]', err)
     return res.status(500).json({ error: 'Erreur serveur' })
   }
 })
@@ -142,24 +142,19 @@ router.get('/unread-count', requireAuth, async (req, res) => {
     })
 
     const conversationIds = participations.map((p) => p.conversationId)
+    if (!conversationIds.length) return res.json({ count: 0 })
 
-    if (!conversationIds.length) {
-      return res.json({ count: 0 })
-    }
-
-    const unreadCount = await prisma.message.count({
+    const count = await prisma.message.count({
       where: {
         conversationId: { in: conversationIds },
         seen: false,
-        NOT: {
-          senderId: userId,
-        },
+        NOT: { senderId: userId },
       },
     })
 
-    return res.json({ count: unreadCount })
+    return res.json({ count })
   } catch (err) {
-    console.error('❌ [GET /unread-count] Error:', err)
+    console.error('❌ [GET /unread-count]', err)
     return res.status(500).json({ error: 'Erreur serveur' })
   }
 })
@@ -170,32 +165,22 @@ router.get('/unread-count', requireAuth, async (req, res) => {
 router.get('/messages/:conversationId', requireAuth, async (req, res) => {
   try {
     const userId = Number(req.user?.id)
-    if (!userId) return res.status(401).json({ error: 'Unauthorized' })
-
     const conversationId = Number(req.params.conversationId)
-    if (!conversationId) {
-      return res.status(400).json({ error: 'conversationId invalide' })
-    }
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' })
+    if (!conversationId) return res.status(400).json({ error: 'conversationId invalide' })
 
     const participation = await prisma.conversationParticipant.findFirst({
       where: { conversationId, userId },
       include: {
         conversation: {
           include: {
-            participants: {
-              include: {
-                user: true,
-              },
-            },
+            participants: { include: { user: true } },
           },
         },
       },
     })
 
-    if (!participation) {
-      return res.status(403).json({ error: 'Forbidden' })
-    }
-
+    if (!participation) return res.status(403).json({ error: 'Forbidden' })
     if (participation.conversation.participants.some((p) => isAdminUser(p.user))) {
       return res.status(404).json({ error: 'Conversation introuvable' })
     }
@@ -203,13 +188,7 @@ router.get('/messages/:conversationId', requireAuth, async (req, res) => {
     const messages = await prisma.message.findMany({
       where: { conversationId },
       orderBy: { createdAt: 'asc' },
-      include: {
-        sender: {
-          include: {
-            profile: true,
-          },
-        },
-      },
+      include: { sender: { include: { profile: true } } },
     })
 
     const payload = messages.map((m) => ({
@@ -224,21 +203,20 @@ router.get('/messages/:conversationId', requireAuth, async (req, res) => {
       seenAt: m.seenAt,
       sender: {
         id: m.senderId,
-        name: m.sender?.name || 'Utilisateur',
-        image: m.sender?.profile?.avatar || m.sender?.image || null,
+        name: getUserDisplayName(m.sender),
+        image: m.sender?.profile?.avatar || null,
       },
     }))
 
     return res.json(payload)
   } catch (err) {
-    console.error('❌ [GET /messages/:conversationId] Error:', err)
+    console.error('❌ [GET /messages/:conversationId]', err)
     return res.status(500).json({ error: 'Erreur serveur' })
   }
 })
 
 /* =========================================================
-   POST /api/messages/start
-   ➜ créer ou retrouver une conversation SANS envoyer de message auto
+   POST /api/messages/start  — créer ou trouver une conversation
 ========================================================= */
 router.post('/start', requireAuth, async (req, res) => {
   try {
@@ -247,22 +225,15 @@ router.post('/start', requireAuth, async (req, res) => {
 
     if (!senderId) return res.status(401).json({ error: 'Unauthorized' })
     if (!recipientId) return res.status(400).json({ error: 'recipientId requis' })
-    if (senderId === recipientId) {
-      return res.status(400).json({ error: 'Impossible de créer une conversation avec soi-même' })
-    }
+    if (senderId === recipientId)
+      return res.status(400).json({ error: 'Impossible de se contacter soi-même' })
 
     const recipient = await prisma.user.findUnique({
       where: { id: recipientId },
       include: { profile: true },
     })
-
-    if (!recipient) {
-      return res.status(404).json({ error: 'Destinataire introuvable' })
-    }
-
-    if (isAdminUser(recipient)) {
-      return res.status(403).json({ error: 'Action non autorisée' })
-    }
+    if (!recipient) return res.status(404).json({ error: 'Destinataire introuvable' })
+    if (isAdminUser(recipient)) return res.status(403).json({ error: 'Action non autorisée' })
 
     let conversation = await prisma.conversation.findFirst({
       where: {
@@ -272,11 +243,7 @@ router.post('/start', requireAuth, async (req, res) => {
         ],
       },
       include: {
-        participants: {
-          include: {
-            user: { include: { profile: true } },
-          },
-        },
+        participants: { include: { user: { include: { profile: true } } } },
       },
     })
 
@@ -288,11 +255,7 @@ router.post('/start', requireAuth, async (req, res) => {
           },
         },
         include: {
-          participants: {
-            include: {
-              user: { include: { profile: true } },
-            },
-          },
+          participants: { include: { user: { include: { profile: true } } } },
         },
       })
     }
@@ -307,14 +270,13 @@ router.post('/start', requireAuth, async (req, res) => {
       },
     })
   } catch (err) {
-    console.error('❌ [POST /start] Error:', err)
+    console.error('❌ [POST /start]', err)
     return res.status(500).json({ error: 'Erreur serveur' })
   }
 })
 
 /* =========================================================
-   POST /api/messages/send
-   ➜ texte seul
+   POST /api/messages/send  — texte seul (garde pour compatibilité)
 ========================================================= */
 router.post('/send', requireAuth, async (req, res) => {
   try {
@@ -322,27 +284,17 @@ router.post('/send', requireAuth, async (req, res) => {
     if (!senderId) return res.status(401).json({ error: 'Unauthorized' })
 
     const { recipientId, content } = req.body
-
-    if (!recipientId || !content || !String(content).trim()) {
+    if (!recipientId || !content || !String(content).trim())
       return res.status(400).json({ error: 'recipientId et content requis' })
-    }
-
-    if (Number(recipientId) === senderId) {
-      return res.status(400).json({ error: 'Impossible de s’envoyer un message à soi-même' })
-    }
+    if (Number(recipientId) === senderId)
+      return res.status(400).json({ error: 'Impossible de s\'envoyer un message à soi-même' })
 
     const recipient = await prisma.user.findUnique({
       where: { id: Number(recipientId) },
       select: { id: true, role: true },
     })
-
-    if (!recipient) {
-      return res.status(404).json({ error: 'Destinataire introuvable' })
-    }
-
-    if (isAdminUser(recipient)) {
-      return res.status(403).json({ error: 'Action non autorisée' })
-    }
+    if (!recipient) return res.status(404).json({ error: 'Destinataire introuvable' })
+    if (isAdminUser(recipient)) return res.status(403).json({ error: 'Action non autorisée' })
 
     let conversation = await prisma.conversation.findFirst({
       where: {
@@ -351,13 +303,6 @@ router.post('/send', requireAuth, async (req, res) => {
           { participants: { some: { userId: Number(recipientId) } } },
         ],
       },
-      include: {
-        participants: {
-          include: {
-            user: true,
-          },
-        },
-      },
     })
 
     if (!conversation) {
@@ -365,13 +310,6 @@ router.post('/send', requireAuth, async (req, res) => {
         data: {
           participants: {
             create: [{ userId: senderId }, { userId: Number(recipientId) }],
-          },
-        },
-        include: {
-          participants: {
-            include: {
-              user: true,
-            },
           },
         },
       })
@@ -383,13 +321,7 @@ router.post('/send', requireAuth, async (req, res) => {
         senderId,
         conversationId: conversation.id,
       },
-      include: {
-        sender: {
-          include: {
-            profile: true,
-          },
-        },
-      },
+      include: { sender: { include: { profile: true } } },
     })
 
     await prisma.conversation.update({
@@ -402,28 +334,26 @@ router.post('/send', requireAuth, async (req, res) => {
       message: {
         id: String(message.id),
         content: message.content || '',
-        attachmentUrl: message.attachmentUrl || null,
-        attachmentType: message.attachmentType || null,
-        attachmentName: message.attachmentName || null,
-        attachmentMimeType: message.attachmentMimeType || null,
+        attachmentUrl: null,
+        attachmentType: null,
+        attachmentName: null,
         createdAt: message.createdAt,
         seen: message.seen,
-        seenAt: message.seenAt,
         sender: {
           id: message.senderId,
-          name: message.sender?.name || 'Utilisateur',
-          image: message.sender?.profile?.avatar || message.sender?.image || null,
+          name: getUserDisplayName(message.sender),
+          image: message.sender?.profile?.avatar || null,
         },
       },
     })
   } catch (err) {
-    console.error('❌ [POST /send] Error:', err)
+    console.error('❌ [POST /send]', err)
     return res.status(500).json({ error: 'Erreur serveur' })
   }
 })
 
 /* =========================================================
-   POST /api/messages/send-file
+   POST /api/messages/send-file  — texte + fichier (Cloudinary)
 ========================================================= */
 router.post('/send-file', requireAuth, upload.single('file'), async (req, res) => {
   try {
@@ -433,29 +363,35 @@ router.post('/send-file', requireAuth, upload.single('file'), async (req, res) =
     const { content, conversationId } = req.body
     const file = req.file
 
-    if (!conversationId || (!content?.trim() && !file)) {
-      return res.status(400).json({ error: 'conversationId et (content ou file) requis' })
-    }
-
-    if (await conversationHasAdmin(Number(conversationId))) {
-      return res.status(403).json({ error: 'Action non autorisée' })
-    }
+    if (!conversationId || (!content?.trim() && !file))
+      return res.status(400).json({ error: 'conversationId et (content ou fichier) requis' })
 
     const participation = await prisma.conversationParticipant.findFirst({
-      where: {
-        conversationId: Number(conversationId),
-        userId: senderId,
-      },
+      where: { conversationId: Number(conversationId), userId: senderId },
     })
+    if (!participation) return res.status(403).json({ error: 'Accès interdit à cette conversation' })
 
-    if (!participation) {
-      return res.status(403).json({ error: 'Accès interdit à cette conversation' })
+    let attachmentUrl = null
+    let attachmentType = null
+    let attachmentName = null
+    let attachmentMimeType = null
+
+    if (file) {
+      try {
+        const result = await uploadBufferToCloudinary(
+          file.buffer,
+          file.mimetype,
+          file.originalname
+        )
+        attachmentUrl = result.secure_url
+        attachmentType = detectAttachmentType(file.mimetype)
+        attachmentName = file.originalname || null
+        attachmentMimeType = file.mimetype || null
+      } catch (uploadErr) {
+        console.error('❌ Cloudinary upload error:', uploadErr)
+        return res.status(500).json({ error: 'Erreur lors de l\'upload du fichier' })
+      }
     }
-
-    const attachmentUrl = buildFileUrl(file)
-    const attachmentType = detectAttachmentType(file)
-    const attachmentName = file?.originalname || null
-    const attachmentMimeType = file?.mimetype || null
 
     const message = await prisma.message.create({
       data: {
@@ -467,13 +403,7 @@ router.post('/send-file', requireAuth, upload.single('file'), async (req, res) =
         senderId,
         conversationId: Number(conversationId),
       },
-      include: {
-        sender: {
-          include: {
-            profile: true,
-          },
-        },
-      },
+      include: { sender: { include: { profile: true } } },
     })
 
     await prisma.conversation.update({
@@ -492,16 +422,15 @@ router.post('/send-file', requireAuth, upload.single('file'), async (req, res) =
         attachmentMimeType: message.attachmentMimeType || null,
         createdAt: message.createdAt,
         seen: message.seen,
-        seenAt: message.seenAt,
         sender: {
           id: message.senderId,
-          name: message.sender?.name || 'Utilisateur',
-          image: message.sender?.profile?.avatar || message.sender?.image || null,
+          name: getUserDisplayName(message.sender),
+          image: message.sender?.profile?.avatar || null,
         },
       },
     })
   } catch (err) {
-    console.error('❌ [POST /send-file] Error:', err)
+    console.error('❌ [POST /send-file]', err)
     return res.status(500).json({ error: 'Erreur serveur' })
   }
 })
@@ -513,34 +442,22 @@ router.post('/mark-seen/:conversationId', requireAuth, async (req, res) => {
   try {
     const userId = Number(req.user?.id)
     const conversationId = Number(req.params.conversationId)
-
-    if (!userId || !conversationId) {
+    if (!userId || !conversationId)
       return res.status(400).json({ error: 'Paramètres invalides' })
-    }
 
     const participation = await prisma.conversationParticipant.findFirst({
       where: { conversationId, userId },
     })
-
-    if (!participation) {
-      return res.status(403).json({ error: 'Accès interdit' })
-    }
+    if (!participation) return res.status(403).json({ error: 'Accès interdit' })
 
     await prisma.message.updateMany({
-      where: {
-        conversationId,
-        seen: false,
-        NOT: { senderId: userId },
-      },
-      data: {
-        seen: true,
-        seenAt: new Date(),
-      },
+      where: { conversationId, seen: false, NOT: { senderId: userId } },
+      data: { seen: true, seenAt: new Date() },
     })
 
-    return res.json({ message: 'Messages marqués comme lus' })
+    return res.json({ ok: true })
   } catch (err) {
-    console.error('❌ [POST /mark-seen] Error:', err)
+    console.error('❌ [POST /mark-seen]', err)
     return res.status(500).json({ error: 'Erreur serveur' })
   }
 })
@@ -552,38 +469,22 @@ router.delete('/conversations/:conversationId', requireAuth, async (req, res) =>
   try {
     const userId = Number(req.user?.id)
     const conversationId = Number(req.params.conversationId)
-
-    if (!userId || !conversationId) {
+    if (!userId || !conversationId)
       return res.status(400).json({ error: 'Paramètres invalides' })
-    }
 
     const participation = await prisma.conversationParticipant.findFirst({
       where: { conversationId, userId },
     })
+    if (!participation) return res.status(403).json({ error: 'Accès interdit' })
 
-    if (!participation) {
-      return res.status(403).json({ error: 'Accès interdit' })
-    }
+    await prisma.notification.deleteMany({ where: { message: { conversationId } } })
+    await prisma.message.deleteMany({ where: { conversationId } })
+    await prisma.conversationParticipant.deleteMany({ where: { conversationId } })
+    await prisma.conversation.delete({ where: { id: conversationId } })
 
-    await prisma.notification.deleteMany({
-      where: { message: { conversationId } },
-    })
-
-    await prisma.message.deleteMany({
-      where: { conversationId },
-    })
-
-    await prisma.conversationParticipant.deleteMany({
-      where: { conversationId },
-    })
-
-    await prisma.conversation.delete({
-      where: { id: conversationId },
-    })
-
-    return res.json({ message: 'Conversation supprimée' })
+    return res.json({ ok: true })
   } catch (err) {
-    console.error('❌ [DELETE /conversations/:conversationId] Error:', err)
+    console.error('❌ [DELETE /conversations]', err)
     return res.status(500).json({ error: 'Erreur serveur' })
   }
 })
