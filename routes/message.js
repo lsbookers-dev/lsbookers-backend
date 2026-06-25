@@ -464,6 +464,9 @@ router.post('/mark-seen/:conversationId', requireAuth, async (req, res) => {
 
 /* =========================================================
    DELETE /api/messages/conversations/:conversationId
+   ➜ Retire l'utilisateur de la conversation (soft delete).
+     La conversation n'est supprimée en base que si plus
+     aucun participant ne la possède.
 ========================================================= */
 router.delete('/conversations/:conversationId', requireAuth, async (req, res) => {
   try {
@@ -477,10 +480,18 @@ router.delete('/conversations/:conversationId', requireAuth, async (req, res) =>
     })
     if (!participation) return res.status(403).json({ error: 'Accès interdit' })
 
-    await prisma.notification.deleteMany({ where: { message: { conversationId } } })
-    await prisma.message.deleteMany({ where: { conversationId } })
-    await prisma.conversationParticipant.deleteMany({ where: { conversationId } })
-    await prisma.conversation.delete({ where: { id: conversationId } })
+    // Retirer seulement CE participant
+    await prisma.conversationParticipant.deleteMany({ where: { conversationId, userId } })
+
+    // Vérifier s'il reste d'autres participants
+    const remaining = await prisma.conversationParticipant.count({ where: { conversationId } })
+
+    if (remaining === 0) {
+      // Plus personne : supprimer complètement la conversation
+      await prisma.notification.deleteMany({ where: { message: { conversationId } } })
+      await prisma.message.deleteMany({ where: { conversationId } })
+      await prisma.conversation.delete({ where: { id: conversationId } })
+    }
 
     return res.json({ ok: true })
   } catch (err) {
