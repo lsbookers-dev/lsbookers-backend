@@ -112,4 +112,33 @@ router.delete('/:id', requireAuth, async (req, res) => {
   }
 });
 
+// POST /api/publications/:id/like — toggle like
+router.post('/:id/like', requireAuth, async (req, res) => {
+  const id = parseInt(req.params.id, 10)
+  if (isNaN(id)) return res.status(400).json({ error: 'ID invalide' })
+
+  try {
+    const profile = await prisma.profile.findUnique({ where: { userId: req.user.id } })
+    if (!profile) return res.status(404).json({ error: 'Profil introuvable' })
+
+    const existing = await prisma.publicationLike.findUnique({
+      where: { publicationId_profileId: { publicationId: id, profileId: profile.id } },
+    })
+
+    if (existing) {
+      await prisma.publicationLike.delete({ where: { id: existing.id } })
+    } else {
+      await prisma.publicationLike.create({
+        data: { publicationId: id, profileId: profile.id },
+      })
+    }
+
+    const count = await prisma.publicationLike.count({ where: { publicationId: id } })
+    return res.json({ liked: !existing, count })
+  } catch (err) {
+    console.error('❌ Like toggle :', err)
+    return res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
 module.exports = router;
