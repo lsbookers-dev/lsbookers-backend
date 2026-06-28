@@ -84,4 +84,22 @@ router.patch('/:id', requireAuth, async (req, res) => {
   }
 });
 
+/* =========================================================
+   GET /api/notifications/unread-count
+   ➜ Nombre de notifications non lues
+========================================================= */
+router.get('/unread-count', requireAuth, async (req, res) => {
+  try {
+    const userId = Number(req.user?.id)
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' })
+    const count = await prisma.notification.count({
+      where: { userId, read: false },
+    })
+    res.json({ count })
+  } catch (err) {
+    console.error('❌ [GET /notifications/unread-count] Error:', err)
+    res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
 module.exports = router;
