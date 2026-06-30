@@ -54,7 +54,7 @@ function writeSettings(next) {
 /* ==========================================
  * GET /api/admin/settings
  * ======================================== */
-router.get('/', requireAuth, requireAdmin, (_req, res) => {
+router.get('/', (_req, res) => {
   try {
     const data = readSettings();
     return res.json(data);
