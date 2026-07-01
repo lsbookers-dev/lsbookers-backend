@@ -285,30 +285,31 @@ router.patch('/booking-request/:id', requireAuth, async (req, res) => {
 
     // ── Effets secondaires selon le statut ──
     if (status === 'ACCEPTED') {
+      // Normaliser la date du booking à minuit UTC pour la comparaison avec les dispos
+      const bookingDay = new Date(br.startDate);
+      bookingDay.setUTCHours(0, 0, 0, 0);
+      const dayEnd = new Date(bookingDay.getTime() + 24 * 60 * 60 * 1000 - 1);
+
       // 1. Marquer l'artiste/prestataire INDISPONIBLE ce jour-là
       await prisma.availability.upsert({
-        where:  { profileId_date: { profileId: br.targetId, date: br.startDate } },
+        where:  { profileId_date: { profileId: br.targetId, date: bookingDay } },
         update: { status: 'UNAVAILABLE' },
-        create: { profileId: br.targetId, date: br.startDate, status: 'UNAVAILABLE' },
-      }).catch(() => {});
-
-      // 2. Trouver ou créer l'événement côté organisateur
-      const dayStart = br.startDate;
-      const dayEnd   = new Date(new Date(br.startDate).getTime() + 24 * 60 * 60 * 1000 - 1);
-      const existingEvent = await prisma.event.findFirst({
-        where: { profileId: br.requesterId, start: { gte: dayStart, lte: dayEnd } },
+        create: { profileId: br.targetId, date: bookingDay, status: 'UNAVAILABLE' },
       });
 
-      let eventId = existingEvent?.id ?? null;
+      // 2a. Événement côté organisateur (requester)
+      const existingOrgEvent = await prisma.event.findFirst({
+        where: { profileId: br.requesterId, start: { gte: bookingDay, lte: dayEnd } },
+      });
 
-      if (existingEvent) {
-        // Ajouter l'artiste comme staff de l'événement existant
+      let eventId = existingOrgEvent?.id ?? null;
+
+      if (existingOrgEvent) {
         await prisma.eventStaff.create({
-          data: { eventId: existingEvent.id, role: br.target.user?.role || 'ARTIST', status: 'BOOKED', profileId: br.targetId, fee: br.fee || null },
+          data: { eventId: existingOrgEvent.id, role: br.target.user?.role || 'ARTIST', status: 'BOOKED', profileId: br.targetId, fee: br.fee || null },
         }).catch(() => {});
       } else {
-        // Créer un nouvel événement pour l'organisateur
-        const newEvent = await prisma.event.create({
+        const orgEvent = await prisma.event.create({
           data: {
             title: `Booking — ${targetName}`,
             start: br.startDate,
@@ -318,13 +319,30 @@ router.patch('/booking-request/:id', requireAuth, async (req, res) => {
             budget: br.fee || null,
           },
         });
-        eventId = newEvent.id;
+        eventId = orgEvent.id;
         await prisma.eventStaff.create({
-          data: { eventId: newEvent.id, role: br.target.user?.role || 'ARTIST', status: 'BOOKED', profileId: br.targetId, fee: br.fee || null },
+          data: { eventId: orgEvent.id, role: br.target.user?.role || 'ARTIST', status: 'BOOKED', profileId: br.targetId, fee: br.fee || null },
         }).catch(() => {});
       }
 
-      // Lier l'événement à la demande de booking
+      // 2b. Événement côté artiste (target) — s'il n'en a pas déjà un ce jour-là
+      const existingArtistEvent = await prisma.event.findFirst({
+        where: { profileId: br.targetId, start: { gte: bookingDay, lte: dayEnd } },
+      });
+      if (!existingArtistEvent) {
+        await prisma.event.create({
+          data: {
+            title: `Booking — ${requesterName}`,
+            start: br.startDate,
+            status: 'PUBLISHED',
+            profileId: br.targetId,
+            isPrivate: true,
+            budget: br.fee || null,
+          },
+        });
+      }
+
+      // Lier l'événement organisateur à la demande de booking
       if (eventId) {
         await prisma.bookingRequest.update({ where: { id: br.id }, data: { eventId } }).catch(() => {});
       }
