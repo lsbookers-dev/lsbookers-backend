@@ -163,4 +163,80 @@ router.put('/availability', requireAuth, async (req, res) => {
   }
 });
 
+/* ══════════════════════════════════════════════
+   DEMANDES DE BOOKING
+══════════════════════════════════════════════ */
+
+// POST /api/events/booking-request — envoyer une demande de booking
+router.post('/booking-request', requireAuth, async (req, res) => {
+  const { targetProfileId, date, message, fee } = req.body;
+  if (!targetProfileId || !date) return res.status(400).json({ error: 'Profil cible et date requis' });
+  try {
+    const requester = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
+    if (!requester) return res.status(404).json({ error: 'Profil introuvable' });
+    if (requester.id === parseInt(targetProfileId)) return res.status(400).json({ error: 'Impossible de vous envoyer une demande à vous-même' });
+
+    const request = await prisma.bookingRequest.create({
+      data: {
+        requesterId: requester.id,
+        targetId:    parseInt(targetProfileId),
+        startDate:   new Date(date),
+        message:     message?.trim() || null,
+        fee:         fee ? parseFloat(fee) : null,
+        status:      'PENDING',
+      },
+    });
+    res.status(201).json({ request });
+  } catch (err) {
+    console.error('POST booking-request:', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// GET /api/events/booking-requests — mes demandes reçues + envoyées
+router.get('/booking-requests', requireAuth, async (req, res) => {
+  try {
+    const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
+    if (!profile) return res.status(404).json({ error: 'Profil introuvable' });
+
+    const [received, sent] = await Promise.all([
+      prisma.bookingRequest.findMany({
+        where: { targetId: profile.id },
+        orderBy: { createdAt: 'desc' },
+        include: { requester: { select: { id: true, avatar: true, user: { select: { pseudo: true, firstName: true, lastName: true } } } } },
+      }),
+      prisma.bookingRequest.findMany({
+        where: { requesterId: profile.id },
+        orderBy: { createdAt: 'desc' },
+        include: { target: { select: { id: true, avatar: true, user: { select: { pseudo: true, firstName: true, lastName: true } } } } },
+      }),
+    ]);
+    res.json({ received, sent });
+  } catch (err) {
+    console.error('GET booking-requests:', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// PATCH /api/events/booking-request/:id — accepter / refuser
+router.patch('/booking-request/:id', requireAuth, async (req, res) => {
+  const { status } = req.body;
+  const allowed = ['ACCEPTED', 'DECLINED', 'CANCELLED'];
+  if (!allowed.includes(status)) return res.status(400).json({ error: 'Statut invalide' });
+  try {
+    const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
+    const br = await prisma.bookingRequest.findUnique({ where: { id: parseInt(req.params.id) } });
+    if (!br) return res.status(404).json({ error: 'Demande introuvable' });
+    // Seul le destinataire peut accepter/refuser, l'expéditeur peut annuler
+    if (status === 'CANCELLED' && br.requesterId !== profile?.id) return res.status(403).json({ error: 'Non autorisé' });
+    if (['ACCEPTED','DECLINED'].includes(status) && br.targetId !== profile?.id) return res.status(403).json({ error: 'Non autorisé' });
+
+    const updated = await prisma.bookingRequest.update({ where: { id: br.id }, data: { status } });
+    res.json({ request: updated });
+  } catch (err) {
+    console.error('PATCH booking-request:', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
 module.exports = router;
