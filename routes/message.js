@@ -217,23 +217,42 @@ router.get('/messages/:conversationId', requireAuth, async (req, res) => {
       orderBy: { createdAt: 'asc' },
       include: {
         sender: { include: { profile: true } },
-        bookingRequest: true,
+        bookingRequest: {
+          include: {
+            requester: { select: { id: true, userId: true } },
+            target:    { select: { id: true, userId: true } },
+          },
+        },
       },
     })
 
-    const payload = messages.map((m) => ({
+    const payload = messages.map((m) => {
+      const br = m.bookingRequest
+      // Résoudre l'userId de celui qui a demandé l'annulation
+      let cancellationRequesterUserId = null
+      if (br?.cancellationRequestedBy) {
+        if (br.cancellationRequestedBy === br.requesterId) cancellationRequesterUserId = br.requester?.userId ?? null
+        else if (br.cancellationRequestedBy === br.targetId) cancellationRequesterUserId = br.target?.userId ?? null
+      }
+      return {
       id: String(m.id),
       content: m.content || '',
       type: m.type || 'TEXT',
       bookingRequestId: m.bookingRequestId || null,
-      bookingRequest: m.bookingRequest ? {
-        id: m.bookingRequest.id,
-        status: m.bookingRequest.status,
-        startDate: m.bookingRequest.startDate,
-        fee: m.bookingRequest.fee,
-        message: m.bookingRequest.message,
-        requesterId: m.bookingRequest.requesterId,
-        targetId: m.bookingRequest.targetId,
+      bookingRequest: br ? {
+        id: br.id,
+        status: br.status,
+        startDate: br.startDate,
+        fee: br.fee,
+        message: br.message,
+        requesterId: br.requesterId,
+        targetId: br.targetId,
+        paymentStatus: br.paymentStatus,
+        cancellationRequestedBy: br.cancellationRequestedBy ?? null,
+        cancellationNote: br.cancellationNote ?? null,
+        cancellationRequesterUserId,
+        requesterUserId: br.requester?.userId ?? null,
+        targetUserId: br.target?.userId ?? null,
       } : null,
       attachmentUrl: m.attachmentUrl || null,
       attachmentType: m.attachmentType || null,
@@ -247,7 +266,7 @@ router.get('/messages/:conversationId', requireAuth, async (req, res) => {
         name: getUserDisplayName(m.sender),
         image: m.sender?.profile?.avatar || null,
       },
-    }))
+    }})
 
     return res.json(payload)
   } catch (err) {

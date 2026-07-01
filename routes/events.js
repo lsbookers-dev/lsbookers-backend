@@ -201,7 +201,7 @@ router.post('/booking-request', requireAuth, async (req, res) => {
   }
 });
 
-// GET /api/events/booking-requests — mes demandes reçues + envoyées
+// GET /api/events/booking-requests — mes demandes reçues + envoyées (avec conversationId)
 router.get('/booking-requests', requireAuth, async (req, res) => {
   try {
     const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
@@ -218,7 +218,22 @@ router.get('/booking-requests', requireAuth, async (req, res) => {
         include: { target: { select: { id: true, avatar: true, user: { select: { pseudo: true, firstName: true, lastName: true } } } } },
       }),
     ]);
-    res.json({ received, sent });
+
+    // Associer chaque booking à sa conversationId via le message BOOKING_REQUEST
+    const allIds = [...received, ...sent].map(b => b.id);
+    const linkedMessages = await prisma.message.findMany({
+      where: { bookingRequestId: { in: allIds }, type: 'BOOKING_REQUEST' },
+      select: { bookingRequestId: true, conversationId: true },
+    });
+    const convMap = {};
+    for (const m of linkedMessages) {
+      if (m.bookingRequestId) convMap[m.bookingRequestId] = m.conversationId;
+    }
+
+    res.json({
+      received: received.map(b => ({ ...b, conversationId: convMap[b.id] ?? null })),
+      sent:     sent.map(b => ({ ...b, conversationId: convMap[b.id] ?? null })),
+    });
   } catch (err) {
     console.error('GET booking-requests:', err);
     res.status(500).json({ error: 'Erreur serveur' });
@@ -317,6 +332,134 @@ router.patch('/booking-request/:id', requireAuth, async (req, res) => {
     res.json({ request: updated });
   } catch (err) {
     console.error('PATCH booking-request:', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// POST /api/events/booking-request/:id/cancel-request — demander l'annulation d'un booking accepté
+router.post('/booking-request/:id/cancel-request', requireAuth, async (req, res) => {
+  const { note } = req.body;
+  try {
+    const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
+    const br = await prisma.bookingRequest.findUnique({
+      where: { id: parseInt(req.params.id) },
+      include: {
+        requester: { select: { id: true, userId: true, user: { select: { pseudo: true, firstName: true, lastName: true } } } },
+        target:    { select: { id: true, userId: true, user: { select: { pseudo: true, firstName: true, lastName: true } } } },
+      },
+    });
+    if (!br) return res.status(404).json({ error: 'Demande introuvable' });
+    if (br.status !== 'ACCEPTED') return res.status(400).json({ error: 'Seuls les bookings acceptés peuvent être annulés ainsi' });
+    if (br.requesterId !== profile?.id && br.targetId !== profile?.id) return res.status(403).json({ error: 'Non autorisé' });
+    if (br.cancellationRequestedBy) return res.status(400).json({ error: "Une demande d'annulation est déjà en cours" });
+
+    // Marquer la demande d'annulation
+    const updated = await prisma.bookingRequest.update({
+      where: { id: br.id },
+      data: { cancellationRequestedBy: profile.id, cancellationNote: note?.trim() || null },
+    });
+
+    // Trouver la conversation via le message BOOKING_REQUEST lié
+    const linkedMsg = await prisma.message.findFirst({
+      where: { bookingRequestId: br.id, type: 'BOOKING_REQUEST' },
+      select: { conversationId: true },
+    });
+    if (!linkedMsg) return res.status(404).json({ error: 'Conversation introuvable' });
+
+    const senderName = profile.id === br.requesterId
+      ? (br.requester.user?.pseudo || [br.requester.user?.firstName, br.requester.user?.lastName].filter(Boolean).join(' ') || 'Utilisateur')
+      : (br.target.user?.pseudo    || [br.target.user?.firstName,    br.target.user?.lastName].filter(Boolean).join(' ')    || 'Utilisateur');
+    const dateLabel = new Date(br.startDate).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+    const content   = `🚫 Demande d'annulation du booking du ${dateLabel}${note ? `\n"${note.trim()}"` : ''}`;
+
+    await prisma.message.create({
+      data: {
+        content,
+        senderId:        req.user.id,
+        conversationId:  linkedMsg.conversationId,
+        type:            'CANCELLATION_REQUEST',
+        bookingRequestId: br.id,
+      },
+    });
+    await prisma.conversation.update({ where: { id: linkedMsg.conversationId }, data: { updatedAt: new Date() } });
+
+    // Notification pour l'autre partie
+    const otherUserId = profile.id === br.requesterId ? br.target.userId : br.requester.userId;
+    await prisma.notification.create({
+      data: {
+        userId:  otherUserId,
+        type:    'BOOKING_CANCELLATION_REQUEST',
+        content: `${senderName} demande l'annulation du booking du ${dateLabel}.`,
+        actorId: req.user.id,
+      },
+    }).catch(() => {});
+
+    res.json({ request: updated });
+  } catch (err) {
+    console.error('POST booking-request cancel-request:', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// POST /api/events/booking-request/:id/cancel-response — répondre à une demande d'annulation
+router.post('/booking-request/:id/cancel-response', requireAuth, async (req, res) => {
+  const { accept } = req.body; // true = confirmer annulation, false = refuser
+  try {
+    const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
+    const br = await prisma.bookingRequest.findUnique({
+      where: { id: parseInt(req.params.id) },
+      include: {
+        requester: { select: { id: true, userId: true, user: { select: { pseudo: true, firstName: true, lastName: true } } } },
+        target:    { select: { id: true, userId: true, user: { select: { pseudo: true, firstName: true, lastName: true } } } },
+      },
+    });
+    if (!br) return res.status(404).json({ error: 'Demande introuvable' });
+    if (!br.cancellationRequestedBy) return res.status(400).json({ error: "Aucune demande d'annulation en cours" });
+    if (br.cancellationRequestedBy === profile?.id) return res.status(403).json({ error: 'Vous ne pouvez pas répondre à votre propre demande' });
+    if (br.requesterId !== profile?.id && br.targetId !== profile?.id) return res.status(403).json({ error: 'Non autorisé' });
+
+    const dateLabel = new Date(br.startDate).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+    const cancelerUserId = br.cancellationRequestedBy === br.requesterId ? br.requester.userId : br.target.userId;
+
+    // Trouver la conversation
+    const linkedMsg = await prisma.message.findFirst({
+      where: { bookingRequestId: br.id, type: 'BOOKING_REQUEST' },
+      select: { conversationId: true },
+    });
+
+    if (accept) {
+      const updated = await prisma.bookingRequest.update({
+        where: { id: br.id },
+        data: { status: 'CANCELLED', cancellationRequestedBy: null, cancellationNote: null },
+      });
+      await prisma.notification.create({
+        data: { userId: cancelerUserId, type: 'BOOKING_CANCELLED', content: `L'annulation du booking du ${dateLabel} a été confirmée.`, actorId: req.user.id },
+      }).catch(() => {});
+      if (linkedMsg) {
+        await prisma.message.create({
+          data: { content: `✅ Annulation du booking du ${dateLabel} confirmée.`, senderId: req.user.id, conversationId: linkedMsg.conversationId, type: 'TEXT', bookingRequestId: br.id },
+        });
+        await prisma.conversation.update({ where: { id: linkedMsg.conversationId }, data: { updatedAt: new Date() } });
+      }
+      return res.json({ request: updated });
+    } else {
+      const updated = await prisma.bookingRequest.update({
+        where: { id: br.id },
+        data: { cancellationRequestedBy: null, cancellationNote: null },
+      });
+      await prisma.notification.create({
+        data: { userId: cancelerUserId, type: 'BOOKING_CANCELLATION_DENIED', content: `L'annulation du booking du ${dateLabel} a été refusée.`, actorId: req.user.id },
+      }).catch(() => {});
+      if (linkedMsg) {
+        await prisma.message.create({
+          data: { content: `❌ Demande d'annulation du booking du ${dateLabel} refusée.`, senderId: req.user.id, conversationId: linkedMsg.conversationId, type: 'TEXT', bookingRequestId: br.id },
+        });
+        await prisma.conversation.update({ where: { id: linkedMsg.conversationId }, data: { updatedAt: new Date() } });
+      }
+      return res.json({ request: updated });
+    }
+  } catch (err) {
+    console.error('POST booking-request cancel-response:', err);
     res.status(500).json({ error: 'Erreur serveur' });
   }
 });
