@@ -509,6 +509,20 @@ router.get('/:id/detail', requireAuth, async (req, res) => {
   }
 });
 
+// DELETE /api/events/:id — supprimer un événement
+router.delete('/:id', requireAuth, async (req, res) => {
+  try {
+    const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
+    const existing = await prisma.event.findFirst({ where: { id: parseInt(req.params.id), profileId: profile?.id } });
+    if (!existing) return res.status(404).json({ error: 'Événement introuvable' });
+    await prisma.event.delete({ where: { id: existing.id } });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('DELETE events/:id:', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
 // PATCH /api/events/:id/notes — mettre à jour les notes privées
 router.patch('/:id/notes', requireAuth, async (req, res) => {
   const { notes } = req.body;
