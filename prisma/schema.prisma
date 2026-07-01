@@ -414,10 +414,11 @@ model BookingRequest {
   startDate   DateTime
   endDate     DateTime?
   message     String?
-  fee         Float?        // Cachet proposé
-  status      BookingStatus @default(PENDING)
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  fee           Float?        // Cachet proposé
+  status        BookingStatus @default(PENDING)
+  paymentStatus String        @default("UNPAID")  // UNPAID | DEPOSIT | PAID
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
 
   requester   Profile       @relation("BookingRequester", fields: [requesterId], references: [id])
   target      Profile       @relation("BookingTarget", fields: [targetId], references: [id])

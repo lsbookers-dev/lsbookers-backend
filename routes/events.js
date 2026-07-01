@@ -124,7 +124,7 @@ router.post('/booking-request', requireAuth, async (req, res) => {
   try {
     const requesterProfile = await prisma.profile.findUnique({
       where: { userId: req.user.id },
-      select: { id: true, userId: true },
+      select: { id: true, userId: true, user: { select: { pseudo: true, firstName: true, lastName: true } } },
     });
     if (!requesterProfile) return res.status(404).json({ error: 'Profil introuvable' });
     if (requesterProfile.id === parseInt(targetProfileId)) return res.status(400).json({ error: 'Impossible de vous envoyer une demande à vous-même' });
@@ -182,6 +182,18 @@ router.post('/booking-request', requireAuth, async (req, res) => {
 
     await prisma.conversation.update({ where: { id: conversation.id }, data: { updatedAt: new Date() } });
 
+    // 4. Notification pour la cible
+    const senderName = requesterProfile.user?.pseudo ||
+      [requesterProfile.user?.firstName, requesterProfile.user?.lastName].filter(Boolean).join(' ') || 'Utilisateur';
+    await prisma.notification.create({
+      data: {
+        userId:  targetProfile.userId,
+        type:    'BOOKING_REQUEST',
+        content: `Nouvelle demande de booking du ${dateLabel} de ${senderName}.`,
+        actorId: req.user.id,
+      },
+    }).catch(() => {}); // non-bloquant
+
     res.status(201).json({ request: bookingRequest, conversationId: conversation.id });
   } catch (err) {
     console.error('POST booking-request:', err);
@@ -213,18 +225,95 @@ router.get('/booking-requests', requireAuth, async (req, res) => {
   }
 });
 
-// PATCH /api/events/booking-request/:id — accepter / refuser
+// PATCH /api/events/booking-request/:id — accepter / refuser / annuler
 router.patch('/booking-request/:id', requireAuth, async (req, res) => {
   const { status } = req.body;
   const allowed = ['ACCEPTED', 'DECLINED', 'CANCELLED'];
   if (!allowed.includes(status)) return res.status(400).json({ error: 'Statut invalide' });
   try {
     const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
-    const br = await prisma.bookingRequest.findUnique({ where: { id: parseInt(req.params.id) } });
+    const br = await prisma.bookingRequest.findUnique({
+      where: { id: parseInt(req.params.id) },
+      include: {
+        requester: { select: { id: true, userId: true, user: { select: { pseudo: true, firstName: true, lastName: true } } } },
+        target:    { select: { id: true, userId: true, user: { select: { pseudo: true, firstName: true, lastName: true, role: true } } } },
+      },
+    });
     if (!br) return res.status(404).json({ error: 'Demande introuvable' });
     if (status === 'CANCELLED' && br.requesterId !== profile?.id) return res.status(403).json({ error: 'Non autorisé' });
     if (['ACCEPTED','DECLINED'].includes(status) && br.targetId !== profile?.id) return res.status(403).json({ error: 'Non autorisé' });
+
+    // Mettre à jour le statut
     const updated = await prisma.bookingRequest.update({ where: { id: br.id }, data: { status } });
+
+    const targetName    = br.target.user?.pseudo    || [br.target.user?.firstName,    br.target.user?.lastName].filter(Boolean).join(' ')    || 'Artiste';
+    const requesterName = br.requester.user?.pseudo || [br.requester.user?.firstName, br.requester.user?.lastName].filter(Boolean).join(' ') || 'Organisateur';
+    const dateLabel     = new Date(br.startDate).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+
+    // ── Effets secondaires selon le statut ──
+    if (status === 'ACCEPTED') {
+      // 1. Marquer l'artiste/prestataire INDISPONIBLE ce jour-là
+      await prisma.availability.upsert({
+        where:  { profileId_date: { profileId: br.targetId, date: br.startDate } },
+        update: { status: 'UNAVAILABLE' },
+        create: { profileId: br.targetId, date: br.startDate, status: 'UNAVAILABLE' },
+      }).catch(() => {});
+
+      // 2. Trouver ou créer l'événement côté organisateur
+      const dayStart = br.startDate;
+      const dayEnd   = new Date(new Date(br.startDate).getTime() + 24 * 60 * 60 * 1000 - 1);
+      const existingEvent = await prisma.event.findFirst({
+        where: { profileId: br.requesterId, start: { gte: dayStart, lte: dayEnd } },
+      });
+
+      let eventId = existingEvent?.id ?? null;
+
+      if (existingEvent) {
+        // Ajouter l'artiste comme staff de l'événement existant
+        await prisma.eventStaff.create({
+          data: { eventId: existingEvent.id, role: br.target.user?.role || 'ARTIST', status: 'BOOKED', profileId: br.targetId, fee: br.fee || null },
+        }).catch(() => {});
+      } else {
+        // Créer un nouvel événement pour l'organisateur
+        const newEvent = await prisma.event.create({
+          data: {
+            title: `Booking — ${targetName}`,
+            start: br.startDate,
+            status: 'PUBLISHED',
+            profileId: br.requesterId,
+            isPrivate: true,
+            budget: br.fee || null,
+          },
+        });
+        eventId = newEvent.id;
+        await prisma.eventStaff.create({
+          data: { eventId: newEvent.id, role: br.target.user?.role || 'ARTIST', status: 'BOOKED', profileId: br.targetId, fee: br.fee || null },
+        }).catch(() => {});
+      }
+
+      // Lier l'événement à la demande de booking
+      if (eventId) {
+        await prisma.bookingRequest.update({ where: { id: br.id }, data: { eventId } }).catch(() => {});
+      }
+
+      // 3. Notification pour l'organisateur
+      await prisma.notification.create({
+        data: { userId: br.requester.userId, type: 'BOOKING_ACCEPTED', content: `Votre demande de booking du ${dateLabel} a été acceptée par ${targetName}.`, actorId: br.target.userId },
+      }).catch(() => {});
+    }
+
+    if (status === 'DECLINED') {
+      await prisma.notification.create({
+        data: { userId: br.requester.userId, type: 'BOOKING_DECLINED', content: `Votre demande de booking du ${dateLabel} a été refusée par ${targetName}.`, actorId: br.target.userId },
+      }).catch(() => {});
+    }
+
+    if (status === 'CANCELLED') {
+      await prisma.notification.create({
+        data: { userId: br.target.userId, type: 'BOOKING_CANCELLED', content: `La demande de booking du ${dateLabel} a été annulée par ${requesterName}.`, actorId: br.requester.userId },
+      }).catch(() => {});
+    }
+
     res.json({ request: updated });
   } catch (err) {
     console.error('PATCH booking-request:', err);
