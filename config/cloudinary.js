@@ -1,10 +1,3 @@
-// backend/config/cloudinary.js
-const cloudinary = require('cloudinary').v2;
-
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key:    process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-});
-
-module.exports = cloudinary; // 👉 on exporte l'instance v2 configurée
+// Ce fichier n'est plus utilisé — migration vers Vercel Blob
+// Conservé vide pour éviter les erreurs d'import résiduels
+module.exports = {};

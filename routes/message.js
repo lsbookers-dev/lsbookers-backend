@@ -4,7 +4,7 @@ const { PrismaClient } = require('@prisma/client')
 const prisma = new PrismaClient()
 const { requireAuth } = require('../middleware/auth')
 const multer = require('multer')
-const cloudinary = require('../config/cloudinary')
+const { put } = require('@vercel/blob')
 
 /* ─── Multer mémoire (pas de fichier sur disque) ─── */
 const upload = multer({
@@ -40,27 +40,16 @@ function detectAttachmentType(mimetype) {
   return 'DOCUMENT'
 }
 
-/* Upload vers Cloudinary depuis un buffer en mémoire */
-function uploadBufferToCloudinary(buffer, mimetype, originalname) {
-  return new Promise((resolve, reject) => {
-    const type = detectAttachmentType(mimetype)
-    const resourceType =
-      type === 'IMAGE' ? 'image' : type === 'VIDEO' ? 'video' : 'raw'
-
-    const stream = cloudinary.uploader.upload_stream(
-      {
-        folder: 'lsbookers/messages',
-        resource_type: resourceType,
-        public_id: `${Date.now()}-${(originalname || 'file').replace(/\s/g, '_')}`,
-      },
-      (error, result) => {
-        if (error) return reject(error)
-        resolve(result)
-      }
-    )
-
-    stream.end(buffer)
+/* Upload vers Vercel Blob depuis un buffer en mémoire */
+async function uploadBufferToBlob(buffer, mimetype, originalname) {
+  const safeName = (originalname || 'file').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9._-]/g, '')
+  const filename = `lsbookers/messages/${Date.now()}-${safeName}`
+  const blob = await put(filename, buffer, {
+    access: 'public',
+    contentType: mimetype,
+    token: process.env.BLOB_READ_WRITE_TOKEN,
   })
+  return { secure_url: blob.url, resource_type: detectAttachmentType(mimetype).toLowerCase() }
 }
 
 /* =========================================================
@@ -438,7 +427,7 @@ router.post('/send-file', requireAuth, upload.single('file'), async (req, res) =
 
     if (file) {
       try {
-        const result = await uploadBufferToCloudinary(
+        const result = await uploadBufferToBlob(
           file.buffer,
           file.mimetype,
           file.originalname
