@@ -111,6 +111,71 @@ router.get('/users', requireAuth, requireAdmin, async (req, res) => {
 });
 
 /* =========================================================
+ *  USERS — fiche détail complète
+ *  GET /api/admin/users/:id
+ * =======================================================*/
+router.get('/users/:id', requireAuth, requireAdmin, async (req, res) => {
+  const id = parseInt(String(req.params.id || ''), 10);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'ID invalide' });
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        email: true,
+        role: true,
+        isAdmin: true,
+        createdAt: true,
+        pseudo: true,
+        firstName: true,
+        lastName: true,
+        dateOfBirth: true,
+        phone: true,
+        countryOfResidence: true,
+        emailVerified: true,
+        isIdentityVerified: true,
+        isPaymentEnabled: true,
+        registrationStep: true,
+        stripeAccountId: true,
+        profile: {
+          select: {
+            id: true,
+            bio: true,
+            profession: true,
+            location: true,
+            country: true,
+            radiusKm: true,
+            specialties: true,
+            styles: true,
+            typeEtablissement: true,
+            avatar: true,
+            banner: true,
+            soundcloudUrl: true,
+            youtubeUrl: true,
+            availableForBooking: true,
+            showRealName: true,
+            legalStatus: true,
+            siret: true,
+            organizerType: true,
+            establishmentName: true,
+            address: true,
+            postalCode: true,
+            city: true,
+          },
+        },
+      },
+    });
+
+    if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
+    return res.json({ user });
+  } catch (err) {
+    console.error('❌ GET /admin/users/:id', err);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+/* =========================================================
  *  USERS — changer le rôle
  *  PATCH /api/admin/users/:id/role
  * =======================================================*/
