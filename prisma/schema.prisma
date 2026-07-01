@@ -86,6 +86,21 @@ enum EventStatus {
   COMPLETED  // Termine
 }
 
+enum AvailabilityStatus {
+  AVAILABLE    // Disponible
+  UNAVAILABLE  // Indisponible
+  BOOKED       // Déjà booké
+  TENTATIVE    // En attente de confirmation
+}
+
+enum BookingStatus {
+  PENDING    // En attente de réponse
+  ACCEPTED   // Acceptée
+  DECLINED   // Refusée
+  CANCELLED  // Annulée
+  COMPLETED  // Terminée
+}
+
 enum StaffStatus {
   NEEDED    // Poste a pourvoir
   BOOKED    // Personne confirmee
@@ -198,6 +213,11 @@ model Profile {
 
   // Likes
   publicationLikes        PublicationLike[]
+
+  // Agenda
+  availability            Availability[]
+  bookingRequestsSent     BookingRequest[] @relation("BookingRequester")
+  bookingRequestsReceived BookingRequest[] @relation("BookingTarget")
 }
 
 // ─────────────────────────────────────────────
@@ -325,25 +345,83 @@ model Message {
 // ─────────────────────────────────────────────
 
 model Event {
-  id          Int         @id @default(autoincrement())
-  title       String
-  description String?
-  start       DateTime
-  end         DateTime
-  allDay      Boolean     @default(false)
-  lieu        String?
-  type        String?
-  isPrivate   Boolean     @default(false)  // Evenement prive (visible seulement par l'organisateur)
-  budget      Float?                       // Budget total de l'evenement
-  status      EventStatus @default(DRAFT)
-  profileId   Int
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  id           Int         @id @default(autoincrement())
+  title        String
+  description  String?
+  start        DateTime
+  end          DateTime?
+  allDay       Boolean     @default(false)
+  lieu         String?
+  category     String?                      // Ex: "Club", "Mariage", "Corporate"
+  coverImage   String?                      // URL image de couverture (événement public)
+  isPrivate    Boolean     @default(false)  // Privé = visible seulement par l'organisateur
+  budget       Float?                       // Budget total
+  maxCapacity  Int?                         // Capacité max
+  status       EventStatus @default(DRAFT)
+  profileId    Int
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
 
-  profile     Profile     @relation(fields: [profileId], references: [id])
-  staff       EventStaff[]
-  contracts   Contract[]
-  reviews     Review[]
+  profile          Profile          @relation(fields: [profileId], references: [id])
+  staff            EventStaff[]
+  contracts        Contract[]
+  reviews          Review[]
+  documents        EventDocument[]
+  bookingRequests  BookingRequest[]
+
+  @@index([profileId])
+  @@index([start])
+}
+
+// Documents liés à un événement (contrats, factures, riders...)
+model EventDocument {
+  id        Int      @id @default(autoincrement())
+  eventId   Int
+  name      String
+  url       String
+  fileType  String?  // "contract", "invoice", "rider", "other"
+  createdAt DateTime @default(now())
+
+  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([eventId])
+}
+
+// Disponibilités d'un artiste ou prestataire
+model Availability {
+  id        Int                @id @default(autoincrement())
+  profileId Int
+  date      DateTime           // Jour concerné (heure ignorée)
+  status    AvailabilityStatus @default(AVAILABLE)
+  note      String?
+  createdAt DateTime           @default(now())
+
+  profile   Profile            @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, date])
+  @@index([profileId])
+}
+
+// Demandes de réservation / booking
+model BookingRequest {
+  id          Int           @id @default(autoincrement())
+  requesterId Int           // Profil qui fait la demande (organisateur)
+  targetId    Int           // Profil ciblé (artiste/prestataire)
+  eventId     Int?          // Événement lié (optionnel)
+  startDate   DateTime
+  endDate     DateTime?
+  message     String?
+  fee         Float?        // Cachet proposé
+  status      BookingStatus @default(PENDING)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  requester   Profile       @relation("BookingRequester", fields: [requesterId], references: [id])
+  target      Profile       @relation("BookingTarget", fields: [targetId], references: [id])
+  event       Event?        @relation(fields: [eventId], references: [id])
+
+  @@index([requesterId])
+  @@index([targetId])
 }
 
 // Postes requis dans un evenement prive
