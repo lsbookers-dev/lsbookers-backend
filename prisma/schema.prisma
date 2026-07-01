@@ -627,6 +627,24 @@ model AdminSettings {
 }
 
 // ─────────────────────────────────────────────
+//  CONTACT
+// ─────────────────────────────────────────────
+
+model ContactMessage {
+  id         Int      @id @default(autoincrement())
+  name       String
+  email      String
+  subject    String?
+  message    String
+  isRead     Boolean  @default(false)
+  isArchived Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  @@index([isRead])
+  @@index([isArchived])
+}
+
+// ─────────────────────────────────────────────
 //  AUTH
 // ─────────────────────────────────────────────
 

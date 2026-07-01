@@ -25,6 +25,7 @@ const notificationsRoutes = require('./routes/notifications'); // notifications
 const passwordRoutes = require('./routes/password'); // 🔐 forgot/reset password
 const reviewsRoutes = require('./routes/reviews'); // avis
 const homeRoutes = require('./routes/home'); // page d'accueil
+const contactRoutes = require('./routes/contact'); // messages de contact
 
 const app = express();
 
@@ -120,6 +121,7 @@ app.use('/api/offers', offersRoutes);
 app.use('/api/notifications', notificationsRoutes);
 app.use('/api/reviews', reviewsRoutes);
 app.use('/api/home', homeRoutes);
+app.use('/api/contact', contactRoutes);
 
 /* ===================== Gestion d’erreurs ===================== */
 app.use((err, req, res, next) => {
