@@ -15,7 +15,10 @@ router.get('/profile/:profileId', async (req, res) => {
   try {
     const publications = await prisma.publication.findMany({
       where: { profileId },
-      orderBy: { id: 'desc' }, // Les plus récentes en premier
+      orderBy: { id: 'desc' },
+      include: {
+        _count: { select: { likes: true, comments: true } },
+      },
     });
 
     return res.json({ publications });
@@ -111,6 +114,92 @@ router.delete('/:id', requireAuth, async (req, res) => {
     return res.status(500).json({ error: 'Erreur serveur' });
   }
 });
+
+// GET /api/publications/:id/comments — liste des commentaires
+router.get('/:id/comments', async (req, res) => {
+  const id = parseInt(req.params.id, 10)
+  if (isNaN(id)) return res.status(400).json({ error: 'ID invalide' })
+
+  try {
+    const comments = await prisma.publicationComment.findMany({
+      where: { publicationId: id },
+      orderBy: { createdAt: 'asc' },
+      include: {
+        profile: {
+          select: {
+            id: true,
+            avatar: true,
+            user: { select: { id: true, pseudo: true, firstName: true, lastName: true } },
+          },
+        },
+      },
+    })
+    return res.json({ comments })
+  } catch (err) {
+    console.error('❌ Erreur récupération commentaires :', err)
+    return res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
+// POST /api/publications/:id/comments — ajouter un commentaire
+router.post('/:id/comments', requireAuth, async (req, res) => {
+  const id = parseInt(req.params.id, 10)
+  if (isNaN(id)) return res.status(400).json({ error: 'ID invalide' })
+
+  const { content } = req.body
+  if (!content || !String(content).trim()) {
+    return res.status(400).json({ error: 'Contenu requis' })
+  }
+
+  try {
+    const profile = await prisma.profile.findUnique({ where: { userId: req.user.id } })
+    if (!profile) return res.status(404).json({ error: 'Profil introuvable' })
+
+    const comment = await prisma.publicationComment.create({
+      data: {
+        content: String(content).trim(),
+        publicationId: id,
+        profileId: profile.id,
+      },
+      include: {
+        profile: {
+          select: {
+            id: true,
+            avatar: true,
+            user: { select: { id: true, pseudo: true, firstName: true, lastName: true } },
+          },
+        },
+      },
+    })
+
+    return res.status(201).json(comment)
+  } catch (err) {
+    console.error('❌ Erreur ajout commentaire :', err)
+    return res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
+// DELETE /api/publications/comments/:id — supprimer un commentaire
+router.delete('/comments/:id', requireAuth, async (req, res) => {
+  const id = parseInt(req.params.id, 10)
+  if (isNaN(id)) return res.status(400).json({ error: 'ID invalide' })
+
+  try {
+    const profile = await prisma.profile.findUnique({ where: { userId: req.user.id } })
+    const comment = await prisma.publicationComment.findUnique({ where: { id } })
+
+    if (!comment) return res.status(404).json({ error: 'Commentaire introuvable' })
+    if (!profile || comment.profileId !== profile.id) {
+      return res.status(403).json({ error: 'Accès interdit' })
+    }
+
+    await prisma.publicationComment.delete({ where: { id } })
+    return res.json({ message: 'Commentaire supprimé' })
+  } catch (err) {
+    console.error('❌ Erreur suppression commentaire :', err)
+    return res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
 
 // POST /api/publications/:id/like — toggle like
 router.post('/:id/like', requireAuth, async (req, res) => {

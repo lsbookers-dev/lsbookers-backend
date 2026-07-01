@@ -211,8 +211,9 @@ model Profile {
   // Staff d'evenements
   eventStaffAssignments   EventStaff[]
 
-  // Likes
+  // Likes & Commentaires
   publicationLikes        PublicationLike[]
+  publicationComments     PublicationComment[]
 
   // Agenda
   availability            Availability[]
@@ -225,16 +226,17 @@ model Profile {
 // ─────────────────────────────────────────────
 
 model Publication {
-  id        Int               @id @default(autoincrement())
+  id        Int                  @id @default(autoincrement())
   title     String
   media     String
   mediaType String
   caption   String?
   profileId Int
-  createdAt DateTime          @default(now())
+  createdAt DateTime             @default(now())
 
-  profile   Profile           @relation(fields: [profileId], references: [id])
+  profile   Profile              @relation(fields: [profileId], references: [id])
   likes     PublicationLike[]
+  comments  PublicationComment[]
 }
 
 model PublicationLike {
@@ -247,6 +249,20 @@ model PublicationLike {
   profile       Profile     @relation(fields: [profileId], references: [id])
 
   @@unique([publicationId, profileId]) // Un seul like par personne par publication
+}
+
+model PublicationComment {
+  id            Int         @id @default(autoincrement())
+  content       String
+  publicationId Int
+  profileId     Int
+  createdAt     DateTime    @default(now())
+
+  publication   Publication @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+  profile       Profile     @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([publicationId])
+  @@index([profileId])
 }
 
 // ─────────────────────────────────────────────

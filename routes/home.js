@@ -113,6 +113,7 @@ router.get('/feed', requireAuth, async (req, res) => {
             },
           },
           likes: { select: { profileId: true } },
+          _count: { select: { comments: true } },
         },
         orderBy: { createdAt: 'desc' },
         take: followCount >= 10 ? 20 : 10,
@@ -134,6 +135,7 @@ router.get('/feed', requireAuth, async (req, res) => {
             },
           },
           likes: { select: { profileId: true } },
+          _count: { select: { comments: true } },
         },
         orderBy: { createdAt: 'desc' },
         take: 12,
@@ -149,6 +151,7 @@ router.get('/feed', requireAuth, async (req, res) => {
       title: p.title,
       createdAt: p.createdAt,
       likesCount: p.likes.length,
+      commentsCount: p._count?.comments ?? 0,
       likedByMe: p.likes.some(l => l.profileId === profile.id),
       isFromFollow: followedProfileIds.includes(p.profileId),
       author: {
