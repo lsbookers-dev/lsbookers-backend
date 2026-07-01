@@ -330,9 +330,12 @@ model Message {
   seen               Boolean          @default(false)
   seenAt             DateTime?
   createdAt          DateTime         @default(now())
+  type               String           @default("TEXT")  // TEXT | BOOKING_REQUEST
+  bookingRequestId   Int?
 
   sender             User             @relation("SentMessages", fields: [senderId], references: [id])
   conversation       Conversation     @relation(fields: [conversationId], references: [id])
+  bookingRequest     BookingRequest?  @relation(fields: [bookingRequestId], references: [id], onDelete: SetNull)
   notifications      Notification[]
 
   @@index([conversationId, createdAt])
@@ -419,6 +422,7 @@ model BookingRequest {
   requester   Profile       @relation("BookingRequester", fields: [requesterId], references: [id])
   target      Profile       @relation("BookingTarget", fields: [targetId], references: [id])
   event       Event?        @relation(fields: [eventId], references: [id])
+  messages    Message[]
 
   @@index([requesterId])
   @@index([targetId])

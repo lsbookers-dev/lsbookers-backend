@@ -215,12 +215,26 @@ router.get('/messages/:conversationId', requireAuth, async (req, res) => {
     const messages = await prisma.message.findMany({
       where: { conversationId },
       orderBy: { createdAt: 'asc' },
-      include: { sender: { include: { profile: true } } },
+      include: {
+        sender: { include: { profile: true } },
+        bookingRequest: true,
+      },
     })
 
     const payload = messages.map((m) => ({
       id: String(m.id),
       content: m.content || '',
+      type: m.type || 'TEXT',
+      bookingRequestId: m.bookingRequestId || null,
+      bookingRequest: m.bookingRequest ? {
+        id: m.bookingRequest.id,
+        status: m.bookingRequest.status,
+        startDate: m.bookingRequest.startDate,
+        fee: m.bookingRequest.fee,
+        message: m.bookingRequest.message,
+        requesterId: m.bookingRequest.requesterId,
+        targetId: m.bookingRequest.targetId,
+      } : null,
       attachmentUrl: m.attachmentUrl || null,
       attachmentType: m.attachmentType || null,
       attachmentName: m.attachmentName || null,

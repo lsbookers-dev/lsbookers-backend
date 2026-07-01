@@ -122,20 +122,67 @@ router.post('/booking-request', requireAuth, async (req, res) => {
   const { targetProfileId, date, message, fee } = req.body;
   if (!targetProfileId || !date) return res.status(400).json({ error: 'Profil cible et date requis' });
   try {
-    const requester = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
-    if (!requester) return res.status(404).json({ error: 'Profil introuvable' });
-    if (requester.id === parseInt(targetProfileId)) return res.status(400).json({ error: 'Impossible de vous envoyer une demande à vous-même' });
-    const request = await prisma.bookingRequest.create({
+    const requesterProfile = await prisma.profile.findUnique({
+      where: { userId: req.user.id },
+      select: { id: true, userId: true },
+    });
+    if (!requesterProfile) return res.status(404).json({ error: 'Profil introuvable' });
+    if (requesterProfile.id === parseInt(targetProfileId)) return res.status(400).json({ error: 'Impossible de vous envoyer une demande à vous-même' });
+
+    const targetProfile = await prisma.profile.findUnique({
+      where: { id: parseInt(targetProfileId) },
+      select: { id: true, userId: true },
+    });
+    if (!targetProfile) return res.status(404).json({ error: 'Profil cible introuvable' });
+
+    // 1. Créer la BookingRequest
+    const bookingRequest = await prisma.bookingRequest.create({
       data: {
-        requesterId: requester.id,
-        targetId:    parseInt(targetProfileId),
+        requesterId: requesterProfile.id,
+        targetId:    targetProfile.id,
         startDate:   new Date(date),
         message:     message?.trim() || null,
         fee:         fee ? parseFloat(fee) : null,
         status:      'PENDING',
       },
     });
-    res.status(201).json({ request });
+
+    // 2. Trouver ou créer une conversation entre les deux userId
+    let conversation = await prisma.conversation.findFirst({
+      where: {
+        AND: [
+          { participants: { some: { userId: req.user.id } } },
+          { participants: { some: { userId: targetProfile.userId } } },
+        ],
+      },
+    });
+    if (!conversation) {
+      conversation = await prisma.conversation.create({
+        data: {
+          participants: {
+            create: [{ userId: req.user.id }, { userId: targetProfile.userId }],
+          },
+        },
+      });
+    }
+
+    // 3. Envoyer un message de type BOOKING_REQUEST dans la conversation
+    const dateLabel = new Date(date).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    const msgContent = `📅 Demande de booking pour le ${dateLabel}${fee ? ` · Cachet proposé : ${parseFloat(fee).toLocaleString('fr-FR')} €` : ''}${message ? `\n"${message.trim()}"` : ''}`;
+
+    await prisma.message.create({
+      data: {
+        content:         msgContent,
+        senderId:        req.user.id,
+        conversationId:  conversation.id,
+        type:            'BOOKING_REQUEST',
+        bookingRequestId: bookingRequest.id,
+      },
+    });
+
+    await prisma.conversation.update({ where: { id: conversation.id }, data: { updatedAt: new Date() } });
+
+    res.status(201).json({ request: bookingRequest, conversationId: conversation.id });
   } catch (err) {
     console.error('POST booking-request:', err);
     res.status(500).json({ error: 'Erreur serveur' });
