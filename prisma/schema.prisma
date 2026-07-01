@@ -351,6 +351,7 @@ model Event {
   id           Int         @id @default(autoincrement())
   title        String
   description  String?
+  notes        String?                      // Notes privées de l'organisateur
   start        DateTime
   end          DateTime?
   allDay       Boolean     @default(false)
@@ -371,9 +372,41 @@ model Event {
   reviews          Review[]
   documents        EventDocument[]
   bookingRequests  BookingRequest[]
+  expenses         EventExpense[]
+  purchases        EventPurchase[]
 
   @@index([profileId])
   @@index([start])
+}
+
+// Dépenses / frais d'un événement
+model EventExpense {
+  id        Int      @id @default(autoincrement())
+  eventId   Int
+  label     String
+  amount    Float?
+  category  String?  // "Technique", "Catering", "Décor", "Communication", "Autre"
+  paid      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([eventId])
+}
+
+// Liste d'achats à effectuer pour un événement
+model EventPurchase {
+  id        Int      @id @default(autoincrement())
+  eventId   Int
+  item      String
+  quantity  Int?
+  price     Float?
+  done      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([eventId])
 }
 
 // Documents liés à un événement (contrats, factures, riders...)

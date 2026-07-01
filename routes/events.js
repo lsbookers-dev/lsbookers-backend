@@ -50,6 +50,23 @@ router.get('/my', requireAuth, async (req, res) => {
   }
 });
 
+// GET /api/events/all — tous mes événements (sans filtre mois)
+router.get('/all', requireAuth, async (req, res) => {
+  try {
+    const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
+    if (!profile) return res.status(404).json({ error: 'Profil introuvable' });
+    const events = await prisma.event.findMany({
+      where: { profileId: profile.id },
+      orderBy: { start: 'desc' },
+      select: { id: true, title: true, start: true, end: true, lieu: true, category: true, status: true, isPrivate: true, budget: true },
+    });
+    res.json({ events });
+  } catch (err) {
+    console.error('GET events/all:', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
 // POST /api/events — créer un événement
 router.post('/', requireAuth, async (req, res) => {
   const { title, description, start, end, allDay, lieu, category, isPrivate, budget, maxCapacity, status } = req.body;
@@ -119,7 +136,7 @@ router.put('/availability', requireAuth, async (req, res) => {
 
 // POST /api/events/booking-request — envoyer une demande de booking
 router.post('/booking-request', requireAuth, async (req, res) => {
-  const { targetProfileId, date, message, fee } = req.body;
+  const { targetProfileId, date, message, fee, eventId } = req.body;
   if (!targetProfileId || !date) return res.status(400).json({ error: 'Profil cible et date requis' });
   try {
     const requesterProfile = await prisma.profile.findUnique({
@@ -144,6 +161,7 @@ router.post('/booking-request', requireAuth, async (req, res) => {
         message:     message?.trim() || null,
         fee:         fee ? parseFloat(fee) : null,
         status:      'PENDING',
+        eventId:     eventId ? parseInt(eventId) : null,
       },
     });
 
@@ -460,6 +478,162 @@ router.post('/booking-request/:id/cancel-response', requireAuth, async (req, res
     }
   } catch (err) {
     console.error('POST booking-request cancel-response:', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// GET /api/events/:id/detail — détail complet d'un événement (owner only)
+router.get('/:id/detail', requireAuth, async (req, res) => {
+  try {
+    const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
+    const event = await prisma.event.findFirst({
+      where: { id: parseInt(req.params.id), profileId: profile?.id },
+      include: {
+        staff: { include: { profile: { select: { id: true, avatar: true, user: { select: { pseudo: true, firstName: true, lastName: true, role: true } } } } } },
+        expenses:  { orderBy: { createdAt: 'asc' } },
+        purchases: { orderBy: { createdAt: 'asc' } },
+        documents: true,
+        bookingRequests: {
+          include: {
+            target: { select: { id: true, avatar: true, user: { select: { pseudo: true, firstName: true, lastName: true, role: true } } } },
+          },
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+    });
+    if (!event) return res.status(404).json({ error: 'Événement introuvable' });
+    res.json({ event });
+  } catch (err) {
+    console.error('GET events/:id/detail:', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// PATCH /api/events/:id/notes — mettre à jour les notes privées
+router.patch('/:id/notes', requireAuth, async (req, res) => {
+  const { notes } = req.body;
+  try {
+    const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
+    const existing = await prisma.event.findFirst({ where: { id: parseInt(req.params.id), profileId: profile?.id } });
+    if (!existing) return res.status(404).json({ error: 'Événement introuvable' });
+    const event = await prisma.event.update({ where: { id: existing.id }, data: { notes: notes ?? null } });
+    res.json({ event });
+  } catch (err) {
+    console.error('PATCH events/:id/notes:', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+/* ── Dépenses ─────────────────────────────────────────────── */
+
+// POST /api/events/:id/expenses — ajouter une dépense
+router.post('/:id/expenses', requireAuth, async (req, res) => {
+  const { label, amount, category } = req.body;
+  if (!label?.trim()) return res.status(400).json({ error: 'Libellé requis' });
+  try {
+    const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
+    const event = await prisma.event.findFirst({ where: { id: parseInt(req.params.id), profileId: profile?.id } });
+    if (!event) return res.status(404).json({ error: 'Événement introuvable' });
+    const expense = await prisma.eventExpense.create({
+      data: { eventId: event.id, label: label.trim(), amount: amount ? parseFloat(amount) : null, category: category || null },
+    });
+    res.status(201).json({ expense });
+  } catch (err) {
+    console.error('POST expenses:', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// PATCH /api/events/:id/expenses/:expenseId — modifier une dépense
+router.patch('/:id/expenses/:expenseId', requireAuth, async (req, res) => {
+  const { label, amount, category, paid } = req.body;
+  try {
+    const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
+    const event = await prisma.event.findFirst({ where: { id: parseInt(req.params.id), profileId: profile?.id } });
+    if (!event) return res.status(404).json({ error: 'Événement introuvable' });
+    const expense = await prisma.eventExpense.update({
+      where: { id: parseInt(req.params.expenseId) },
+      data: {
+        ...(label !== undefined && { label: label.trim() }),
+        ...(amount !== undefined && { amount: amount ? parseFloat(amount) : null }),
+        ...(category !== undefined && { category: category || null }),
+        ...(paid !== undefined && { paid: Boolean(paid) }),
+      },
+    });
+    res.json({ expense });
+  } catch (err) {
+    console.error('PATCH expense:', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// DELETE /api/events/:id/expenses/:expenseId
+router.delete('/:id/expenses/:expenseId', requireAuth, async (req, res) => {
+  try {
+    const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
+    const event = await prisma.event.findFirst({ where: { id: parseInt(req.params.id), profileId: profile?.id } });
+    if (!event) return res.status(404).json({ error: 'Événement introuvable' });
+    await prisma.eventExpense.delete({ where: { id: parseInt(req.params.expenseId) } });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('DELETE expense:', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+/* ── Achats ───────────────────────────────────────────────── */
+
+// POST /api/events/:id/purchases — ajouter un achat
+router.post('/:id/purchases', requireAuth, async (req, res) => {
+  const { item, quantity, price } = req.body;
+  if (!item?.trim()) return res.status(400).json({ error: 'Article requis' });
+  try {
+    const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
+    const event = await prisma.event.findFirst({ where: { id: parseInt(req.params.id), profileId: profile?.id } });
+    if (!event) return res.status(404).json({ error: 'Événement introuvable' });
+    const purchase = await prisma.eventPurchase.create({
+      data: { eventId: event.id, item: item.trim(), quantity: quantity ? parseInt(quantity) : null, price: price ? parseFloat(price) : null },
+    });
+    res.status(201).json({ purchase });
+  } catch (err) {
+    console.error('POST purchase:', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// PATCH /api/events/:id/purchases/:purchaseId — modifier / cocher un achat
+router.patch('/:id/purchases/:purchaseId', requireAuth, async (req, res) => {
+  const { item, quantity, price, done } = req.body;
+  try {
+    const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
+    const event = await prisma.event.findFirst({ where: { id: parseInt(req.params.id), profileId: profile?.id } });
+    if (!event) return res.status(404).json({ error: 'Événement introuvable' });
+    const purchase = await prisma.eventPurchase.update({
+      where: { id: parseInt(req.params.purchaseId) },
+      data: {
+        ...(item !== undefined && { item: item.trim() }),
+        ...(quantity !== undefined && { quantity: quantity ? parseInt(quantity) : null }),
+        ...(price !== undefined && { price: price ? parseFloat(price) : null }),
+        ...(done !== undefined && { done: Boolean(done) }),
+      },
+    });
+    res.json({ purchase });
+  } catch (err) {
+    console.error('PATCH purchase:', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// DELETE /api/events/:id/purchases/:purchaseId
+router.delete('/:id/purchases/:purchaseId', requireAuth, async (req, res) => {
+  try {
+    const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
+    const event = await prisma.event.findFirst({ where: { id: parseInt(req.params.id), profileId: profile?.id } });
+    if (!event) return res.status(404).json({ error: 'Événement introuvable' });
+    await prisma.eventPurchase.delete({ where: { id: parseInt(req.params.purchaseId) } });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('DELETE purchase:', err);
     res.status(500).json({ error: 'Erreur serveur' });
   }
 });
