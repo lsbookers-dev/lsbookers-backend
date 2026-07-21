@@ -372,6 +372,28 @@ router.patch('/booking-request/:id', requireAuth, async (req, res) => {
   }
 });
 
+// PATCH /api/events/booking-request/:id/payment-status — mettre à jour le statut de paiement
+router.patch('/booking-request/:id/payment-status', requireAuth, async (req, res) => {
+  const { paymentStatus } = req.body;
+  const allowed = ['UNPAID', 'DEPOSIT', 'PAID', 'DIRECT'];
+  if (!allowed.includes(paymentStatus)) return res.status(400).json({ error: 'Statut de paiement invalide' });
+  try {
+    const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
+    const br = await prisma.bookingRequest.findUnique({ where: { id: parseInt(req.params.id) } });
+    if (!br) return res.status(404).json({ error: 'Demande introuvable' });
+    // Seul l'organisateur (requester) peut modifier le statut de paiement
+    if (br.requesterId !== profile?.id) return res.status(403).json({ error: 'Non autorisé' });
+    const updated = await prisma.bookingRequest.update({
+      where: { id: br.id },
+      data: { paymentStatus },
+    });
+    res.json({ request: updated });
+  } catch (err) {
+    console.error('PATCH booking-request payment-status:', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
 // POST /api/events/booking-request/:id/cancel-request — demander l'annulation d'un booking accepté
 router.post('/booking-request/:id/cancel-request', requireAuth, async (req, res) => {
   const { note } = req.body;
@@ -510,7 +532,7 @@ router.get('/:id/detail', requireAuth, async (req, res) => {
         staff: { include: { profile: { select: { id: true, avatar: true, user: { select: { pseudo: true, firstName: true, lastName: true, role: true } } } } } },
         expenses:  { orderBy: { createdAt: 'asc' } },
         purchases: { orderBy: { createdAt: 'asc' } },
-        documents: true,
+        documents: { orderBy: { createdAt: 'asc' } },
         bookingRequests: {
           include: {
             target: { select: { id: true, avatar: true, user: { select: { pseudo: true, firstName: true, lastName: true, role: true } } } },
@@ -520,7 +542,25 @@ router.get('/:id/detail', requireAuth, async (req, res) => {
       },
     });
     if (!event) return res.status(404).json({ error: 'Événement introuvable' });
-    res.json({ event });
+
+    // Vérifier si cet événement a été créé via un booking (artiste/prestataire booké)
+    // On cherche un BookingRequest où cet utilisateur est la cible (targetId) avec une date proche
+    const dayStart = new Date(event.start);
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd   = new Date(event.start);
+    dayEnd.setHours(23, 59, 59, 999);
+    const linkedBooking = await prisma.bookingRequest.findFirst({
+      where: {
+        targetId:  profile?.id,
+        status:    'ACCEPTED',
+        startDate: { gte: dayStart, lte: dayEnd },
+      },
+      include: {
+        requester: { select: { id: true, avatar: true, user: { select: { pseudo: true, firstName: true, lastName: true } } } },
+      },
+    });
+
+    res.json({ event, linkedBooking: linkedBooking || null });
   } catch (err) {
     console.error('GET events/:id/detail:', err);
     res.status(500).json({ error: 'Erreur serveur' });
@@ -670,6 +710,112 @@ router.delete('/:id/purchases/:purchaseId', requireAuth, async (req, res) => {
   }
 });
 
+/* ── Personnel (Staff) ──────────────────────────────────── */
+
+// POST /api/events/:id/staff — ajouter un membre du personnel manuellement
+router.post('/:id/staff', requireAuth, async (req, res) => {
+  const { role, fee, notes, profileId: staffProfileId } = req.body;
+  if (!role?.trim()) return res.status(400).json({ error: 'Rôle requis' });
+  try {
+    const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
+    const event = await prisma.event.findFirst({ where: { id: parseInt(req.params.id), profileId: profile?.id } });
+    if (!event) return res.status(404).json({ error: 'Événement introuvable' });
+
+    const staff = await prisma.eventStaff.create({
+      data: {
+        eventId:   event.id,
+        role:      role.trim(),
+        fee:       fee ? parseFloat(fee) : null,
+        notes:     notes?.trim() || null,
+        profileId: staffProfileId ? parseInt(staffProfileId) : null,
+        status:    staffProfileId ? 'BOOKED' : 'NEEDED',
+        count:     1,
+      },
+      include: {
+        profile: { select: { id: true, avatar: true, user: { select: { pseudo: true, firstName: true, lastName: true, role: true } } } },
+      },
+    });
+
+    // Si un profil est lié, marquer la date comme indisponible dans son agenda
+    if (staffProfileId) {
+      const dayStart = new Date(event.start);
+      dayStart.setUTCHours(0, 0, 0, 0);
+      await prisma.availability.upsert({
+        where:  { profileId_date: { profileId: parseInt(staffProfileId), date: dayStart } },
+        update: { status: 'UNAVAILABLE' },
+        create: { profileId: parseInt(staffProfileId), date: dayStart, status: 'UNAVAILABLE' },
+      }).catch(() => {});
+    }
+
+    res.status(201).json({ staff });
+  } catch (err) {
+    console.error('POST staff:', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// DELETE /api/events/:id/staff/:staffId — retirer un membre du personnel
+router.delete('/:id/staff/:staffId', requireAuth, async (req, res) => {
+  try {
+    const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
+    const event = await prisma.event.findFirst({ where: { id: parseInt(req.params.id), profileId: profile?.id } });
+    if (!event) return res.status(404).json({ error: 'Événement introuvable' });
+    await prisma.eventStaff.delete({ where: { id: parseInt(req.params.staffId) } });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('DELETE staff:', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+/* ── Documents (contrats, transport, logement) ──────────── */
+
+// GET /api/events/:id/documents — lister les documents
+router.get('/:id/documents', requireAuth, async (req, res) => {
+  try {
+    const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
+    const event = await prisma.event.findFirst({ where: { id: parseInt(req.params.id), profileId: profile?.id } });
+    if (!event) return res.status(404).json({ error: 'Événement introuvable' });
+    const documents = await prisma.eventDocument.findMany({ where: { eventId: event.id }, orderBy: { createdAt: 'asc' } });
+    res.json({ documents });
+  } catch (err) {
+    console.error('GET documents:', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// POST /api/events/:id/documents — ajouter un document
+router.post('/:id/documents', requireAuth, async (req, res) => {
+  const { name, url, fileType } = req.body;
+  if (!name?.trim() || !url?.trim()) return res.status(400).json({ error: 'Nom et URL requis' });
+  try {
+    const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
+    const event = await prisma.event.findFirst({ where: { id: parseInt(req.params.id), profileId: profile?.id } });
+    if (!event) return res.status(404).json({ error: 'Événement introuvable' });
+    const document = await prisma.eventDocument.create({
+      data: { eventId: event.id, name: name.trim(), url: url.trim(), fileType: fileType || 'OTHER' },
+    });
+    res.status(201).json({ document });
+  } catch (err) {
+    console.error('POST document:', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// DELETE /api/events/:id/documents/:docId — supprimer un document
+router.delete('/:id/documents/:docId', requireAuth, async (req, res) => {
+  try {
+    const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
+    const event = await prisma.event.findFirst({ where: { id: parseInt(req.params.id), profileId: profile?.id } });
+    if (!event) return res.status(404).json({ error: 'Événement introuvable' });
+    await prisma.eventDocument.delete({ where: { id: parseInt(req.params.docId) } });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('DELETE document:', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
 // PUT /api/events/:id — modifier un événement
 router.put('/:id', requireAuth, async (req, res) => {
   const { id } = req.params;
@@ -697,21 +843,6 @@ router.put('/:id', requireAuth, async (req, res) => {
     res.json({ event });
   } catch (err) {
     console.error('PUT events:', err);
-    res.status(500).json({ error: 'Erreur serveur' });
-  }
-});
-
-// DELETE /api/events/:id — supprimer un événement
-router.delete('/:id', requireAuth, async (req, res) => {
-  const { id } = req.params;
-  try {
-    const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
-    const existing = await prisma.event.findFirst({ where: { id: parseInt(id), profileId: profile?.id } });
-    if (!existing) return res.status(404).json({ error: 'Événement introuvable' });
-    await prisma.event.delete({ where: { id: parseInt(id) } });
-    res.json({ message: 'Événement supprimé' });
-  } catch (err) {
-    console.error('DELETE events:', err);
     res.status(500).json({ error: 'Erreur serveur' });
   }
 });
