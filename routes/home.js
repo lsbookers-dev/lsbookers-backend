@@ -101,11 +101,14 @@ router.get('/feed', requireAuth, async (req, res) => {
       : []
     const followedProfileIds = followedProfiles.map(p => p.id)
 
-    // Publications des personnes suivies
+    // On inclut toujours ses propres publications dans le feed
+    const feedProfileIds = [...new Set([profile.id, ...followedProfileIds])]
+
+    // Publications des personnes suivies + les siennes
     let posts = []
-    if (followedProfileIds.length > 0) {
+    if (feedProfileIds.length > 0) {
       posts = await prisma.publication.findMany({
-        where: { profileId: { in: followedProfileIds } },
+        where: { profileId: { in: feedProfileIds } },
         include: {
           profile: {
             include: {
@@ -126,7 +129,7 @@ router.get('/feed', requireAuth, async (req, res) => {
       const popular = await prisma.publication.findMany({
         where: {
           id: { notIn: excludeIds },
-          profileId: { notIn: [profile.id, ...followedProfileIds] },
+          profileId: { notIn: followedProfileIds }, // on ne retire plus le profil courant
         },
         include: {
           profile: {
@@ -153,7 +156,7 @@ router.get('/feed', requireAuth, async (req, res) => {
       likesCount: p.likes.length,
       commentsCount: p._count?.comments ?? 0,
       likedByMe: p.likes.some(l => l.profileId === profile.id),
-      isFromFollow: followedProfileIds.includes(p.profileId),
+      isFromFollow: p.profileId === profile.id ? true : followedProfileIds.includes(p.profileId),
       author: {
         profileId: p.profileId,
         userId: p.profile?.user?.id ?? null,
