@@ -678,6 +678,10 @@ model AdminSettings {
   bannerUrl      String?
   logoUrl        String?
   welcomeText    String?
+  landingBgUrl   String?
+  loginBgUrl     String?
+  registerBgUrl  String?
+  headerLogoUrl  String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 }
