@@ -390,6 +390,7 @@ model Event {
   bookingRequests  BookingRequest[]
   expenses         EventExpense[]
   purchases        EventPurchase[]
+  offers           Offer[]
 
   @@index([profileId])
   @@index([start])
@@ -513,12 +514,15 @@ model Offer {
   location      String
   country       String
   radiusKm      Int?
+  fee           Float?        // Tarif proposé (optionnel)
+  eventId       Int?          // Événement lié (optionnel)
   status        OfferStatus   @default(ACTIVE)
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
   organizerId   Int
 
   organizer     Profile       @relation(fields: [organizerId], references: [id])
+  event         Event?        @relation(fields: [eventId], references: [id])
   applications  Application[]
   notifications Notification[]
 
