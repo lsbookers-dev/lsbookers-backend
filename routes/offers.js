@@ -22,6 +22,13 @@ const organizerSelect = {
   },
 };
 
+// Include réutilisable — on inclut event { id } pour récupérer eventId
+// même si le client Prisma ne connaît pas encore le champ scalaire eventId
+const offerInclude = {
+  organizer: { select: organizerSelect },
+  event:     { select: { id: true } },
+};
+
 function formatOffer(o) {
   return {
     id:          o.id,
@@ -34,7 +41,7 @@ function formatOffer(o) {
     country:     o.country,
     radiusKm:    o.radiusKm,
     fee:         o.fee,
-    eventId:     o.eventId,
+    eventId:     o.event?.id ?? null,   // on lit l'id via la relation
     status:      o.status,
     createdAt:   o.createdAt,
     organizerId: o.organizerId,
@@ -72,6 +79,8 @@ router.post('/', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'DATE_INVALIDE' });
     }
 
+    const eventIdInt = eventId != null ? parseInt(eventId, 10) : null;
+
     const offer = await prisma.offer.create({
       data: {
         title:       String(title).trim(),
@@ -83,17 +92,18 @@ router.post('/', requireAuth, async (req, res) => {
         country:     String(country).trim(),
         radiusKm:    radiusKm != null ? parseInt(radiusKm, 10) : null,
         fee:         fee != null ? parseFloat(fee) : null,
-        eventId:     eventId != null ? parseInt(eventId, 10) : null,
         status:      'ACTIVE',
         organizer:   { connect: { id: profile.id } },
+        // On passe eventId via la relation (le client Prisma cache ne connaît pas le champ scalaire)
+        ...(eventIdInt != null ? { event: { connect: { id: eventIdInt } } } : {}),
       },
-      include: { organizer: { select: organizerSelect } },
+      include: offerInclude,
     });
 
     return res.status(201).json(formatOffer(offer));
   } catch (err) {
     console.error('❌ POST /offers :', err);
-    return res.status(500).json({ error: 'ERREUR_SERVEUR', debug: err?.message, code: err?.code });
+    return res.status(500).json({ error: 'ERREUR_SERVEUR' });
   }
 });
 
@@ -109,11 +119,12 @@ router.get('/', async (req, res) => {
     if (location)  where.location  = { contains: location,  mode: 'insensitive' };
     if (country)   where.country   = { contains: country,   mode: 'insensitive' };
     if (organizerId) where.organizerId = parseInt(organizerId, 10);
-    if (eventId) where.eventId = parseInt(eventId, 10);
+    // Filtre par eventId via la relation (pas le champ scalaire)
+    if (eventId) where.event = { id: parseInt(eventId, 10) };
 
     const offers = await prisma.offer.findMany({
       where,
-      include: { organizer: { select: organizerSelect } },
+      include: offerInclude,
       orderBy: { createdAt: 'desc' },
     });
 
@@ -129,7 +140,7 @@ router.get('/:id', async (req, res) => {
   try {
     const offer = await prisma.offer.findUnique({
       where: { id: parseInt(req.params.id, 10) },
-      include: { organizer: { select: organizerSelect } },
+      include: offerInclude,
     });
 
     if (!offer || offer.status !== 'ACTIVE') {
@@ -171,7 +182,7 @@ router.put('/:id', requireAuth, async (req, res) => {
     const updated = await prisma.offer.update({
       where: { id: parseInt(req.params.id, 10) },
       data,
-      include: { organizer: { select: organizerSelect } },
+      include: offerInclude,
     });
 
     return res.json(formatOffer(updated));
