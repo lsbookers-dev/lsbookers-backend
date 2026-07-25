@@ -99,7 +99,7 @@ router.post('/', requireAuth, async (req, res) => {
 
 /* ── GET /api/offers — lister avec filtres ──────────────── */
 router.get('/', async (req, res) => {
-  const { type, specialty, location, country, organizerId } = req.query;
+  const { type, specialty, location, country, organizerId, eventId } = req.query;
 
   try {
     const where = { status: 'ACTIVE' };
@@ -109,6 +109,7 @@ router.get('/', async (req, res) => {
     if (location)  where.location  = { contains: location,  mode: 'insensitive' };
     if (country)   where.country   = { contains: country,   mode: 'insensitive' };
     if (organizerId) where.organizerId = parseInt(organizerId, 10);
+    if (eventId) where.eventId = parseInt(eventId, 10);
 
     const offers = await prisma.offer.findMany({
       where,
