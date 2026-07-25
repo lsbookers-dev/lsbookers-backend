@@ -93,7 +93,7 @@ router.post('/', requireAuth, async (req, res) => {
     return res.status(201).json(formatOffer(offer));
   } catch (err) {
     console.error('❌ POST /offers :', err);
-    return res.status(500).json({ error: 'ERREUR_SERVEUR' });
+    return res.status(500).json({ error: 'ERREUR_SERVEUR', debug: err?.message, code: err?.code });
   }
 });
 
