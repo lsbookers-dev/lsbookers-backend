@@ -172,6 +172,7 @@ router.post('/register-complete', validate(registerCompleteSchema), async (req, 
     email, password, role,
     pseudo, firstName, lastName, dateOfBirth, phone, countryOfResidence,
     legalStatus, organizerType, establishmentName, typeEtablissement, siret, city,
+    specialties,
   } = req.body;
 
   try {
@@ -199,6 +200,7 @@ router.post('/register-complete', validate(registerCompleteSchema), async (req, 
     if (siret) profileData.siret = siret.trim();
     if (city) profileData.city = city.trim();
     if (countryOfResidence) profileData.country = countryOfResidence.trim();
+    if (Array.isArray(specialties) && specialties.length > 0) profileData.specialties = specialties;
 
     // Construire les données utilisateur (étape 2)
     const userData = {
