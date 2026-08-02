@@ -126,7 +126,7 @@ const eventUpdateSchema = eventCreateSchema.partial();
 const publicationCreateSchema = z.object({
   title:      z.string().min(1, 'Titre requis').max(200).trim(),
   media:      z.string().min(1, 'Média requis').max(2000).trim(),
-  mediaType:  z.enum(['IMAGE', 'VIDEO', 'AUDIO']).optional(),
+  mediaType:  z.preprocess(v => typeof v === 'string' ? v.toLowerCase() : v, z.enum(['image', 'video', 'audio'])).optional(),
   caption:    z.string().max(2000).trim().optional().nullable(),
   profileId:  z.union([z.number().int().positive(), z.string().regex(/^\d+$/)]),
 });

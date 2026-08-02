@@ -58,7 +58,7 @@ router.post('/', requireAuth, validate(publicationCreateSchema), async (req, res
       data: {
         title: String(title).trim(),
         media: String(media).trim(),
-        mediaType: mediaType ? String(mediaType).trim() : 'IMAGE',
+        mediaType: mediaType ? String(mediaType).toLowerCase().trim() : 'image',
         caption: caption ? String(caption).trim() : null,
         profileId: parsedProfileId,
       },

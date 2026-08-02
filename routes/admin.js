@@ -59,6 +59,57 @@ router.get('/stats/summary', requireAuth, requireAdmin, async (_req, res) => {
 });
 
 /* =========================================================
+ *  STATS — Séries temporelles
+ *  GET /api/admin/stats/series?days=30
+ *  Retourne pour chaque jour : { date, users, revenueCents, logins }
+ * =======================================================*/
+router.get('/stats/series', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const daysRaw = parseInt(String(req.query.days || '30'), 10);
+    const days    = Number.isFinite(daysRaw) ? Math.min(365, Math.max(1, daysRaw)) : 30;
+
+    const series = [];
+    const now = new Date();
+
+    for (let i = days - 1; i >= 0; i--) {
+      const dayStart = new Date(now);
+      dayStart.setDate(now.getDate() - i);
+      dayStart.setHours(0, 0, 0, 0);
+
+      const dayEnd = new Date(dayStart);
+      dayEnd.setHours(23, 59, 59, 999);
+
+      // Nouveaux utilisateurs ce jour (hors ADMIN)
+      const users = await prisma.user.count({
+        where: { role: { not: 'ADMIN' }, createdAt: { gte: dayStart, lte: dayEnd } },
+      });
+
+      // Revenus ce jour (table optionnelle)
+      let revenueCents = 0;
+      try {
+        const payments = await prisma.payment.findMany({
+          where: { createdAt: { gte: dayStart, lte: dayEnd } },
+          select: { amountCents: true },
+        });
+        revenueCents = payments.reduce((s, p) => s + (p.amountCents || 0), 0);
+      } catch { /* table absente */ }
+
+      series.push({
+        date: dayStart.toISOString().split('T')[0],
+        users,
+        revenueCents,
+        logins: 0, // non tracké pour l'instant
+      });
+    }
+
+    return res.json({ series });
+  } catch (err) {
+    console.error('❌ /stats/series', err);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+/* =========================================================
  *  USERS — liste filtrée
  *  GET /api/admin/users?q=...&limit=50&offset=0
  * =======================================================*/
