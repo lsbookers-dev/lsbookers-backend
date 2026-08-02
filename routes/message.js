@@ -3,6 +3,8 @@ const router = express.Router()
 const { PrismaClient } = require('@prisma/client')
 const prisma = new PrismaClient()
 const { requireAuth } = require('../middleware/auth')
+const { validate } = require('../middleware/validate')
+const { conversationCreateSchema } = require('../schemas')
 const multer = require('multer')
 const { put } = require('@vercel/blob')
 
@@ -327,14 +329,12 @@ router.post('/start', requireAuth, async (req, res) => {
 /* =========================================================
    POST /api/messages/send  — texte seul (garde pour compatibilité)
 ========================================================= */
-router.post('/send', requireAuth, async (req, res) => {
+router.post('/send', requireAuth, validate(conversationCreateSchema), async (req, res) => {
   try {
     const senderId = Number(req.user?.id)
     if (!senderId) return res.status(401).json({ error: 'Unauthorized' })
 
     const { recipientId, content } = req.body
-    if (!recipientId || !content || !String(content).trim())
-      return res.status(400).json({ error: 'recipientId et content requis' })
     if (Number(recipientId) === senderId)
       return res.status(400).json({ error: 'Impossible de s\'envoyer un message à soi-même' })
 

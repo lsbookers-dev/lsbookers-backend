@@ -6,32 +6,23 @@ const crypto = require('crypto');
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { requireAuth } = require('../middleware/auth');
+const { validate } = require('../middleware/validate');
+const {
+  registerSchema,
+  loginSchema,
+  step2Schema,
+  step3Schema,
+  registerCompleteSchema,
+  resendVerificationSchema,
+} = require('../schemas');
 const { sendVerificationEmail } = require('../utils/email');
 
 // ─────────────────────────────────────────────
 // ETAPE 1 : CREATION DU COMPTE
 // Collecte : email, password, role
 // ─────────────────────────────────────────────
-router.post('/register', async (req, res) => {
+router.post('/register', validate(registerSchema), async (req, res) => {
   const { email, password, role } = req.body;
-
-  if (!email || !password || !role) {
-    return res.status(400).json({ error: 'Email, mot de passe et role sont requis' });
-  }
-
-  const validRoles = ['ARTIST', 'ORGANIZER', 'PROVIDER'];
-  if (!validRoles.includes(role)) {
-    return res.status(400).json({ error: 'Role invalide' });
-  }
-
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!emailRegex.test(email)) {
-    return res.status(400).json({ error: 'Adresse email invalide' });
-  }
-
-  if (password.length < 8) {
-    return res.status(400).json({ error: 'Le mot de passe doit contenir au moins 8 caracteres' });
-  }
 
   try {
     const existing = await prisma.user.findUnique({ where: { email: email.toLowerCase().trim() } });
@@ -89,18 +80,8 @@ router.post('/register', async (req, res) => {
 // ETAPE 2 : IDENTITE
 // Collecte : pseudo, firstName, lastName, dateOfBirth, phone, countryOfResidence
 // ─────────────────────────────────────────────
-router.patch('/step2', requireAuth, async (req, res) => {
+router.patch('/step2', requireAuth, validate(step2Schema), async (req, res) => {
   const { pseudo, firstName, lastName, dateOfBirth, phone, countryOfResidence } = req.body;
-
-  if (!pseudo || !firstName || !lastName) {
-    return res.status(400).json({ error: 'Pseudo, prenom et nom sont requis' });
-  }
-
-  // Pseudo : lettres, chiffres, tirets, underscores, points — 3 a 30 caracteres
-  const pseudoRegex = /^[a-zA-Z0-9_.\-]{3,30}$/;
-  if (!pseudoRegex.test(pseudo)) {
-    return res.status(400).json({ error: 'Pseudo invalide : 3-30 caracteres, lettres/chiffres/tirets/underscores' });
-  }
 
   try {
     // Verifier que le pseudo n'est pas deja pris par quelqu'un d'autre
@@ -139,31 +120,12 @@ router.patch('/step2', requireAuth, async (req, res) => {
 //            organizerType, establishmentName, typeEtablissement,
 //            siret, address, postalCode, city
 // ─────────────────────────────────────────────
-router.patch('/step3', requireAuth, async (req, res) => {
+router.patch('/step3', requireAuth, validate(step3Schema), async (req, res) => {
   const {
-    bio,
-    profession,
-    location,
-    country,
-    legalStatus,
-    organizerType,
-    establishmentName,
-    typeEtablissement,
-    siret,
-    address,
-    postalCode,
-    city,
+    bio, profession, location, country, legalStatus,
+    organizerType, establishmentName, typeEtablissement,
+    siret, address, postalCode, city,
   } = req.body;
-
-  const validLegalStatuses = ['INDIVIDUAL', 'AUTO_ENTREPRENEUR', 'COMPANY'];
-  if (legalStatus && !validLegalStatuses.includes(legalStatus)) {
-    return res.status(400).json({ error: 'Statut legal invalide' });
-  }
-
-  const validOrganizerTypes = ['INDIVIDUAL', 'PROFESSIONAL'];
-  if (organizerType && !validOrganizerTypes.includes(organizerType)) {
-    return res.status(400).json({ error: 'Type organisateur invalide' });
-  }
 
   try {
     const profileData = {};
@@ -205,47 +167,12 @@ router.patch('/step3', requireAuth, async (req, res) => {
 //            pseudo, firstName, lastName, dateOfBirth, phone, countryOfResidence,
 //            legalStatus, organizerType, establishmentName, typeEtablissement, siret, city
 // ─────────────────────────────────────────────
-router.post('/register-complete', async (req, res) => {
+router.post('/register-complete', validate(registerCompleteSchema), async (req, res) => {
   const {
-    // Étape 1
     email, password, role,
-    // Étape 2
     pseudo, firstName, lastName, dateOfBirth, phone, countryOfResidence,
-    // Étape 3
     legalStatus, organizerType, establishmentName, typeEtablissement, siret, city,
   } = req.body;
-
-  // Validations obligatoires
-  if (!email || !password || !role) {
-    return res.status(400).json({ error: 'Email, mot de passe et rôle sont requis' });
-  }
-  if (!pseudo || !firstName || !lastName) {
-    return res.status(400).json({ error: 'Pseudo, prénom et nom sont requis' });
-  }
-
-  const validRoles = ['ARTIST', 'ORGANIZER', 'PROVIDER'];
-  if (!validRoles.includes(role)) {
-    return res.status(400).json({ error: 'Rôle invalide' });
-  }
-
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!emailRegex.test(email)) {
-    return res.status(400).json({ error: 'Adresse email invalide' });
-  }
-
-  if (password.length < 8) {
-    return res.status(400).json({ error: 'Le mot de passe doit contenir au moins 8 caractères' });
-  }
-
-  const pseudoRegex = /^[a-zA-Z0-9_.\-]{3,30}$/;
-  if (!pseudoRegex.test(pseudo)) {
-    return res.status(400).json({ error: 'Pseudo invalide : 3-30 caractères, lettres/chiffres/tirets/underscores' });
-  }
-
-  const validLegalStatuses = ['INDIVIDUAL', 'AUTO_ENTREPRENEUR', 'COMPANY'];
-  if (legalStatus && !validLegalStatuses.includes(legalStatus)) {
-    return res.status(400).json({ error: 'Statut légal invalide' });
-  }
 
   try {
     // Vérifier email unique
@@ -327,12 +254,8 @@ router.post('/register-complete', async (req, res) => {
 // ─────────────────────────────────────────────
 // CONNEXION
 // ─────────────────────────────────────────────
-router.post('/login', async (req, res) => {
+router.post('/login', validate(loginSchema), async (req, res) => {
   const { email, password } = req.body;
-
-  if (!email || !password) {
-    return res.status(400).json({ error: 'Email et mot de passe requis' });
-  }
 
   try {
     const user = await prisma.user.findUnique({
@@ -424,12 +347,8 @@ router.get('/verify-email', async (req, res) => {
 });
 
 // Renvoi de l'email de verification
-router.post('/resend-verification', async (req, res) => {
+router.post('/resend-verification', validate(resendVerificationSchema), async (req, res) => {
   const { email } = req.body;
-
-  if (!email) {
-    return res.status(400).json({ error: 'Email requis' });
-  }
 
   try {
     const user = await prisma.user.findUnique({

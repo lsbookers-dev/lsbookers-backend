@@ -4,6 +4,8 @@ const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { requireAuth } = require('../middleware/auth');
+const { validate } = require('../middleware/validate');
+const { offerCreateSchema, offerUpdateSchema } = require('../schemas');
 
 /* ── Helpers ─────────────────────────────────────────────── */
 
@@ -55,12 +57,8 @@ function formatOffer(o) {
 }
 
 /* ── POST /api/offers — créer une offre (ORGANIZER) ─────── */
-router.post('/', requireAuth, async (req, res) => {
+router.post('/', requireAuth, validate(offerCreateSchema), async (req, res) => {
   const { title, description, type, specialty, date, location, country, radiusKm, fee, eventId } = req.body;
-
-  if (!title || !description || !type || !date || !location || !country) {
-    return res.status(400).json({ error: 'CHAMPS_OBLIGATOIRES_MANQUANTS' });
-  }
 
   try {
     if (req.user.role !== 'ORGANIZER') {
@@ -69,10 +67,6 @@ router.post('/', requireAuth, async (req, res) => {
 
     const profile = await prisma.profile.findUnique({ where: { userId: req.user.id } });
     if (!profile) return res.status(404).json({ error: 'PROFILE_INTROUVABLE' });
-
-    if (!['ARTIST', 'PROVIDER', 'ALL'].includes(type)) {
-      return res.status(400).json({ error: 'TYPE_INVALIDE' });
-    }
 
     const offerDate = new Date(date);
     if (isNaN(offerDate.getTime())) {
@@ -155,7 +149,7 @@ router.get('/:id', async (req, res) => {
 });
 
 /* ── PUT /api/offers/:id — modifier une offre ───────────── */
-router.put('/:id', requireAuth, async (req, res) => {
+router.put('/:id', requireAuth, validate(offerUpdateSchema), async (req, res) => {
   try {
     if (req.user.role !== 'ORGANIZER') return res.status(403).json({ error: 'ACCÈS_REFUSÉ' });
 

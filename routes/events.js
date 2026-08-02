@@ -3,6 +3,8 @@ const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { requireAuth } = require('../middleware/auth');
+const { validate } = require('../middleware/validate');
+const { eventCreateSchema, eventUpdateSchema } = require('../schemas');
 
 /* ══════════════════════════════════════════════
    ÉVÉNEMENTS
@@ -68,9 +70,8 @@ router.get('/all', requireAuth, async (req, res) => {
 });
 
 // POST /api/events — créer un événement
-router.post('/', requireAuth, async (req, res) => {
+router.post('/', requireAuth, validate(eventCreateSchema), async (req, res) => {
   const { title, description, start, end, allDay, lieu, category, isPrivate, budget, maxCapacity, status } = req.body;
-  if (!title || !start) return res.status(400).json({ error: 'Titre et date de début requis' });
   try {
     const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
     if (!profile) return res.status(404).json({ error: 'Profil introuvable' });
@@ -817,7 +818,7 @@ router.delete('/:id/documents/:docId', requireAuth, async (req, res) => {
 });
 
 // PUT /api/events/:id — modifier un événement
-router.put('/:id', requireAuth, async (req, res) => {
+router.put('/:id', requireAuth, validate(eventUpdateSchema), async (req, res) => {
   const { id } = req.params;
   const { title, description, start, end, allDay, lieu, category, isPrivate, budget, maxCapacity, status } = req.body;
   try {

@@ -4,6 +4,8 @@ const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { requireAuth } = require('../middleware/auth');
+const { validate } = require('../middleware/validate');
+const { reviewCreateSchema } = require('../schemas');
 
 /**
  * GET /api/reviews/profile/:profileId
@@ -41,18 +43,9 @@ router.get('/profile/:profileId', async (req, res) => {
  * POST /api/reviews
  * Privé : laisser un avis sur un profil
  */
-router.post('/', requireAuth, async (req, res) => {
+router.post('/', requireAuth, validate(reviewCreateSchema), async (req, res) => {
   const { targetId, rating, comment, eventId } = req.body;
   const userId = req.user.id;
-
-  if (!targetId || !rating) {
-    return res.status(400).json({ error: 'targetId et rating sont requis' });
-  }
-
-  const parsedRating = Number.parseInt(rating, 10);
-  if (parsedRating < 1 || parsedRating > 5) {
-    return res.status(400).json({ error: 'La note doit être entre 1 et 5' });
-  }
 
   try {
     // Récupérer le profil de l'auteur
@@ -64,10 +57,10 @@ router.post('/', requireAuth, async (req, res) => {
     const review = await prisma.review.create({
       data: {
         authorId: authorProfile.id,
-        targetId: Number.parseInt(targetId, 10),
-        rating: parsedRating,
+        targetId,
+        rating,
         comment: comment?.trim() || null,
-        eventId: eventId ? Number.parseInt(eventId, 10) : null,
+        eventId: eventId ?? null,
       },
     });
 

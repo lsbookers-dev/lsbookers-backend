@@ -4,20 +4,15 @@ const router  = express.Router()
 const { PrismaClient } = require('@prisma/client')
 const prisma = new PrismaClient()
 const { requireAuth, requireAdmin } = require('../middleware/auth')
+const { validate } = require('../middleware/validate')
+const { contactCreateSchema } = require('../schemas')
 
 /* ─────────────────────────────────────────────
  * PUBLIC — Envoyer un message de contact
  * POST /api/contact
  * ───────────────────────────────────────────── */
-router.post('/', async (req, res) => {
+router.post('/', validate(contactCreateSchema), async (req, res) => {
   const { name, email, subject, message } = req.body
-  if (!name?.trim() || !email?.trim() || !message?.trim()) {
-    return res.status(400).json({ error: 'Nom, email et message sont requis.' })
-  }
-  const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-  if (!emailRe.test(email)) {
-    return res.status(400).json({ error: 'Adresse email invalide.' })
-  }
   try {
     const msg = await prisma.contactMessage.create({
       data: {

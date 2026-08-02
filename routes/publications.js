@@ -3,6 +3,8 @@ const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { requireAuth } = require('../middleware/auth');
+const { validate } = require('../middleware/validate');
+const { publicationCreateSchema, commentCreateSchema } = require('../schemas');
 
 // GET /api/publications/profile/:profileId
 router.get('/profile/:profileId', async (req, res) => {
@@ -29,13 +31,9 @@ router.get('/profile/:profileId', async (req, res) => {
 });
 
 // POST /api/publications
-router.post('/', requireAuth, async (req, res) => {
+router.post('/', requireAuth, validate(publicationCreateSchema), async (req, res) => {
   const { title, media, mediaType, caption, profileId } = req.body;
   const parsedProfileId = parseInt(profileId, 10);
-
-  if (!title || !media || !parsedProfileId) {
-    return res.status(400).json({ error: 'Données manquantes' });
-  }
 
   try {
     // Vérifie que le profil existe
@@ -142,14 +140,11 @@ router.get('/:id/comments', async (req, res) => {
 })
 
 // POST /api/publications/:id/comments — ajouter un commentaire
-router.post('/:id/comments', requireAuth, async (req, res) => {
+router.post('/:id/comments', requireAuth, validate(commentCreateSchema), async (req, res) => {
   const id = parseInt(req.params.id, 10)
   if (isNaN(id)) return res.status(400).json({ error: 'ID invalide' })
 
   const { content } = req.body
-  if (!content || !String(content).trim()) {
-    return res.status(400).json({ error: 'Contenu requis' })
-  }
 
   try {
     const profile = await prisma.profile.findUnique({ where: { userId: req.user.id } })

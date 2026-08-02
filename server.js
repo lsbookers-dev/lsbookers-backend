@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 const cookieParser = require('cookie-parser');
@@ -33,6 +34,11 @@ const app = express();
 app.set('trust proxy', 1);
 
 /* ===================== Middlewares globaux ===================== */
+
+// Helmet — sécurité des headers HTTP (XSS, clickjacking, MIME sniffing, etc.)
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' }, // autorise les images Cloudinary
+}));
 
 // CORS — autorise uniquement lsbookers.com et localhost en développement
 const allowedOrigins = [
