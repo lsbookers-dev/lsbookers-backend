@@ -6,12 +6,25 @@ const prisma = new PrismaClient()
 const { requireAuth, requireAdmin } = require('../middleware/auth')
 const { validate } = require('../middleware/validate')
 const { contactCreateSchema } = require('../schemas')
+const rateLimit = require('express-rate-limit')
+
+/* ─────────────────────────────────────────────
+ * Rate limiter — formulaire de contact public
+ * Max 5 messages par IP par heure (anti-spam)
+ * ───────────────────────────────────────────── */
+const contactLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Trop de messages envoyés, réessayez dans 1 heure.' },
+})
 
 /* ─────────────────────────────────────────────
  * PUBLIC — Envoyer un message de contact
  * POST /api/contact
  * ───────────────────────────────────────────── */
-router.post('/', validate(contactCreateSchema), async (req, res) => {
+router.post('/', contactLimiter, validate(contactCreateSchema), async (req, res) => {
   const { name, email, subject, message } = req.body
   try {
     const msg = await prisma.contactMessage.create({
