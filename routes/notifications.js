@@ -85,6 +85,25 @@ router.patch('/:id', requireAuth, async (req, res) => {
 });
 
 /* =========================================================
+   PATCH /api/notifications/mark-all-read
+   ➜ Marquer toutes les notifications comme lues
+========================================================= */
+router.patch('/mark-all-read', requireAuth, async (req, res) => {
+  try {
+    const userId = Number(req.user?.id)
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' })
+    await prisma.notification.updateMany({
+      where: { userId, read: false },
+      data: { read: true },
+    })
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('❌ [PATCH /notifications/mark-all-read] Error:', err)
+    res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
+/* =========================================================
    GET /api/notifications/unread-count
    ➜ Nombre de notifications non lues
 ========================================================= */
