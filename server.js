@@ -18,7 +18,10 @@ const searchRoutes = require('./routes/search');
 const usersRoutes = require('./routes/users');
 const adminRoutes = require('./routes/admin');
 const adminSettingsRoutes = require('./routes/adminSettings'); // paramètres du site
-const eventRoutes = require('./routes/events');
+const eventRoutes         = require('./routes/events');
+const eventBookingRoutes  = require('./routes/event-bookings');
+const eventStaffRoutes    = require('./routes/event-staff');
+const eventDocumentRoutes = require('./routes/event-documents');
 const uploadRoutes = require('./routes/upload');
 const publicationRoutes = require('./routes/publications');
 const offersRoutes = require('./routes/offers'); // offres
@@ -121,6 +124,9 @@ app.use('/api/admin/settings', adminSettingsRoutes);
 app.use('/api/admin', adminRoutes);
 
 app.use('/api/events', eventRoutes);
+app.use('/api/events', eventBookingRoutes);
+app.use('/api/events', eventStaffRoutes);
+app.use('/api/events', eventDocumentRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/publications', publicationRoutes);
 app.use('/api/offers', offersRoutes);
