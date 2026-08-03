@@ -55,17 +55,43 @@ router.get('/user/:userId', async (req, res) => {
   }
 
   try {
+    // SELECT explicite — seuls les champs publics sont renvoyés
+    // Les champs confidentiels (siret, address, postalCode, city, legalStatus,
+    // organizerType, establishmentName, notificationPreferences, user.email)
+    // sont volontairement exclus.
     const profile = await prisma.profile.findUnique({
       where: { userId },
-      include: {
+      select: {
+        id: true,
+        userId: true,
+        bio: true,
+        location: true,
+        country: true,
+        avatar: true,
+        banner: true,
+        profession: true,
+        specialties: true,
+        styles: true,
+        availableForBooking: true,
+        showRealName: true,
+        soundcloudUrl: true,
+        youtubeUrl: true,
+        showSoundcloud: true,
+        latitude: true,
+        longitude: true,
+        radiusKm: true,
+        typeEtablissement: true,
         user: {
           select: {
-            id: true, pseudo: true, firstName: true, lastName: true,
-            email: true, role: true,
+            id: true,
+            pseudo: true,
+            firstName: true,
+            lastName: true,
+            role: true,
+            // email intentionnellement exclu (donnée privée)
             _count: { select: { followers: true, following: true } },
           },
         },
-        notificationPreferences: true,
         _count: { select: { reviewsReceived: true } },
       },
     });

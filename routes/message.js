@@ -8,10 +8,40 @@ const { conversationCreateSchema } = require('../schemas')
 const multer = require('multer')
 const { put } = require('@vercel/blob')
 
-/* ─── Multer mémoire (pas de fichier sur disque) ─── */
+/* ─── Whitelist MIME pour les fichiers messages ─── */
+const MSG_ALLOWED_MIME = new Set([
+  'image/jpeg', 'image/png', 'image/webp', 'image/gif',
+  'video/mp4', 'video/quicktime', 'video/webm',
+  'application/pdf',
+  'audio/mpeg', 'audio/wav', 'audio/ogg',
+])
+
+const msgFileFilter = (req, file, cb) => {
+  if (MSG_ALLOWED_MIME.has(file.mimetype)) return cb(null, true)
+  return cb(new multer.MulterError('LIMIT_UNEXPECTED_FILE', 'FORMAT_NOT_ALLOWED'))
+}
+
+/* ─── Vérification magic bytes pour les images (anti-spoofing) ─── */
+function isMsgImageValid(buf, mimetype) {
+  if (!mimetype.startsWith('image/')) return true // vidéos/pdf/audio : on fait confiance au fileFilter
+  if (buf.length < 12) return false
+  if (mimetype === 'image/jpeg')
+    return buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF
+  if (mimetype === 'image/png')
+    return buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47
+  if (mimetype === 'image/gif')
+    return buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46
+  if (mimetype === 'image/webp')
+    return buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
+           buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50
+  return false
+}
+
+/* ─── Multer mémoire sécurisé ─── */
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 100 * 1024 * 1024 }, // 100 Mo max
+  fileFilter: msgFileFilter,
+  limits: { fileSize: 25 * 1024 * 1024 }, // 25 Mo max
 })
 
 /* ─── Helpers ─────────────────────────────────────── */
@@ -404,7 +434,17 @@ router.post('/send', requireAuth, validate(conversationCreateSchema), async (req
 /* =========================================================
    POST /api/messages/send-file  — texte + fichier (Cloudinary)
 ========================================================= */
-router.post('/send-file', requireAuth, upload.single('file'), async (req, res) => {
+router.post('/send-file', requireAuth, (req, res) => {
+  upload.single('file')(req, res, async (err) => {
+  if (err instanceof multer.MulterError) {
+    if (err.code === 'LIMIT_FILE_SIZE')
+      return res.status(413).json({ error: 'FILE_TOO_LARGE', max: '25MB' })
+    if (err.code === 'LIMIT_UNEXPECTED_FILE')
+      return res.status(400).json({ error: 'FORMAT_NOT_ALLOWED' })
+    return res.status(400).json({ error: 'UPLOAD_ERROR', code: err.code })
+  }
+  if (err) return res.status(500).json({ error: 'Erreur serveur upload' })
+
   try {
     const senderId = Number(req.user?.id)
     if (!senderId) return res.status(401).json({ error: 'Unauthorized' })
@@ -426,6 +466,11 @@ router.post('/send-file', requireAuth, upload.single('file'), async (req, res) =
     let attachmentMimeType = null
 
     if (file) {
+      // Vérification magic bytes pour les images
+      if (!isMsgImageValid(file.buffer, file.mimetype)) {
+        return res.status(400).json({ error: 'FORMAT_NOT_ALLOWED' })
+      }
+
       try {
         const result = await uploadBufferToBlob(
           file.buffer,
@@ -482,7 +527,8 @@ router.post('/send-file', requireAuth, upload.single('file'), async (req, res) =
     console.error('❌ [POST /send-file]', err)
     return res.status(500).json({ error: 'Erreur serveur' })
   }
-})
+  }) // fin du callback upload.single
+}) // fin de router.post /send-file
 
 /* =========================================================
    POST /api/messages/mark-seen/:conversationId
