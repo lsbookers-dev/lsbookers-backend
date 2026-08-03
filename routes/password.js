@@ -5,6 +5,8 @@ const prisma = new PrismaClient();
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
 const { sendPasswordResetEmail } = require('../utils/email');
+const { validate } = require('../middleware/validate');
+const { forgotPasswordSchema, resetPasswordSchema } = require('../schemas');
 
 function sha256Hex(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
@@ -13,13 +15,9 @@ function sha256Hex(value) {
 // ─────────────────────────────────────────────
 // ROUTE: /api/auth/forgot-password
 // ─────────────────────────────────────────────
-router.post('/forgot-password', async (req, res) => {
-  const { email } = req.body || {};
+router.post('/forgot-password', validate(forgotPasswordSchema), async (req, res) => {
+  const { email } = req.body;
   const generic = { message: 'Si un compte existe, un email sera envoye.' };
-
-  if (!email || typeof email !== 'string') {
-    return res.status(200).json(generic);
-  }
 
   try {
     const user = await prisma.user.findUnique({ where: { email: email.toLowerCase().trim() } });
@@ -58,12 +56,8 @@ router.post('/forgot-password', async (req, res) => {
 // ─────────────────────────────────────────────
 // ROUTE: /api/auth/reset-password
 // ─────────────────────────────────────────────
-router.post('/reset-password', async (req, res) => {
-  const { token, password } = req.body || {};
-
-  if (!token || !password || typeof password !== 'string' || password.length < 8) {
-    return res.status(400).json({ error: 'Donnees invalides.' });
-  }
+router.post('/reset-password', validate(resetPasswordSchema), async (req, res) => {
+  const { token, password } = req.body;
 
   try {
     const tokenHash = sha256Hex(token);

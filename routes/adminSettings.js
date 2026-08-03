@@ -7,6 +7,8 @@ const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { requireAuth } = require('../middleware/auth');
+const { validate } = require('../middleware/validate');
+const { adminSettingsUpdateSchema } = require('../schemas');
 
 /** Vérifie ADMIN */
 function requireAdmin(req, res, next) {
@@ -55,16 +57,16 @@ router.get('/', async (_req, res) => {
  * body: { welcomeText?, landingBgUrl?, loginBgUrl?, registerBgUrl?, headerLogoUrl?, ... }
  * Seuls les champs envoyés sont mis à jour (merge partiel)
  * ======================================== */
-router.put('/', requireAuth, requireAdmin, async (req, res) => {
+router.put('/', requireAuth, requireAdmin, validate(adminSettingsUpdateSchema), async (req, res) => {
   try {
-    // On ne met à jour que les champs qui sont réellement envoyés (string)
+    // Zod a déjà validé et nettoyé req.body — on ne garde que les champs présents
     const data = {};
     const fields = [
       'welcomeText', 'landingBgUrl', 'loginBgUrl', 'registerBgUrl',
       'headerLogoUrl', 'mainColor', 'secondaryColor', 'bannerUrl', 'logoUrl',
     ];
     for (const field of fields) {
-      if (typeof req.body?.[field] === 'string') {
+      if (req.body[field] !== undefined) {
         data[field] = req.body[field];
       }
     }

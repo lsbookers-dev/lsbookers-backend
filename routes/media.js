@@ -4,6 +4,8 @@ const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { requireAuth } = require('../middleware/auth');
+const { validate } = require('../middleware/validate');
+const { mediaCreateSchema } = require('../schemas');
 
 /**
  * MODELE PRISMA ATTENDU (à titre indicatif) :
@@ -57,25 +59,19 @@ router.get('/user/:userId', async (req, res) => {
  * Créer une publication (auth requise)
  * Body: { title: string, url: string, caption?: string }
  * ============================================ */
-router.post('/', requireAuth, async (req, res) => {
+router.post('/', requireAuth, validate(mediaCreateSchema), async (req, res) => {
   try {
     const userId = Number(req.user?.id);
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
     const { title, url, caption } = req.body;
-    if (!title || !String(title).trim()) {
-      return res.status(400).json({ error: 'title requis' });
-    }
-    if (!url || !String(url).trim()) {
-      return res.status(400).json({ error: 'url requis' });
-    }
 
     const created = await prisma.media.create({
       data: {
         userId,
-        title: String(title),
-        url: String(url),
-        caption: caption ? String(caption) : null,
+        title,
+        url,
+        caption: caption ?? null,
       },
       select: { id: true, title: true, url: true, caption: true, createdAt: true },
     });

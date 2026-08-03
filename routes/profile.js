@@ -4,6 +4,8 @@ const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { requireAuth } = require('../middleware/auth');
+const { validate } = require('../middleware/validate');
+const { profileUpdateSchema } = require('../schemas');
 
 // Import fetch (CommonJS compatible)
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
@@ -175,7 +177,7 @@ router.get('/:id', requireAuth, async (req, res) => {
  * NOTE : on accepte avatar/banner ET avatarUrl/bannerUrl (alias).
  * Version V1 robuste, compatible avec le frontend actuel.
  */
-router.put('/:id', requireAuth, async (req, res) => {
+router.put('/:id', requireAuth, validate(profileUpdateSchema), async (req, res) => {
   const raw = req.params.id;
   const id = Number.parseInt(raw, 10);
   const userId = req.user.id;

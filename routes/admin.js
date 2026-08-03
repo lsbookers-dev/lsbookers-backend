@@ -4,6 +4,8 @@ const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { validate } = require('../middleware/validate');
+const { adminRoleUpdateSchema } = require('../schemas');
 
 /* =========================================================
  *  STATS — Récapitulatif
@@ -230,15 +232,11 @@ router.get('/users/:id', requireAuth, requireAdmin, async (req, res) => {
  *  USERS — changer le rôle
  *  PATCH /api/admin/users/:id/role
  * =======================================================*/
-router.patch('/users/:id/role', requireAuth, requireAdmin, async (req, res) => {
+router.patch('/users/:id/role', requireAuth, requireAdmin, validate(adminRoleUpdateSchema), async (req, res) => {
   const id = parseInt(String(req.params.id || ''), 10);
   if (!Number.isFinite(id)) return res.status(400).json({ error: 'ID invalide' });
 
   const { role } = req.body;
-  const ALLOWED = ['ARTIST', 'ORGANIZER', 'PROVIDER'];
-  if (!ALLOWED.includes(role)) {
-    return res.status(400).json({ error: 'Rôle invalide. Valeurs acceptées : ARTIST, ORGANIZER, PROVIDER' });
-  }
 
   try {
     const user = await prisma.user.findUnique({ where: { id }, select: { role: true } });

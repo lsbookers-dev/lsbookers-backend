@@ -67,18 +67,26 @@ const resendVerificationSchema = z.object({
 ───────────────────────────────────────── */
 
 const profileUpdateSchema = z.object({
-  bio:                z.string().max(600, 'Bio trop longue').trim().transform(stripHtml).optional(),
-  location:           z.string().max(100).trim().transform(stripHtml).optional(),
-  country:            z.string().max(100).trim().transform(stripHtml).optional(),
-  radiusKm:           z.number().int().min(0).max(5000).optional(),
-  specialties:        z.array(z.string().max(100).transform(stripHtml)).max(20).optional(),
-  styles:             z.array(z.string().max(100).transform(stripHtml)).max(30).optional(),
-  soundcloudUrl:      z.string().url('URL SoundCloud invalide').optional().or(z.literal('')),
-  youtubeUrl:         z.string().url('URL YouTube invalide').optional().or(z.literal('')),
-  showSoundcloud:     z.boolean().optional(),
-  availableForBooking:z.boolean().optional(),
-  showRealName:       z.boolean().optional(),
-  profession:         z.string().max(100).trim().transform(stripHtml).optional(),
+  bio:                     z.string().max(600, 'Bio trop longue').trim().transform(stripHtml).optional().nullable(),
+  location:                z.string().max(100).trim().transform(stripHtml).optional().nullable(),
+  country:                 z.string().max(100).trim().transform(stripHtml).optional().nullable(),
+  profession:              z.string().max(100).trim().transform(stripHtml).optional().nullable(),
+  typeEtablissement:       z.string().max(100).trim().transform(stripHtml).optional().nullable(),
+  radiusKm:                z.number().int().min(0).max(5000).optional().nullable(),
+  latitude:                z.number().min(-90).max(90).optional().nullable(),
+  longitude:               z.number().min(-180).max(180).optional().nullable(),
+  specialties:             z.array(z.string().max(100).transform(stripHtml)).max(20).optional(),
+  styles:                  z.array(z.string().max(100).transform(stripHtml)).max(30).optional(),
+  avatar:                  z.string().max(2000).optional().nullable(),
+  banner:                  z.string().max(2000).optional().nullable(),
+  avatarUrl:               z.string().max(2000).optional().nullable(),
+  bannerUrl:               z.string().max(2000).optional().nullable(),
+  soundcloudUrl:           z.string().url('URL SoundCloud invalide').optional().nullable().or(z.literal('')),
+  youtubeUrl:              z.string().url('URL YouTube invalide').optional().nullable().or(z.literal('')),
+  showSoundcloud:          z.boolean().optional(),
+  availableForBooking:     z.boolean().optional(),
+  showRealName:            z.boolean().optional(),
+  notificationPreferences: z.record(z.string(), z.boolean()).optional(),
 });
 
 /* ─────────────────────────────────────────
@@ -166,6 +174,49 @@ const reviewCreateSchema = z.object({
 });
 
 /* ─────────────────────────────────────────
+   PASSWORD
+───────────────────────────────────────── */
+
+const forgotPasswordSchema = z.object({
+  email: z.string().email('Adresse email invalide').toLowerCase().trim(),
+});
+
+const resetPasswordSchema = z.object({
+  token:    z.string().min(1, 'Token requis'),
+  password: z.string().min(8, 'Le mot de passe doit contenir au moins 8 caractères'),
+});
+
+/* ─────────────────────────────────────────
+   MEDIA
+───────────────────────────────────────── */
+
+const mediaCreateSchema = z.object({
+  title:   z.string().min(1, 'Titre requis').max(200).trim().transform(stripHtml),
+  url:     z.string().min(1, 'URL requise').max(2000).trim(),
+  caption: z.string().max(500).trim().transform(stripHtml).optional().nullable(),
+});
+
+/* ─────────────────────────────────────────
+   ADMIN
+───────────────────────────────────────── */
+
+const adminRoleUpdateSchema = z.object({
+  role: z.enum(['ARTIST', 'ORGANIZER', 'PROVIDER'], { message: 'Rôle invalide. Valeurs acceptées : ARTIST, ORGANIZER, PROVIDER' }),
+});
+
+const adminSettingsUpdateSchema = z.object({
+  welcomeText:     z.string().max(500).trim().transform(stripHtml).optional(),
+  landingBgUrl:    z.string().max(2000).trim().optional(),
+  loginBgUrl:      z.string().max(2000).trim().optional(),
+  registerBgUrl:   z.string().max(2000).trim().optional(),
+  headerLogoUrl:   z.string().max(2000).trim().optional(),
+  mainColor:       z.string().max(20).trim().optional(),
+  secondaryColor:  z.string().max(20).trim().optional(),
+  bannerUrl:       z.string().max(2000).trim().optional(),
+  logoUrl:         z.string().max(2000).trim().optional(),
+});
+
+/* ─────────────────────────────────────────
    CONTACT
 ───────────────────────────────────────── */
 
@@ -204,6 +255,14 @@ module.exports = {
   conversationCreateSchema,
   // Reviews
   reviewCreateSchema,
+  // Password
+  forgotPasswordSchema,
+  resetPasswordSchema,
+  // Media
+  mediaCreateSchema,
+  // Admin
+  adminRoleUpdateSchema,
+  adminSettingsUpdateSchema,
   // Contact
   contactCreateSchema,
 };
