@@ -17,8 +17,9 @@ router.get('/', requireAuth, async (req, res) => {
       include: {
         actor: {
           select: {
-            id: true,
-            name: true,
+            id:     true,
+            name:   true,
+            role:   true,
             profile: { select: { avatar: true } },
           },
         },
@@ -39,8 +40,9 @@ router.get('/', requireAuth, async (req, res) => {
       createdAt: n.createdAt,
       actor: n.actor
         ? {
-            id: n.actor.id,
-            name: n.actor.name,
+            id:     n.actor.id,
+            name:   n.actor.name,
+            role:   n.actor.role || null,
             avatar: n.actor.profile?.avatar || null,
           }
         : null,

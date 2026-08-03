@@ -5,6 +5,7 @@ const prisma = require('../prisma/client');
 const { requireAuth } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const { offerCreateSchema, offerUpdateSchema } = require('../schemas');
+const { createNotif, displayName } = require('../services/notifications');
 
 /* ── Helpers ─────────────────────────────────────────────── */
 
@@ -92,6 +93,39 @@ router.post('/', requireAuth, validate(offerCreateSchema), async (req, res) => {
       },
       include: offerInclude,
     });
+
+    // ── Notification NEW_OFFER aux abonnés artistes/prestataires concernés ──
+    try {
+      const organizer = await prisma.user.findUnique({
+        where: { id: req.user.id },
+        select: { pseudo: true, firstName: true, lastName: true },
+      })
+      const orgName = displayName(organizer)
+
+      // Rôles qui peuvent être ciblés par cette offre
+      const targetRoles = offer.type === 'ALL'
+        ? ['ARTIST', 'PROVIDER']
+        : offer.type === 'ARTIST' ? ['ARTIST'] : ['PROVIDER']
+
+      // Récupère les abonnés qui correspondent au rôle ciblé
+      const followers = await prisma.follow.findMany({
+        where: { followingId: req.user.id },
+        include: { follower: { select: { id: true, role: true } } },
+      })
+
+      const relevant = followers.filter(f => targetRoles.includes(f.follower?.role))
+      for (const f of relevant) {
+        await createNotif({
+          userId:  f.follower.id,
+          type:    'NEW_OFFER',
+          content: `${orgName} a publié une nouvelle offre : "${offer.title}".`,
+          actorId: req.user.id,
+          offerId: offer.id,
+        })
+      }
+    } catch (notifErr) {
+      console.error('❌ POST /offers — erreur notifs abonnés :', notifErr.message)
+    }
 
     return res.status(201).json(formatOffer(offer));
   } catch (err) {

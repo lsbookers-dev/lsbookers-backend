@@ -6,6 +6,7 @@ const { validate } = require('../middleware/validate')
 const { conversationCreateSchema } = require('../schemas')
 const multer = require('multer')
 const { put } = require('@vercel/blob')
+const { createNotif, displayName } = require('../services/notifications')
 
 /* ─── Whitelist MIME pour les fichiers messages ─── */
 const MSG_ALLOWED_MIME = new Set([
@@ -503,6 +504,22 @@ router.post('/send-file', requireAuth, (req, res) => {
       where: { id: Number(conversationId) },
       data: { updatedAt: new Date() },
     })
+
+    // ── Notification NEW_MESSAGE pour chaque autre participant ──────────────
+    const senderName = displayName(message.sender)
+    const otherParticipants = await prisma.conversationParticipant.findMany({
+      where: { conversationId: Number(conversationId), NOT: { userId: senderId } },
+      select: { userId: true },
+    })
+    for (const p of otherParticipants) {
+      await createNotif({
+        userId:    p.userId,
+        type:      'NEW_MESSAGE',
+        content:   `${senderName} vous a envoyé un message.`,
+        actorId:   senderId,
+        messageId: message.id,
+      })
+    }
 
     return res.json({
       conversationId: Number(conversationId),

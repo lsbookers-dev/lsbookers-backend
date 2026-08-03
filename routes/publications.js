@@ -4,6 +4,7 @@ const prisma = require('../prisma/client');
 const { requireAuth } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const { publicationCreateSchema, commentCreateSchema } = require('../schemas');
+const { createNotif, displayName } = require('../services/notifications');
 
 // GET /api/publications/profile/:profileId
 router.get('/profile/:profileId', async (req, res) => {
@@ -166,6 +167,21 @@ router.post('/:id/comments', requireAuth, validate(commentCreateSchema), async (
       },
     })
 
+    // Notification NEW_COMMENT au propriétaire de la publication
+    const pub = await prisma.publication.findUnique({
+      where: { id },
+      include: { profile: { select: { userId: true } } },
+    })
+    if (pub?.profile?.userId) {
+      const commenterName = displayName(comment.profile?.user)
+      await createNotif({
+        userId:  pub.profile.userId,
+        type:    'NEW_COMMENT',
+        content: `${commenterName} a commenté votre publication.`,
+        actorId: req.user.id,
+      })
+    }
+
     return res.status(201).json(comment)
   } catch (err) {
     console.error('❌ Erreur ajout commentaire :', err)
@@ -214,6 +230,23 @@ router.post('/:id/like', requireAuth, async (req, res) => {
       await prisma.publicationLike.create({
         data: { publicationId: id, profileId: profile.id },
       })
+      // Notification NEW_LIKE — seulement au like, pas au unlike
+      const pub = await prisma.publication.findUnique({
+        where: { id },
+        include: { profile: { select: { userId: true } } },
+      })
+      if (pub?.profile?.userId) {
+        const liker = await prisma.user.findUnique({
+          where: { id: req.user.id },
+          select: { pseudo: true, firstName: true, lastName: true },
+        })
+        await createNotif({
+          userId:  pub.profile.userId,
+          type:    'NEW_LIKE',
+          content: `${displayName(liker)} a aimé votre publication.`,
+          actorId: req.user.id,
+        })
+      }
     }
 
     const count = await prisma.publicationLike.count({ where: { publicationId: id } })

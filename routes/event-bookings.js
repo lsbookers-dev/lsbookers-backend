@@ -5,6 +5,7 @@ const express = require('express');
 const router = express.Router();
 const prisma = require('../prisma/client');
 const { requireAuth } = require('../middleware/auth');
+const { createNotif, displayName } = require('../services/notifications');
 
 // POST /api/events/booking-request — envoyer une demande de booking
 router.post('/booking-request', requireAuth, async (req, res) => {
@@ -72,17 +73,19 @@ router.post('/booking-request', requireAuth, async (req, res) => {
 
     await prisma.conversation.update({ where: { id: conversation.id }, data: { updatedAt: new Date() } });
 
-    // 4. Notification pour la cible
-    const senderName = requesterProfile.user?.pseudo ||
-      [requesterProfile.user?.firstName, requesterProfile.user?.lastName].filter(Boolean).join(' ') || 'Utilisateur';
-    await prisma.notification.create({
-      data: {
-        userId:  targetProfile.userId,
-        type:    'BOOKING_REQUEST',
-        content: `Nouvelle demande de booking du ${dateLabel} de ${senderName}.`,
-        actorId: req.user.id,
-      },
-    }).catch(() => {});
+    // 4. Notification pour la cible (avec lien vers la conversation)
+    const senderName = displayName(requesterProfile.user);
+    const linkedMessage = await prisma.message.findFirst({
+      where: { bookingRequestId: bookingRequest.id, type: 'BOOKING_REQUEST' },
+      select: { id: true },
+    });
+    await createNotif({
+      userId:    targetProfile.userId,
+      type:      'BOOKING_REQUEST',
+      content:   `Nouvelle demande de booking du ${dateLabel} de ${senderName}.`,
+      actorId:   req.user.id,
+      messageId: linkedMessage?.id,
+    });
 
     res.status(201).json({ request: bookingRequest, conversationId: conversation.id });
   } catch (err) {
@@ -154,6 +157,13 @@ router.patch('/booking-request/:id', requireAuth, async (req, res) => {
     const requesterName = br.requester.user?.pseudo || [br.requester.user?.firstName, br.requester.user?.lastName].filter(Boolean).join(' ') || 'Organisateur';
     const dateLabel     = new Date(br.startDate).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
 
+    // Retrouver le message BOOKING_REQUEST pour lier la notification à la conversation
+    const linkedMsg = await prisma.message.findFirst({
+      where: { bookingRequestId: br.id, type: 'BOOKING_REQUEST' },
+      select: { id: true },
+    });
+    const linkedMsgId = linkedMsg?.id;
+
     if (status === 'ACCEPTED') {
       const bookingDay = new Date(br.startDate);
       bookingDay.setUTCHours(0, 0, 0, 0);
@@ -197,21 +207,33 @@ router.patch('/booking-request/:id', requireAuth, async (req, res) => {
         await prisma.bookingRequest.update({ where: { id: br.id }, data: { eventId } }).catch(() => {});
       }
 
-      await prisma.notification.create({
-        data: { userId: br.requester.userId, type: 'BOOKING_ACCEPTED', content: `Votre demande de booking du ${dateLabel} a été acceptée par ${targetName}.`, actorId: br.target.userId },
-      }).catch(() => {});
+      await createNotif({
+        userId:    br.requester.userId,
+        type:      'BOOKING_ACCEPTED',
+        content:   `Votre demande de booking du ${dateLabel} a été acceptée par ${targetName}.`,
+        actorId:   br.target.userId,
+        messageId: linkedMsgId,
+      });
     }
 
     if (status === 'DECLINED') {
-      await prisma.notification.create({
-        data: { userId: br.requester.userId, type: 'BOOKING_DECLINED', content: `Votre demande de booking du ${dateLabel} a été refusée par ${targetName}.`, actorId: br.target.userId },
-      }).catch(() => {});
+      await createNotif({
+        userId:    br.requester.userId,
+        type:      'BOOKING_DECLINED',
+        content:   `Votre demande de booking du ${dateLabel} a été refusée par ${targetName}.`,
+        actorId:   br.target.userId,
+        messageId: linkedMsgId,
+      });
     }
 
     if (status === 'CANCELLED') {
-      await prisma.notification.create({
-        data: { userId: br.target.userId, type: 'BOOKING_CANCELLED', content: `La demande de booking du ${dateLabel} a été annulée par ${requesterName}.`, actorId: br.requester.userId },
-      }).catch(() => {});
+      await createNotif({
+        userId:    br.target.userId,
+        type:      'BOOKING_CANCELLED',
+        content:   `La demande de booking du ${dateLabel} a été annulée par ${requesterName}.`,
+        actorId:   br.requester.userId,
+        messageId: linkedMsgId,
+      });
     }
 
     res.json({ request: updated });
@@ -279,9 +301,17 @@ router.post('/booking-request/:id/cancel-request', requireAuth, async (req, res)
     await prisma.conversation.update({ where: { id: linkedMsg.conversationId }, data: { updatedAt: new Date() } });
 
     const otherUserId = profile.id === br.requesterId ? br.target.userId : br.requester.userId;
-    await prisma.notification.create({
-      data: { userId: otherUserId, type: 'BOOKING_CANCELLATION_REQUEST', content: `${senderName} demande l'annulation du booking du ${dateLabel}.`, actorId: req.user.id },
-    }).catch(() => {});
+    const cancelLinkedMsg = await prisma.message.findFirst({
+      where: { bookingRequestId: br.id, type: 'BOOKING_REQUEST' },
+      select: { id: true },
+    });
+    await createNotif({
+      userId:    otherUserId,
+      type:      'CANCELLATION_REQUEST',
+      content:   `${senderName} demande l'annulation du booking du ${dateLabel}.`,
+      actorId:   req.user.id,
+      messageId: cancelLinkedMsg?.id,
+    });
 
     res.json({ request: updated });
   } catch (err) {
@@ -320,9 +350,13 @@ router.post('/booking-request/:id/cancel-response', requireAuth, async (req, res
         where: { id: br.id },
         data: { status: 'CANCELLED', cancellationRequestedBy: null, cancellationNote: null },
       });
-      await prisma.notification.create({
-        data: { userId: cancelerUserId, type: 'BOOKING_CANCELLED', content: `L'annulation du booking du ${dateLabel} a été confirmée.`, actorId: req.user.id },
-      }).catch(() => {});
+      await createNotif({
+        userId:    cancelerUserId,
+        type:      'CANCELLATION_ACCEPTED',
+        content:   `L'annulation du booking du ${dateLabel} a été confirmée.`,
+        actorId:   req.user.id,
+        messageId: linkedMsg?.id,
+      });
       if (linkedMsg) {
         await prisma.message.create({
           data: { content: `✅ Annulation du booking du ${dateLabel} confirmée.`, senderId: req.user.id, conversationId: linkedMsg.conversationId, type: 'TEXT', bookingRequestId: br.id },
@@ -335,9 +369,13 @@ router.post('/booking-request/:id/cancel-response', requireAuth, async (req, res
         where: { id: br.id },
         data: { cancellationRequestedBy: null, cancellationNote: null },
       });
-      await prisma.notification.create({
-        data: { userId: cancelerUserId, type: 'BOOKING_CANCELLATION_DENIED', content: `L'annulation du booking du ${dateLabel} a été refusée.`, actorId: req.user.id },
-      }).catch(() => {});
+      await createNotif({
+        userId:    cancelerUserId,
+        type:      'CANCELLATION_DECLINED',
+        content:   `L'annulation du booking du ${dateLabel} a été refusée.`,
+        actorId:   req.user.id,
+        messageId: linkedMsg?.id,
+      });
       if (linkedMsg) {
         await prisma.message.create({
           data: { content: `❌ Demande d'annulation du booking du ${dateLabel} refusée.`, senderId: req.user.id, conversationId: linkedMsg.conversationId, type: 'TEXT', bookingRequestId: br.id },

@@ -2,6 +2,7 @@ const express = require('express')
 const router = express.Router()
 const prisma = require('../prisma/client')
 const { requireAuth } = require('../middleware/auth')
+const { createNotif, displayName } = require('../services/notifications')
 
 /* =========================================================
  *  POST /api/follow/:id  — Suivre un utilisateur
@@ -39,20 +40,14 @@ router.post('/:id', requireAuth, async (req, res) => {
       where: { id: followerId },
       select: { pseudo: true, firstName: true, lastName: true },
     })
-    const followerName =
-      follower?.pseudo ||
-      [follower?.firstName, follower?.lastName].filter(Boolean).join(' ') ||
-      'Quelqu\'un'
+    const followerName = displayName(follower)
 
-    await prisma.notification.create({
-      data: {
-        userId: followedId,
-        actorId: followerId,
-        type: 'NEW_FOLLOWER',
-        message: `${followerName} vous suit maintenant.`,
-        read: false,
-      },
-    }).catch(() => { /* ignore si actorId n'existe pas dans le schéma */ })
+    await createNotif({
+      userId:  followedId,
+      actorId: followerId,
+      type:    'NEW_FOLLOW',
+      content: `${followerName} vous suit maintenant.`,
+    })
 
     return res.json({ ok: true, follow })
   } catch (error) {
