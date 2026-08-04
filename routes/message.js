@@ -60,6 +60,7 @@ function pickUserPublic(u) {
     lastName: u.lastName || null,
     role: u.role,
     profile: u.profile ? { avatar: u.profile.avatar || null } : null,
+    profileId: u.profile?.id || null,
   }
 }
 
