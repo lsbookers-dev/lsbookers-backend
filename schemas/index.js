@@ -97,7 +97,7 @@ const offerCreateSchema = z.object({
   title:       z.string().min(2, 'Titre trop court').max(150, 'Titre trop long').trim().transform(stripHtml),
   description: z.string().min(10, 'Description trop courte').max(2000, 'Description trop longue').trim().transform(stripHtml),
   type:        z.enum(['ARTIST', 'PROVIDER', 'ALL'], { message: 'Type invalide' }),
-  specialty:   z.string().max(100).trim().transform(stripHtml).optional(),
+  specialty:   z.string().max(100).trim().transform(stripHtml).optional().nullable(),
   date:        z.string().min(1, 'Date requise'),
   location:    z.string().min(1, 'Ville requise').max(100).trim().transform(stripHtml),
   country:     z.string().min(1, 'Pays requis').max(100).trim().transform(stripHtml),
