@@ -27,26 +27,28 @@ const organizerSelect = {
 // Include réutilisable — on inclut event { id } pour récupérer eventId
 // même si le client Prisma ne connaît pas encore le champ scalaire eventId
 const offerInclude = {
-  organizer: { select: organizerSelect },
-  event:     { select: { id: true } },
+  organizer:    { select: organizerSelect },
+  event:        { select: { id: true } },
+  _count:       { select: { applications: true } },
 };
 
 function formatOffer(o) {
   return {
-    id:          o.id,
-    title:       o.title,
-    description: o.description,
-    type:        o.type,
-    specialty:   o.specialty,
-    date:        o.date,
-    location:    o.location,
-    country:     o.country,
-    radiusKm:    o.radiusKm,
-    fee:         o.fee,
-    eventId:     o.event?.id ?? null,   // on lit l'id via la relation
-    status:      o.status,
-    createdAt:   o.createdAt,
-    organizerId: o.organizerId,
+    id:             o.id,
+    title:          o.title,
+    description:    o.description,
+    type:           o.type,
+    specialty:      o.specialty,
+    date:           o.date,
+    location:       o.location,
+    country:        o.country,
+    radiusKm:       o.radiusKm,
+    fee:            o.fee,
+    eventId:        o.event?.id ?? null,
+    status:         o.status,
+    createdAt:      o.createdAt,
+    organizerId:    o.organizerId,
+    applicantCount: o._count?.applications ?? 0,
     organizer: {
       id:     o.organizer.id,
       userId: o.organizer.userId,
@@ -215,6 +217,100 @@ router.put('/:id', requireAuth, validate(offerUpdateSchema), async (req, res) =>
     return res.json(formatOffer(updated));
   } catch (err) {
     console.error('❌ PUT /offers/:id :', err);
+    return res.status(500).json({ error: 'ERREUR_SERVEUR' });
+  }
+});
+
+/* ── POST /api/offers/:id/apply — postuler à une offre ─── */
+router.post('/:id/apply', requireAuth, async (req, res) => {
+  try {
+    const offerId = parseInt(req.params.id, 10);
+    const { message } = req.body;
+
+    // Récupérer l'offre avec l'organisateur
+    const offer = await prisma.offer.findUnique({
+      where:   { id: offerId },
+      include: { organizer: { select: { id: true, userId: true } } },
+    });
+    if (!offer || offer.status !== 'ACTIVE') {
+      return res.status(404).json({ error: 'OFFRE_INTROUVABLE' });
+    }
+
+    const applicantUserId  = req.user.id;
+    const organizerUserId  = offer.organizer.userId;
+
+    // Empêcher l'organisateur de postuler à sa propre offre
+    if (applicantUserId === organizerUserId) {
+      return res.status(400).json({ error: 'Vous ne pouvez pas postuler à votre propre offre.' });
+    }
+
+    // Récupérer le profil du postulant
+    const applicantProfile = await prisma.profile.findUnique({ where: { userId: applicantUserId } });
+    if (!applicantProfile) return res.status(404).json({ error: 'PROFILE_INTROUVABLE' });
+
+    // Trouver ou créer la conversation
+    let conversation = await prisma.conversation.findFirst({
+      where: {
+        AND: [
+          { participants: { some: { userId: applicantUserId } } },
+          { participants: { some: { userId: organizerUserId } } },
+        ],
+      },
+    });
+
+    if (!conversation) {
+      conversation = await prisma.conversation.create({
+        data: {
+          participants: {
+            create: [{ userId: applicantUserId }, { userId: organizerUserId }],
+          },
+        },
+      });
+    }
+
+    // Envoyer le message de candidature
+    const content = message?.trim() || `Bonjour, je souhaite postuler pour l'offre "${offer.title}" que vous venez de publier. Je me tiens à votre disposition.`;
+    await prisma.message.create({
+      data: {
+        conversationId: conversation.id,
+        senderId:       applicantUserId,
+        content,
+      },
+    });
+
+    // Mettre à jour la conversation
+    await prisma.conversation.update({
+      where: { id: conversation.id },
+      data:  { updatedAt: new Date() },
+    });
+
+    // Enregistrer la candidature (upsert pour éviter les doublons)
+    await prisma.application.upsert({
+      where:  { offerId_applicantId: { offerId, applicantId: applicantProfile.id } },
+      create: { offerId, applicantId: applicantProfile.id, message: content },
+      update: {},
+    });
+
+    // Notification à l'organisateur
+    try {
+      const applicantUser = await prisma.user.findUnique({
+        where:  { id: applicantUserId },
+        select: { pseudo: true, firstName: true, lastName: true },
+      });
+      await createNotif({
+        userId:  organizerUserId,
+        type:    'NEW_APPLICATION',
+        content: `${displayName(applicantUser)} a postulé pour votre offre "${offer.title}".`,
+        actorId: applicantUserId,
+        offerId: offer.id,
+      });
+    } catch (notifErr) {
+      console.error('❌ apply — erreur notif :', notifErr.message);
+    }
+
+    return res.json({ conversationId: conversation.id });
+  } catch (err) {
+    console.error('❌ POST /offers/:id/apply :', err);
     return res.status(500).json({ error: 'ERREUR_SERVEUR' });
   }
 });
