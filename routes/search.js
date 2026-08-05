@@ -86,11 +86,21 @@ async function geocodeLocation(query) {
  * - country
  */
 router.get('/', requireAuth, async (req, res) => {
-  const { name, role, specialty, typeEtablissement, zone, radius, country } = req.query
+  const { name, role, specialty, typeEtablissement, zone, radius, country, date } = req.query
 
   const hasRadiusFilter = radius !== undefined && radius !== null && radius !== ''
   const effectiveRadius = hasRadiusFilter ? parseFloat(radius) : null
   const zoneText = normalizeText(zone)
+
+  // Filtre disponibilité par date
+  let dateStart = null
+  let dateEnd = null
+  if (date) {
+    dateStart = new Date(date)
+    dateStart.setUTCHours(0, 0, 0, 0)
+    dateEnd = new Date(date)
+    dateEnd.setUTCHours(23, 59, 59, 999)
+  }
 
   try {
     if (String(role || '').toUpperCase() === 'ADMIN') {
@@ -147,6 +157,16 @@ router.get('/', requireAuth, async (req, res) => {
             country: {
               contains: String(country),
               mode: 'insensitive',
+            },
+          }),
+
+          // Exclure les profils BOOKED ou UNAVAILABLE à la date demandée
+          ...(dateStart && dateEnd && {
+            availability: {
+              none: {
+                date: { gte: dateStart, lte: dateEnd },
+                status: { in: ['BOOKED', 'UNAVAILABLE'] },
+              },
             },
           }),
         },
