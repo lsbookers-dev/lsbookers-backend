@@ -85,6 +85,8 @@ router.get('/user/:userId', async (req, res) => {
         address: true,
         postalCode: true,
         city: true,
+        cvText: true,
+        feeInfo: true,
         latitude: true,
         longitude: true,
         radiusKm: true,
@@ -246,6 +248,8 @@ router.put('/:id', requireAuth, validate(profileUpdateSchema), async (req, res) 
     address,
     postalCode,
     city,
+    cvText,
+    feeInfo,
     styles,
     availableForBooking,
     showRealName,
@@ -387,6 +391,8 @@ router.put('/:id', requireAuth, validate(profileUpdateSchema), async (req, res) 
     if (sanitizeString(address) !== undefined) dataToUpdate.address = sanitizeString(address);
     if (sanitizeString(postalCode) !== undefined) dataToUpdate.postalCode = sanitizeString(postalCode);
     if (sanitizeString(city) !== undefined) dataToUpdate.city = sanitizeString(city);
+    if (sanitizeString(cvText) !== undefined) dataToUpdate.cvText = sanitizeString(cvText);
+    if (sanitizeString(feeInfo) !== undefined) dataToUpdate.feeInfo = sanitizeString(feeInfo);
 
     const sanitizedStyles = sanitizeStringArray(styles);
     if (sanitizedStyles !== undefined) {

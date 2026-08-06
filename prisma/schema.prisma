@@ -179,6 +179,8 @@ model Profile {
   twitterUrl              String?
   linkedinUrl             String?
   websiteUrl              String?
+  cvText                  String?   // CV / expérience (artistes)
+  feeInfo                 String?   // Tarifs / info cachets (artistes)
   styles                  String[]                 // Styles artistiques (RNB, Electro, Jazz...)
   availableForBooking     Boolean                  @default(true)   // Disponible pour booking
   showRealName            Boolean                  @default(false)  // Afficher nom/prénom au lieu du pseudo
