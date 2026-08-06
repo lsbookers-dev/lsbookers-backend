@@ -173,6 +173,12 @@ model Profile {
   soundcloudUrl           String?
   showSoundcloud          Boolean                  @default(false)
   youtubeUrl              String?                  // Lien vidéo de prestation (YouTube/Vimeo)
+  instagramUrl            String?
+  facebookUrl             String?
+  tiktokUrl               String?
+  twitterUrl              String?
+  linkedinUrl             String?
+  websiteUrl              String?
   styles                  String[]                 // Styles artistiques (RNB, Electro, Jazz...)
   availableForBooking     Boolean                  @default(true)   // Disponible pour booking
   showRealName            Boolean                  @default(false)  // Afficher nom/prénom au lieu du pseudo

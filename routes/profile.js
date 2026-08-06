@@ -76,6 +76,15 @@ router.get('/user/:userId', async (req, res) => {
         soundcloudUrl: true,
         youtubeUrl: true,
         showSoundcloud: true,
+        instagramUrl: true,
+        facebookUrl: true,
+        tiktokUrl: true,
+        twitterUrl: true,
+        linkedinUrl: true,
+        websiteUrl: true,
+        address: true,
+        postalCode: true,
+        city: true,
         latitude: true,
         longitude: true,
         radiusKm: true,
@@ -228,6 +237,15 @@ router.put('/:id', requireAuth, validate(profileUpdateSchema), async (req, res) 
     soundcloudUrl,
     showSoundcloud,
     youtubeUrl,
+    instagramUrl,
+    facebookUrl,
+    tiktokUrl,
+    twitterUrl,
+    linkedinUrl,
+    websiteUrl,
+    address,
+    postalCode,
+    city,
     styles,
     availableForBooking,
     showRealName,
@@ -359,6 +377,16 @@ router.put('/:id', requireAuth, validate(profileUpdateSchema), async (req, res) 
     if (sanitizeString(youtubeUrl) !== undefined) {
       dataToUpdate.youtubeUrl = sanitizeString(youtubeUrl);
     }
+
+    const socialFields = { instagramUrl, facebookUrl, tiktokUrl, twitterUrl, linkedinUrl, websiteUrl };
+    for (const [key, val] of Object.entries(socialFields)) {
+      const s = sanitizeString(val);
+      if (s !== undefined) dataToUpdate[key] = s;
+    }
+
+    if (sanitizeString(address) !== undefined) dataToUpdate.address = sanitizeString(address);
+    if (sanitizeString(postalCode) !== undefined) dataToUpdate.postalCode = sanitizeString(postalCode);
+    if (sanitizeString(city) !== undefined) dataToUpdate.city = sanitizeString(city);
 
     const sanitizedStyles = sanitizeStringArray(styles);
     if (sanitizedStyles !== undefined) {
