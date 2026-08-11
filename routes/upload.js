@@ -38,14 +38,14 @@ const fileFilter = (req, file, cb) => {
 const upload = multer({
   storage,
   fileFilter,
-  limits: { fileSize: 25 * 1024 * 1024 }, // 25 Mo
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100 Mo
 });
 
 /* ----------------------------- Helpers ----------------------------------- */
 function mapMulterError(err) {
   if (err instanceof multer.MulterError) {
     if (err.code === 'LIMIT_FILE_SIZE')
-      return { status: 413, payload: { error: 'FILE_TOO_LARGE', max: '25MB' } };
+      return { status: 413, payload: { error: 'FILE_TOO_LARGE', max: '100MB' } };
     if (err.code === 'LIMIT_UNEXPECTED_FILE')
       return { status: 400, payload: { error: 'FORMAT_NOT_ALLOWED' } };
     return { status: 400, payload: { error: 'MULTER_ERROR', code: err.code } };
