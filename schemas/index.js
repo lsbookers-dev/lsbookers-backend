@@ -32,7 +32,7 @@ const step2Schema = z.object({
   pseudo:              z.string()
                         .min(3, 'Pseudo trop court (3 caractères minimum)')
                         .max(30, 'Pseudo trop long (30 caractères maximum)')
-                        .regex(/^[a-zA-Z0-9_.\-]+$/, 'Pseudo invalide : lettres, chiffres, tirets, underscores uniquement')
+                        .regex(/^[a-zA-Z0-9_ .\-]+$/, 'Pseudo invalide : lettres, chiffres, espaces, tirets, underscores uniquement')
                         .trim(),
   firstName:           z.string().min(1, 'Prénom requis').max(50).trim().transform(stripHtml),
   lastName:            z.string().min(1, 'Nom requis').max(50).trim().transform(stripHtml),
