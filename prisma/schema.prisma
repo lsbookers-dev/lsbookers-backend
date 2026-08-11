@@ -152,6 +152,7 @@ model User {
   notificationsSent   Notification[]           @relation("NotificationActor")
   passwordResets      PasswordReset[]
   subscription        Subscription?
+  loginEvents         LoginEvent[]
 }
 
 model Profile {
@@ -731,4 +732,18 @@ model PasswordReset {
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+}
+
+// ─────────────────────────────────────────────
+//  TRACKING CONNEXIONS
+// ─────────────────────────────────────────────
+
+model LoginEvent {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
 }

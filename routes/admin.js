@@ -45,16 +45,62 @@ router.get('/stats/summary', requireAuth, requireAdmin, async (_req, res) => {
       revenueOffersCents = payments.filter(p => p.kind === 'OFFER').reduce((s, p) => s + (p.amountCents || 0), 0);
     } catch { /* tables absentes */ }
 
+    // Connexions aujourd'hui
+    let loginsToday = 0;
+    try {
+      loginsToday = await prisma.loginEvent.count({
+        where: { createdAt: { gte: todayStart } },
+      });
+    } catch { /* table absente */ }
+
     return res.json({
       summary: {
         usersTotal, artists, organizers, providers,
-        signupsToday, loginsToday: 0,
+        signupsToday, loginsToday,
         conversations, messages,
         payingUsers, mrrCents, revenueMonthCents, revenueOffersCents,
       },
     });
   } catch (err) {
     console.error('❌ /stats/summary', err);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+/* =========================================================
+ *  STATS — Connexions avec filtre période
+ *  GET /api/admin/stats/logins?period=day|week|month|year
+ * =======================================================*/
+router.get('/stats/logins', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const period = String(req.query.period || 'day');
+    const now    = new Date();
+    let start;
+
+    switch (period) {
+      case 'week':
+        start = new Date(now);
+        start.setDate(now.getDate() - 7);
+        start.setHours(0, 0, 0, 0);
+        break;
+      case 'month':
+        start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+        break;
+      case 'year':
+        start = new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0);
+        break;
+      default: // day
+        start = new Date(now);
+        start.setHours(0, 0, 0, 0);
+    }
+
+    const count = await prisma.loginEvent.count({
+      where: { createdAt: { gte: start } },
+    });
+
+    return res.json({ count, period });
+  } catch (err) {
+    console.error('❌ /stats/logins', err);
     return res.status(500).json({ error: 'Erreur serveur' });
   }
 });

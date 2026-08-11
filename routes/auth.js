@@ -296,6 +296,9 @@ router.post('/login', validate(loginSchema), async (req, res) => {
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 jours
     });
 
+    // Enregistrer l'événement de connexion (en arrière-plan)
+    prisma.loginEvent.create({ data: { userId: user.id } }).catch(() => {})
+
     res.json({ message: 'Connexion reussie', token, user: safeUser });
   } catch (err) {
     console.error('Erreur serveur lors de la connexion :', err);
