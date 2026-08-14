@@ -53,12 +53,19 @@ router.get('/stats/summary', requireAuth, requireAdmin, async (_req, res) => {
       });
     } catch { /* table absente */ }
 
+    // Utilisateurs connectés en ce moment (actifs dans les 2 dernières minutes)
+    const twoMinAgo = new Date(Date.now() - 2 * 60 * 1000);
+    const onlineNow = await prisma.user.count({
+      where: { role: { not: 'ADMIN' }, lastActiveAt: { gte: twoMinAgo } },
+    });
+
     return res.json({
       summary: {
         usersTotal, artists, organizers, providers,
         signupsToday, loginsToday,
         conversations, messages,
         payingUsers, mrrCents, revenueMonthCents, revenueOffersCents,
+        onlineNow,
       },
     });
   } catch (err) {
