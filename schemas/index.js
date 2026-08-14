@@ -145,7 +145,8 @@ const publicationCreateSchema = z.object({
 });
 
 const commentCreateSchema = z.object({
-  content: z.string().min(1, 'Commentaire requis').max(500, 'Commentaire trop long').trim().transform(stripHtml),
+  content:  z.string().min(1, 'Commentaire requis').max(500, 'Commentaire trop long').trim().transform(stripHtml),
+  parentId: z.number().int().positive().optional().nullable(),
 });
 
 /* ─────────────────────────────────────────
