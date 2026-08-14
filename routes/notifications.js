@@ -48,9 +48,10 @@ router.get('/', requireAuth, async (req, res) => {
             avatar: n.actor.profile?.avatar || null,
           }
         : null,
-      conversationId: n.message?.conversationId || null, // ✅ conversation liée
-      messageId: n.message?.id || null, // ✅ identifiant du message lié
-      offerId: n.offerId || null,
+      conversationId: n.message?.conversationId || null,
+      messageId:      n.message?.id || null,
+      offerId:        n.offerId || null,
+      publicationId:  n.publicationId || null,
     }));
     console.log(`Notifications retournées pour user ${userId}: ${formatted.length}`); // ✅ Log pour débogage
     res.json({ notifications: formatted });

@@ -175,10 +175,11 @@ router.post('/:id/comments', requireAuth, validate(commentCreateSchema), async (
     if (pub?.profile?.userId) {
       const commenterName = displayName(comment.profile?.user)
       await createNotif({
-        userId:  pub.profile.userId,
-        type:    'NEW_COMMENT',
-        content: `${commenterName} a commenté votre publication.`,
-        actorId: req.user.id,
+        userId:        pub.profile.userId,
+        type:          'NEW_COMMENT',
+        content:       `${commenterName} a commenté votre publication.`,
+        actorId:       req.user.id,
+        publicationId: pub.id,
       })
     }
 
@@ -241,10 +242,11 @@ router.post('/:id/like', requireAuth, async (req, res) => {
           select: { pseudo: true, firstName: true, lastName: true },
         })
         await createNotif({
-          userId:  pub.profile.userId,
-          type:    'NEW_LIKE',
-          content: `${displayName(liker)} a aimé votre publication.`,
-          actorId: req.user.id,
+          userId:        pub.profile.userId,
+          type:          'NEW_LIKE',
+          content:       `${displayName(liker)} a aimé votre publication.`,
+          actorId:       req.user.id,
+          publicationId: pub.id,
         })
       }
     }

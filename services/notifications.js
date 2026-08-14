@@ -13,10 +13,11 @@ const prisma = require('../prisma/client')
  * @param {string}  opts.type     — ex: 'NEW_MESSAGE', 'BOOKING_ACCEPTED', 'NEW_FOLLOW'...
  * @param {string}  opts.content  — texte affiché dans la page /notifications
  * @param {number} [opts.actorId] — utilisateur à l'origine de l'action
- * @param {number} [opts.messageId] — message lié (permet le lien vers la conversation)
- * @param {number} [opts.offerId]   — offre liée (permet le lien vers /offers)
+ * @param {number} [opts.messageId]     — message lié (permet le lien vers la conversation)
+ * @param {number} [opts.offerId]       — offre liée (permet le lien vers /offers)
+ * @param {number} [opts.publicationId] — publication liée (permet le lien vers la publication)
  */
-async function createNotif({ userId, type, content, actorId, messageId, offerId } = {}) {
+async function createNotif({ userId, type, content, actorId, messageId, offerId, publicationId } = {}) {
   try {
     if (!userId || !type || !content) return
     // Pas d'auto-notification
@@ -27,9 +28,10 @@ async function createNotif({ userId, type, content, actorId, messageId, offerId 
         userId:    Number(userId),
         type,
         content,
-        ...(actorId   != null ? { actorId:   Number(actorId)   } : {}),
-        ...(messageId != null ? { messageId: Number(messageId) } : {}),
-        ...(offerId   != null ? { offerId:   Number(offerId)   } : {}),
+        ...(actorId       != null ? { actorId:       Number(actorId)       } : {}),
+        ...(messageId     != null ? { messageId:     Number(messageId)     } : {}),
+        ...(offerId       != null ? { offerId:       Number(offerId)       } : {}),
+        ...(publicationId != null ? { publicationId: Number(publicationId) } : {}),
       },
     })
   } catch (err) {

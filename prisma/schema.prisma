@@ -244,9 +244,10 @@ model Publication {
   profileId Int
   createdAt DateTime             @default(now())
 
-  profile   Profile              @relation(fields: [profileId], references: [id])
-  likes     PublicationLike[]
-  comments  PublicationComment[]
+  profile       Profile              @relation(fields: [profileId], references: [id])
+  likes         PublicationLike[]
+  comments      PublicationComment[]
+  notifications Notification[]
 }
 
 model PublicationLike {
@@ -669,8 +670,10 @@ model Notification {
   offer     Offer?   @relation(fields: [offerId], references: [id])
   actorId   Int?
   actor     User?    @relation("NotificationActor", fields: [actorId], references: [id])
-  messageId Int?
-  message   Message? @relation(fields: [messageId], references: [id])
+  messageId     Int?
+  message       Message?     @relation(fields: [messageId], references: [id])
+  publicationId Int?
+  publication   Publication? @relation(fields: [publicationId], references: [id], onDelete: SetNull)
 }
 
 model NotificationPreferences {
