@@ -394,6 +394,21 @@ router.post('/resend-verification', validate(resendVerificationSchema), async (r
 });
 
 // ─────────────────────────────────────────────
+// HEARTBEAT — maintient le statut "en ligne"
+// ─────────────────────────────────────────────
+router.post('/heartbeat', requireAuth, async (req, res) => {
+  try {
+    await prisma.user.update({
+      where: { id: req.user.id },
+      data: { lastActiveAt: new Date() },
+    });
+    res.json({ ok: true });
+  } catch {
+    res.json({ ok: false });
+  }
+});
+
+// ─────────────────────────────────────────────
 // /me — recupere l'utilisateur connecte
 // ─────────────────────────────────────────────
 router.get('/me', requireAuth, async (req, res) => {
