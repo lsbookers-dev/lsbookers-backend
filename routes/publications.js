@@ -132,38 +132,68 @@ router.delete('/:id', requireAuth, async (req, res) => {
   }
 });
 
-// GET /api/publications/:id/comments — liste des commentaires
+// Helper include commentaire
+const COMMENT_INCLUDE = {
+  profile: {
+    select: {
+      id: true, avatar: true,
+      user: { select: { id: true, pseudo: true, firstName: true, lastName: true } },
+    },
+  },
+  _count: { select: { likes: true, replies: true } },
+}
+
+// GET /api/publications/:id/comments — liste des commentaires (top-level + replies)
 router.get('/:id/comments', async (req, res) => {
   const id = parseInt(req.params.id, 10)
   if (isNaN(id)) return res.status(400).json({ error: 'ID invalide' })
 
+  // profileId optionnel pour savoir si le viewer a liké
+  const viewerProfileId = req.query.profileId ? parseInt(req.query.profileId, 10) : null
+
   try {
     const comments = await prisma.publicationComment.findMany({
-      where: { publicationId: id },
+      where: { publicationId: id, parentId: null }, // top-level seulement
       orderBy: { createdAt: 'asc' },
       include: {
-        profile: {
-          select: {
-            id: true,
-            avatar: true,
-            user: { select: { id: true, pseudo: true, firstName: true, lastName: true } },
+        ...COMMENT_INCLUDE,
+        replies: {
+          orderBy: { createdAt: 'asc' },
+          include: {
+            ...COMMENT_INCLUDE,
+            ...(viewerProfileId ? {
+              likes: { where: { profileId: viewerProfileId }, select: { id: true } }
+            } : {}),
           },
         },
+        ...(viewerProfileId ? {
+          likes: { where: { profileId: viewerProfileId }, select: { id: true } }
+        } : {}),
       },
     })
-    return res.json({ comments })
+
+    const format = (c) => ({
+      ...c,
+      likedByMe: viewerProfileId ? (c.likes?.length > 0) : false,
+      likes: undefined,
+    })
+
+    return res.json({ comments: comments.map(c => ({
+      ...format(c),
+      replies: c.replies.map(format),
+    })) })
   } catch (err) {
     console.error('❌ Erreur récupération commentaires :', err)
     return res.status(500).json({ error: 'Erreur serveur' })
   }
 })
 
-// POST /api/publications/:id/comments — ajouter un commentaire
+// POST /api/publications/:id/comments — ajouter un commentaire ou une réponse
 router.post('/:id/comments', requireAuth, validate(commentCreateSchema), async (req, res) => {
   const id = parseInt(req.params.id, 10)
   if (isNaN(id)) return res.status(400).json({ error: 'ID invalide' })
 
-  const { content } = req.body
+  const { content, parentId } = req.body
 
   try {
     const profile = await prisma.profile.findUnique({ where: { userId: req.user.id } })
@@ -171,40 +201,103 @@ router.post('/:id/comments', requireAuth, validate(commentCreateSchema), async (
 
     const comment = await prisma.publicationComment.create({
       data: {
-        content: String(content).trim(),
+        content:       String(content).trim(),
         publicationId: id,
-        profileId: profile.id,
+        profileId:     profile.id,
+        ...(parentId ? { parentId: parseInt(parentId, 10) } : {}),
       },
       include: {
-        profile: {
-          select: {
-            id: true,
-            avatar: true,
-            user: { select: { id: true, pseudo: true, firstName: true, lastName: true } },
-          },
-        },
+        ...COMMENT_INCLUDE,
+        replies: { include: COMMENT_INCLUDE },
       },
     })
 
-    // Notification NEW_COMMENT au propriétaire de la publication
-    const pub = await prisma.publication.findUnique({
-      where: { id },
-      include: { profile: { select: { userId: true } } },
-    })
-    if (pub?.profile?.userId) {
-      const commenterName = displayName(comment.profile?.user)
-      await createNotif({
-        userId:        pub.profile.userId,
-        type:          'NEW_COMMENT',
-        content:       `${commenterName} a commenté votre publication.`,
-        actorId:       req.user.id,
-        publicationId: pub.id,
+    const commenterName = displayName(comment.profile?.user)
+
+    if (parentId) {
+      // Réponse → notifier l'auteur du commentaire parent
+      const parent = await prisma.publicationComment.findUnique({
+        where: { id: parseInt(parentId, 10) },
+        include: { profile: { select: { userId: true } } },
       })
+      if (parent?.profile?.userId) {
+        await createNotif({
+          userId:  parent.profile.userId,
+          type:    'NEW_COMMENT_REPLY',
+          content: `${commenterName} a répondu à votre commentaire.`,
+          actorId: req.user.id,
+          publicationId: id,
+        })
+      }
+    } else {
+      // Commentaire → notifier le propriétaire de la publication
+      const pub = await prisma.publication.findUnique({
+        where: { id },
+        include: { profile: { select: { userId: true } } },
+      })
+      if (pub?.profile?.userId) {
+        await createNotif({
+          userId:        pub.profile.userId,
+          type:          'NEW_COMMENT',
+          content:       `${commenterName} a commenté votre publication.`,
+          actorId:       req.user.id,
+          publicationId: pub.id,
+        })
+      }
     }
 
-    return res.status(201).json(comment)
+    return res.status(201).json({ ...comment, likedByMe: false })
   } catch (err) {
     console.error('❌ Erreur ajout commentaire :', err)
+    return res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
+// POST /api/publications/comments/:id/like — toggle like sur un commentaire
+router.post('/comments/:id/like', requireAuth, async (req, res) => {
+  const id = parseInt(req.params.id, 10)
+  if (isNaN(id)) return res.status(400).json({ error: 'ID invalide' })
+
+  try {
+    const profile = await prisma.profile.findUnique({ where: { userId: req.user.id } })
+    if (!profile) return res.status(404).json({ error: 'Profil introuvable' })
+
+    const existing = await prisma.publicationCommentLike.findUnique({
+      where: { commentId_profileId: { commentId: id, profileId: profile.id } },
+    })
+
+    if (existing) {
+      await prisma.publicationCommentLike.delete({
+        where: { commentId_profileId: { commentId: id, profileId: profile.id } },
+      })
+    } else {
+      await prisma.publicationCommentLike.create({
+        data: { commentId: id, profileId: profile.id },
+      })
+      // Notifier l'auteur du commentaire
+      const comment = await prisma.publicationComment.findUnique({
+        where: { id },
+        include: { profile: { select: { userId: true } } },
+      })
+      if (comment?.profile?.userId) {
+        const liker = await prisma.user.findUnique({
+          where: { id: req.user.id },
+          select: { pseudo: true, firstName: true, lastName: true },
+        })
+        await createNotif({
+          userId:        comment.profile.userId,
+          type:          'NEW_COMMENT_LIKE',
+          content:       `${displayName(liker)} a aimé votre commentaire.`,
+          actorId:       req.user.id,
+          publicationId: comment.publicationId,
+        })
+      }
+    }
+
+    const count = await prisma.publicationCommentLike.count({ where: { commentId: id } })
+    return res.json({ liked: !existing, count })
+  } catch (err) {
+    console.error('❌ Erreur like commentaire :', err)
     return res.status(500).json({ error: 'Erreur serveur' })
   }
 })

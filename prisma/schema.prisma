@@ -224,6 +224,7 @@ model Profile {
   // Likes & Commentaires
   publicationLikes        PublicationLike[]
   publicationComments     PublicationComment[]
+  commentLikes            PublicationCommentLike[]
 
   // Agenda
   availability            Availability[]
@@ -268,11 +269,30 @@ model PublicationComment {
   publicationId Int
   profileId     Int
   createdAt     DateTime    @default(now())
+  parentId      Int?
 
-  publication   Publication @relation(fields: [publicationId], references: [id], onDelete: Cascade)
-  profile       Profile     @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  publication   Publication          @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+  profile       Profile              @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  parent        PublicationComment?  @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies       PublicationComment[] @relation("CommentReplies")
+  likes         PublicationCommentLike[]
 
   @@index([publicationId])
+  @@index([profileId])
+  @@index([parentId])
+}
+
+model PublicationCommentLike {
+  id        Int      @id @default(autoincrement())
+  commentId Int
+  profileId Int
+  createdAt DateTime @default(now())
+
+  comment   PublicationComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  profile   Profile            @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@unique([commentId, profileId])
+  @@index([commentId])
   @@index([profileId])
 }
 
