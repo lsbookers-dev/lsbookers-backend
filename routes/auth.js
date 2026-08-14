@@ -160,6 +160,24 @@ router.patch('/step3', requireAuth, validate(step3Schema), async (req, res) => {
 });
 
 // ─────────────────────────────────────────────
+// VÉRIFICATION DISPONIBILITÉ DU PSEUDO
+// GET /api/auth/check-pseudo?pseudo=xxx
+// ─────────────────────────────────────────────
+router.get('/check-pseudo', async (req, res) => {
+  const pseudo = (req.query.pseudo || '').trim();
+  if (!pseudo || pseudo.length < 3) {
+    return res.json({ available: false });
+  }
+  try {
+    const existing = await prisma.user.findUnique({ where: { pseudo } });
+    return res.json({ available: !existing });
+  } catch (err) {
+    console.error('Erreur dans /check-pseudo :', err);
+    return res.status(500).json({ available: false });
+  }
+});
+
+// ─────────────────────────────────────────────
 // INSCRIPTION COMPLETE (toutes les données d'un coup)
 // POST /api/auth/register-complete
 // Collecte : email, password, role,
