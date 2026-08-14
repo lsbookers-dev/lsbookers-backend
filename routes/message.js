@@ -145,12 +145,22 @@ router.get('/conversations', requireAuth, async (req, res) => {
         return {
           id: c.id,
           participants: participants.filter(Boolean),
-          lastMessage:
-            lastMessage?.content ||
-            (lastMessage?.attachmentType === 'IMAGE' ? '📷 Image' : '') ||
-            (lastMessage?.attachmentType === 'VIDEO' ? '🎬 Vidéo' : '') ||
-            (lastMessage?.attachmentType === 'DOCUMENT' ? '📄 Document' : '') ||
-            '',
+          lastMessage: (() => {
+            if (!lastMessage) return ''
+            if (lastMessage.type === 'PROFILE_SHARE') {
+              try {
+                const d = JSON.parse(lastMessage.content)
+                return `📋 Fiche partagée : ${d.name || 'Utilisateur'}`
+              } catch { return '📋 Fiche partagée' }
+            }
+            if (lastMessage.type === 'BOOKING_REQUEST') return '📅 Demande de booking'
+            if (lastMessage.type === 'CANCELLATION_REQUEST') return '❌ Demande d\'annulation'
+            return lastMessage.content ||
+              (lastMessage.attachmentType === 'IMAGE' ? '📷 Image' : '') ||
+              (lastMessage.attachmentType === 'VIDEO' ? '🎬 Vidéo' : '') ||
+              (lastMessage.attachmentType === 'DOCUMENT' ? '📄 Document' : '') ||
+              ''
+          })(),
           lastMessageMeta: lastMessage
             ? {
                 id: lastMessage.id,
@@ -682,7 +692,7 @@ router.get('/status/:userId', requireAuth, async (req, res) => {
     const u = await prisma.user.findUnique({ where: { id: userId }, select: { lastActiveAt: true } })
     if (!u) return res.status(404).json({ error: 'Utilisateur introuvable' })
     const lastSeen = u.lastActiveAt
-    const isOnline = lastSeen && (Date.now() - new Date(lastSeen).getTime()) < 5 * 60 * 1000
+    const isOnline = lastSeen && (Date.now() - new Date(lastSeen).getTime()) < 2 * 60 * 1000
     res.json({ online: !!isOnline, lastActiveAt: lastSeen?.toISOString() || null })
   } catch (err) {
     res.status(500).json({ error: 'Erreur serveur' })

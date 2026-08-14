@@ -309,8 +309,20 @@ router.post('/login', validate(loginSchema), async (req, res) => {
 // ─────────────────────────────────────────────
 // DÉCONNEXION
 // ─────────────────────────────────────────────
-router.post('/logout', (req, res) => {
+router.post('/logout', async (req, res) => {
   const isProduction = process.env.NODE_ENV === 'production';
+  // Effacer lastActiveAt pour que le statut "en ligne" disparaisse immédiatement
+  try {
+    const authHeader = req.headers.authorization
+    const cookieToken = req.cookies?.token
+    const rawToken = (authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null) || cookieToken
+    if (rawToken) {
+      const decoded = jwt.verify(rawToken, process.env.JWT_SECRET)
+      if (decoded?.id) {
+        await prisma.user.update({ where: { id: decoded.id }, data: { lastActiveAt: null } }).catch(() => {})
+      }
+    }
+  } catch {}
   res.clearCookie('token', {
     httpOnly: true,
     secure: isProduction,
