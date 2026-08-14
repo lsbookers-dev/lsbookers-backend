@@ -144,4 +144,43 @@ router.get('/followers', requireAuth, async (req, res) => {
   }
 })
 
+/* =========================================================
+ *  GET /api/follow/contacts — retourne les followers + suivis de l'utilisateur connecté
+ * =======================================================*/
+router.get('/contacts', requireAuth, async (req, res) => {
+  const userId = req.user.id
+  try {
+    const [following, followers] = await Promise.all([
+      prisma.follow.findMany({
+        where: { followerId: userId },
+        include: { following: { include: { profile: { select: { avatar: true } } } } },
+      }),
+      prisma.follow.findMany({
+        where: { followingId: userId },
+        include: { follower: { include: { profile: { select: { avatar: true } } } } },
+      }),
+    ])
+    const seen = new Set()
+    const contacts = []
+    const addUser = (u) => {
+      if (!u || seen.has(u.id) || u.id === userId) return
+      seen.add(u.id)
+      contacts.push({
+        id: u.id,
+        pseudo: u.pseudo || null,
+        firstName: u.firstName || null,
+        lastName: u.lastName || null,
+        role: u.role,
+        profile: u.profile ? { avatar: u.profile.avatar || null } : null,
+      })
+    }
+    following.forEach(f => addUser(f.following))
+    followers.forEach(f => addUser(f.follower))
+    res.json({ contacts })
+  } catch (err) {
+    console.error('GET /follow/contacts:', err)
+    res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
 module.exports = router

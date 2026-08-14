@@ -61,6 +61,7 @@ function pickUserPublic(u) {
     role: u.role,
     profile: u.profile ? { avatar: u.profile.avatar || null } : null,
     profileId: u.profile?.id || null,
+    lastActiveAt: u.lastActiveAt || null,
   }
 }
 
@@ -92,6 +93,9 @@ router.get('/conversations', requireAuth, async (req, res) => {
   try {
     const userId = Number(req.user?.id)
     if (!userId) return res.status(401).json({ error: 'Unauthorized' })
+
+    // Mettre à jour lastActiveAt
+    prisma.user.update({ where: { id: userId }, data: { lastActiveAt: new Date() } }).catch(() => {})
 
     const participations = await prisma.conversationParticipant.findMany({
       where: { userId },
@@ -216,6 +220,9 @@ router.get('/messages/:conversationId', requireAuth, async (req, res) => {
     const userId = Number(req.user?.id)
     const conversationId = Number(req.params.conversationId)
     if (!userId) return res.status(401).json({ error: 'Unauthorized' })
+
+    // Mettre à jour lastActiveAt
+    prisma.user.update({ where: { id: userId }, data: { lastActiveAt: new Date() } }).catch(() => {})
     if (!conversationId) return res.status(400).json({ error: 'conversationId invalide' })
 
     const participation = await prisma.conversationParticipant.findFirst({
@@ -609,6 +616,76 @@ router.delete('/conversations/:conversationId', requireAuth, async (req, res) =>
   } catch (err) {
     console.error('❌ [DELETE /conversations]', err)
     return res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
+// POST /api/messages/share-profile — Partager un profil dans une conversation
+router.post('/share-profile', requireAuth, async (req, res) => {
+  const { conversationId, profileUserId } = req.body
+  const senderId = Number(req.user.id)
+  if (!conversationId || !profileUserId) return res.status(400).json({ error: 'Paramètres manquants' })
+  try {
+    // Vérifier que l'expéditeur est participant
+    const participant = await prisma.conversationParticipant.findFirst({
+      where: { conversationId: Number(conversationId), userId: senderId },
+    })
+    if (!participant) return res.status(403).json({ error: 'Non autorisé' })
+
+    // Récupérer les infos du profil partagé
+    const targetUser = await prisma.user.findUnique({
+      where: { id: Number(profileUserId) },
+      include: { profile: { select: { avatar: true, profession: true, location: true } } },
+    })
+    if (!targetUser) return res.status(404).json({ error: 'Utilisateur introuvable' })
+
+    const displayNameStr = targetUser.pseudo || [targetUser.firstName, targetUser.lastName].filter(Boolean).join(' ') || 'Utilisateur'
+    const roleLinks = { ARTIST: 'artist', ORGANIZER: 'organizer', PROVIDER: 'provider' }
+    const profileUrl = `/${roleLinks[targetUser.role] || 'artist'}/${targetUser.profile?.id || targetUser.id}`
+
+    const sharedData = JSON.stringify({
+      userId: targetUser.id,
+      profileId: targetUser.profile?.id || null,
+      name: displayNameStr,
+      role: targetUser.role,
+      avatar: targetUser.profile?.avatar || null,
+      profession: targetUser.profile?.profession || null,
+      location: targetUser.profile?.location || null,
+      profileUrl,
+    })
+
+    const message = await prisma.message.create({
+      data: {
+        conversationId: Number(conversationId),
+        senderId,
+        content: sharedData,
+        type: 'PROFILE_SHARE',
+      },
+      include: { sender: true },
+    })
+
+    await prisma.conversation.update({
+      where: { id: Number(conversationId) },
+      data: { updatedAt: new Date() },
+    })
+
+    res.json(message)
+  } catch (err) {
+    console.error('share-profile:', err)
+    res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
+// GET /api/messages/status/:userId — statut en ligne d'un utilisateur
+router.get('/status/:userId', requireAuth, async (req, res) => {
+  try {
+    const userId = parseInt(req.params.userId)
+    const u = await prisma.user.findUnique({ where: { id: userId }, select: { lastActiveAt: true } })
+    if (!u) return res.status(404).json({ error: 'Utilisateur introuvable' })
+    const lastSeen = u.lastActiveAt
+    const isOnline = lastSeen && (Date.now() - new Date(lastSeen).getTime()) < 5 * 60 * 1000
+    res.json({ online: !!isOnline, lastActiveAt: lastSeen?.toISOString() || null })
+  } catch (err) {
+    res.status(500).json({ error: 'Erreur serveur' })
   }
 })
 

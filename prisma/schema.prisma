@@ -119,6 +119,7 @@ model User {
   role                Role
   isAdmin             Boolean                  @default(false)
   createdAt           DateTime                 @default(now())
+  lastActiveAt        DateTime?
 
   // Identite (collectee a l'etape 2 de l'inscription)
   pseudo              String?                  @unique
