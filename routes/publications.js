@@ -6,6 +6,25 @@ const { validate } = require('../middleware/validate');
 const { publicationCreateSchema, commentCreateSchema } = require('../schemas');
 const { createNotif, displayName } = require('../services/notifications');
 
+// GET /api/publications/:id — récupérer une publication par son ID
+router.get('/:id(\\d+)', async (req, res) => {
+  const id = Number(req.params.id)
+  try {
+    const pub = await prisma.publication.findUnique({
+      where: { id },
+      select: {
+        id: true, title: true, media: true, mediaType: true, caption: true,
+        _count: { select: { likes: true, comments: true } },
+      },
+    })
+    if (!pub) return res.status(404).json({ error: 'Publication introuvable' })
+    return res.json(pub)
+  } catch (err) {
+    console.error('❌ GET /publications/:id :', err)
+    return res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
 // GET /api/publications/profile/:profileId
 router.get('/profile/:profileId', async (req, res) => {
   const profileId = parseInt(req.params.profileId, 10);
