@@ -153,6 +153,12 @@ router.get('/conversations', requireAuth, async (req, res) => {
                 return `📋 Fiche partagée : ${d.name || 'Utilisateur'}`
               } catch { return '📋 Fiche partagée' }
             }
+            if (lastMessage.type === 'OFFER_SHARE') {
+              try {
+                const d = JSON.parse(lastMessage.content)
+                return `🎯 Offre partagée : ${d.title || 'Offre'}`
+              } catch { return '🎯 Offre partagée' }
+            }
             if (lastMessage.type === 'BOOKING_REQUEST') return '📅 Demande de booking'
             if (lastMessage.type === 'CANCELLATION_REQUEST') return '❌ Demande d\'annulation'
             return lastMessage.content ||
@@ -681,6 +687,101 @@ router.post('/share-profile', requireAuth, async (req, res) => {
     res.json(message)
   } catch (err) {
     console.error('share-profile:', err)
+    res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
+// POST /api/messages/share-offer — Partager une offre dans une conversation
+router.post('/share-offer', requireAuth, async (req, res) => {
+  const { recipientId, offerId } = req.body
+  const senderId = Number(req.user.id)
+  if (!recipientId || !offerId) return res.status(400).json({ error: 'Paramètres manquants' })
+  try {
+    const recipient = await prisma.user.findUnique({
+      where: { id: Number(recipientId) },
+      select: { id: true, role: true },
+    })
+    if (!recipient) return res.status(404).json({ error: 'Destinataire introuvable' })
+    if (isAdminUser(recipient)) return res.status(403).json({ error: 'Action non autorisée' })
+
+    // Trouver ou créer la conversation
+    let conversation = await prisma.conversation.findFirst({
+      where: {
+        AND: [
+          { participants: { some: { userId: senderId } } },
+          { participants: { some: { userId: Number(recipientId) } } },
+        ],
+      },
+    })
+    if (!conversation) {
+      conversation = await prisma.conversation.create({
+        data: {
+          participants: {
+            create: [{ userId: senderId }, { userId: Number(recipientId) }],
+          },
+        },
+      })
+    }
+
+    // Récupérer les données de l'offre
+    const offer = await prisma.offer.findUnique({
+      where: { id: Number(offerId) },
+      include: {
+        organizer: {
+          include: {
+            user: { select: { id: true, pseudo: true, firstName: true, lastName: true } },
+          },
+        },
+        _count: { select: { applications: true } },
+      },
+    })
+    if (!offer) return res.status(404).json({ error: 'Offre introuvable' })
+
+    const orgName =
+      offer.organizer.user?.pseudo ||
+      [offer.organizer.user?.firstName, offer.organizer.user?.lastName].filter(Boolean).join(' ') ||
+      'Utilisateur'
+
+    const sharedData = JSON.stringify({
+      id: offer.id,
+      title: offer.title,
+      description: offer.description,
+      type: offer.type,
+      specialty: offer.specialty || null,
+      location: offer.location,
+      country: offer.country,
+      date: offer.date,
+      fee: offer.fee || null,
+      radiusKm: offer.radiusKm || null,
+      applicantCount: offer._count.applications,
+      status: offer.status,
+      createdAt: offer.createdAt,
+      organizer: {
+        id: offer.organizer.id,
+        userId: offer.organizer.user?.id ?? null,
+        avatar: offer.organizer.avatar || null,
+        name: orgName,
+      },
+    })
+
+    const message = await prisma.message.create({
+      data: {
+        conversationId: conversation.id,
+        senderId,
+        content: sharedData,
+        type: 'OFFER_SHARE',
+      },
+      include: { sender: true },
+    })
+
+    await prisma.conversation.update({
+      where: { id: conversation.id },
+      data: { updatedAt: new Date() },
+    })
+
+    res.json({ conversationId: conversation.id, message })
+  } catch (err) {
+    console.error('share-offer:', err)
     res.status(500).json({ error: 'Erreur serveur' })
   }
 })
