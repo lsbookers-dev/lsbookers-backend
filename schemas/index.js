@@ -142,6 +142,11 @@ const publicationCreateSchema = z.object({
   mediaType:  z.preprocess(v => typeof v === 'string' ? v.toLowerCase() : v, z.enum(['image', 'video', 'audio'])).optional(),
   caption:    z.string().max(2000).trim().transform(stripHtml).optional().nullable(),
   profileId:  z.union([z.number().int().positive(), z.string().regex(/^\d+$/)]),
+  additionalMedia: z.array(z.object({
+    url:       z.string().min(1).max(2000).trim(),
+    mediaType: z.preprocess(v => typeof v === 'string' ? v.toLowerCase() : v, z.enum(['image', 'video', 'audio'])).optional(),
+    order:     z.number().int().min(0).optional(),
+  })).max(9).optional(),
 });
 
 const commentCreateSchema = z.object({
