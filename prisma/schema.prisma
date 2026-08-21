@@ -202,6 +202,7 @@ model Profile {
   media                   Media[]
   publications            Publication[]
   offers                  Offer[]
+  albums                  Album[]
 
   // Candidatures soumises (artiste/prestataire qui postule)
   applicationsSubmitted   Application[]            @relation("ApplicationApplicant")
@@ -245,10 +246,12 @@ model Publication {
   profileId Int
   createdAt DateTime             @default(now())
 
-  profile       Profile              @relation(fields: [profileId], references: [id])
-  likes         PublicationLike[]
-  comments      PublicationComment[]
-  notifications Notification[]
+  profile         Profile              @relation(fields: [profileId], references: [id])
+  likes           PublicationLike[]
+  comments        PublicationComment[]
+  notifications   Notification[]
+  additionalMedia PublicationMedia[]
+  albumItems      AlbumItem[]
 }
 
 model PublicationLike {
@@ -294,6 +297,59 @@ model PublicationCommentLike {
   @@unique([commentId, profileId])
   @@index([commentId])
   @@index([profileId])
+}
+
+// ─────────────────────────────────────────────
+//  MÉDIAS MULTIPLES PAR PUBLICATION
+// ─────────────────────────────────────────────
+
+model PublicationMedia {
+  id            Int         @id @default(autoincrement())
+  publicationId Int
+  url           String
+  mediaType     String      @default("image") // image | video
+  order         Int         @default(0)
+  createdAt     DateTime    @default(now())
+
+  publication   Publication @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+
+  @@index([publicationId])
+}
+
+// ─────────────────────────────────────────────
+//  ALBUMS
+// ─────────────────────────────────────────────
+
+model Album {
+  id          Int         @id @default(autoincrement())
+  profileId   Int
+  title       String
+  description String?
+  coverUrl    String?     // URL de couverture personnalisée (null = 1ère image auto)
+  isPrivate   Boolean     @default(false)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  profile     Profile     @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  items       AlbumItem[]
+
+  @@index([profileId])
+}
+
+model AlbumItem {
+  id            Int          @id @default(autoincrement())
+  albumId       Int
+  publicationId Int?         // Lien vers une publication existante (optionnel)
+  mediaUrl      String?      // Média direct (sans publication)
+  mediaType     String?      // image | video
+  caption       String?
+  order         Int          @default(0)
+  createdAt     DateTime     @default(now())
+
+  album         Album        @relation(fields: [albumId], references: [id], onDelete: Cascade)
+  publication   Publication? @relation(fields: [publicationId], references: [id], onDelete: SetNull)
+
+  @@index([albumId])
 }
 
 // ─────────────────────────────────────────────
