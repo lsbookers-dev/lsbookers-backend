@@ -6,6 +6,11 @@ const { validate } = require('../middleware/validate');
 const { publicationCreateSchema, commentCreateSchema } = require('../schemas');
 const { createNotif, displayName } = require('../services/notifications');
 
+// Helper — include médias additionnels
+const MEDIA_INCLUDE = {
+  additionalMedia: { orderBy: { order: 'asc' }, select: { id: true, url: true, mediaType: true, order: true } },
+}
+
 // GET /api/publications/:id — récupérer une publication par son ID
 router.get('/:id(\\d+)', async (req, res) => {
   const id = Number(req.params.id)
@@ -14,6 +19,7 @@ router.get('/:id(\\d+)', async (req, res) => {
       where: { id },
       select: {
         id: true, title: true, media: true, mediaType: true, caption: true,
+        ...MEDIA_INCLUDE,
         _count: { select: { likes: true, comments: true } },
       },
     })
@@ -38,6 +44,7 @@ router.get('/profile/:profileId', async (req, res) => {
       where: { profileId },
       orderBy: { id: 'desc' },
       include: {
+        ...MEDIA_INCLUDE,
         _count: { select: { likes: true, comments: true } },
       },
     });
@@ -51,7 +58,7 @@ router.get('/profile/:profileId', async (req, res) => {
 
 // POST /api/publications
 router.post('/', requireAuth, validate(publicationCreateSchema), async (req, res) => {
-  const { title, media, mediaType, caption, profileId } = req.body;
+  const { title, media, mediaType, caption, profileId, additionalMedia } = req.body;
   const parsedProfileId = parseInt(profileId, 10);
 
   try {
@@ -80,7 +87,18 @@ router.post('/', requireAuth, validate(publicationCreateSchema), async (req, res
         mediaType: mediaType ? String(mediaType).toLowerCase().trim() : 'image',
         caption: caption ? String(caption).trim() : null,
         profileId: parsedProfileId,
+        // Médias additionnels (multi-upload)
+        ...(Array.isArray(additionalMedia) && additionalMedia.length > 0 ? {
+          additionalMedia: {
+            create: additionalMedia.map((m, i) => ({
+              url:       String(m.url).trim(),
+              mediaType: m.mediaType ? String(m.mediaType).toLowerCase().trim() : 'image',
+              order:     i,
+            })),
+          },
+        } : {}),
       },
+      include: MEDIA_INCLUDE,
     });
 
     return res.status(201).json(newPublication);

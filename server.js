@@ -24,6 +24,7 @@ const eventStaffRoutes    = require('./routes/event-staff');
 const eventDocumentRoutes = require('./routes/event-documents');
 const uploadRoutes = require('./routes/upload');
 const publicationRoutes = require('./routes/publications');
+const albumsRoutes      = require('./routes/albums'); // albums
 const offersRoutes = require('./routes/offers'); // offres
 const notificationsRoutes = require('./routes/notifications'); // notifications
 const passwordRoutes = require('./routes/password'); // 🔐 forgot/reset password
@@ -129,6 +130,7 @@ app.use('/api/events', eventStaffRoutes);
 app.use('/api/events', eventDocumentRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/publications', publicationRoutes);
+app.use('/api/albums', albumsRoutes);
 app.use('/api/offers', offersRoutes);
 app.use('/api/notifications', notificationsRoutes);
 app.use('/api/reviews', reviewsRoutes);
