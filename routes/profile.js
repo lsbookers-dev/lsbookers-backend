@@ -76,6 +76,7 @@ router.get('/user/:userId', async (req, res) => {
         soundcloudUrl: true,
         youtubeUrl: true,
         showSoundcloud: true,
+        showStyles: true,
         instagramUrl: true,
         facebookUrl: true,
         tiktokUrl: true,
@@ -238,6 +239,7 @@ router.put('/:id', requireAuth, validate(profileUpdateSchema), async (req, res) 
     bannerUrl,
     soundcloudUrl,
     showSoundcloud,
+    showStyles,
     youtubeUrl,
     instagramUrl,
     facebookUrl,
@@ -376,6 +378,10 @@ router.put('/:id', requireAuth, validate(profileUpdateSchema), async (req, res) 
 
     if (showSoundcloud !== undefined) {
       dataToUpdate.showSoundcloud = Boolean(showSoundcloud);
+    }
+
+    if (showStyles !== undefined) {
+      dataToUpdate.showStyles = Boolean(showStyles);
     }
 
     if (sanitizeString(youtubeUrl) !== undefined) {

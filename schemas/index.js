@@ -84,6 +84,7 @@ const profileUpdateSchema = z.object({
   soundcloudUrl:           z.string().url('URL SoundCloud invalide').optional().nullable().or(z.literal('')),
   youtubeUrl:              z.string().url('URL YouTube invalide').optional().nullable().or(z.literal('')),
   showSoundcloud:          z.boolean().optional(),
+  showStyles:              z.boolean().optional(),
   availableForBooking:     z.boolean().optional(),
   showRealName:            z.boolean().optional(),
   notificationPreferences: z.record(z.string(), z.boolean()).optional(),
