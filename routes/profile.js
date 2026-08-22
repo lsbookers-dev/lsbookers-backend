@@ -77,6 +77,7 @@ router.get('/user/:userId', async (req, res) => {
         youtubeUrl: true,
         showSoundcloud: true,
         showStyles: true,
+        showYoutubeUrl: true,
         instagramUrl: true,
         facebookUrl: true,
         tiktokUrl: true,
@@ -241,6 +242,7 @@ router.put('/:id', requireAuth, validate(profileUpdateSchema), async (req, res) 
     showSoundcloud,
     showStyles,
     youtubeUrl,
+    showYoutubeUrl,
     instagramUrl,
     facebookUrl,
     tiktokUrl,
@@ -386,6 +388,10 @@ router.put('/:id', requireAuth, validate(profileUpdateSchema), async (req, res) 
 
     if (sanitizeString(youtubeUrl) !== undefined) {
       dataToUpdate.youtubeUrl = sanitizeString(youtubeUrl);
+    }
+
+    if (showYoutubeUrl !== undefined) {
+      dataToUpdate.showYoutubeUrl = Boolean(showYoutubeUrl);
     }
 
     const socialFields = { instagramUrl, facebookUrl, tiktokUrl, twitterUrl, linkedinUrl, websiteUrl };

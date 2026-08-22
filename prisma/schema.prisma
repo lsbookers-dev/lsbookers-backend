@@ -176,6 +176,7 @@ model Profile {
   showSoundcloud          Boolean                  @default(false)
   showStyles              Boolean                  @default(true)
   youtubeUrl              String?                  // Lien vidéo de prestation (YouTube/Vimeo)
+  showYoutubeUrl          Boolean                  @default(true)
   instagramUrl            String?
   facebookUrl             String?
   tiktokUrl               String?

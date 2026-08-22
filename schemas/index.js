@@ -85,6 +85,7 @@ const profileUpdateSchema = z.object({
   youtubeUrl:              z.string().url('URL YouTube invalide').optional().nullable().or(z.literal('')),
   showSoundcloud:          z.boolean().optional(),
   showStyles:              z.boolean().optional(),
+  showYoutubeUrl:          z.boolean().optional(),
   availableForBooking:     z.boolean().optional(),
   showRealName:            z.boolean().optional(),
   notificationPreferences: z.record(z.string(), z.boolean()).optional(),
