@@ -86,10 +86,15 @@ router.get('/status/:id', requireAuth, async (req, res) => {
   if (!Number.isFinite(followedId)) return res.status(400).json({ error: 'ID invalide' })
 
   try {
-    const follow = await prisma.follow.findUnique({
-      where: { followerId_followingId: { followerId, followingId: followedId } },
-    })
-    return res.json({ following: !!follow })
+    const [follow, reverse] = await Promise.all([
+      prisma.follow.findUnique({
+        where: { followerId_followingId: { followerId, followingId: followedId } },
+      }),
+      prisma.follow.findUnique({
+        where: { followerId_followingId: { followerId: followedId, followingId: followerId } },
+      }),
+    ])
+    return res.json({ following: !!follow, followsYou: !!reverse })
   } catch (error) {
     console.error('Erreur status follow :', error)
     return res.status(500).json({ error: 'Erreur serveur' })
