@@ -159,7 +159,7 @@ router.get('/conversations', requireAuth, async (req, res) => {
                 return `🎯 Offre partagée : ${d.title || 'Offre'}`
               } catch { return '🎯 Offre partagée' }
             }
-            if (lastMessage.type === 'BOOKING_REQUEST') return '📅 Demande de booking'
+            if (lastMessage.type === 'BOOKING_REQUEST') return '📅 Proposition de booking'
             if (lastMessage.type === 'CANCELLATION_REQUEST') return '❌ Demande d\'annulation'
             return lastMessage.content ||
               (lastMessage.attachmentType === 'IMAGE' ? '📷 Image' : '') ||

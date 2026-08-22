@@ -59,7 +59,7 @@ router.post('/booking-request', requireAuth, async (req, res) => {
 
     // 3. Envoyer un message de type BOOKING_REQUEST dans la conversation
     const dateLabel = new Date(date).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-    const msgContent = `📅 Demande de booking pour le ${dateLabel}${fee ? ` · Cachet proposé : ${parseFloat(fee).toLocaleString('fr-FR')} €` : ''}${message ? `\n"${message.trim()}"` : ''}`;
+    const msgContent = `📅 Proposition de booking pour le ${dateLabel}${fee ? ` · Cachet proposé : ${parseFloat(fee).toLocaleString('fr-FR')} €` : ''}${message ? `\n"${message.trim()}"` : ''}`;
 
     await prisma.message.create({
       data: {
@@ -82,7 +82,7 @@ router.post('/booking-request', requireAuth, async (req, res) => {
     await createNotif({
       userId:    targetProfile.userId,
       type:      'BOOKING_REQUEST',
-      content:   `Nouvelle demande de booking du ${dateLabel} de ${senderName}.`,
+      content:   `Nouvelle proposition de booking du ${dateLabel} de ${senderName}.`,
       actorId:   req.user.id,
       messageId: linkedMessage?.id,
     });
@@ -210,7 +210,7 @@ router.patch('/booking-request/:id', requireAuth, async (req, res) => {
       await createNotif({
         userId:    br.requester.userId,
         type:      'BOOKING_ACCEPTED',
-        content:   `Votre demande de booking du ${dateLabel} a été acceptée par ${targetName}.`,
+        content:   `Votre proposition de booking du ${dateLabel} a été acceptée par ${targetName}.`,
         actorId:   br.target.userId,
         messageId: linkedMsgId,
       });
@@ -220,7 +220,7 @@ router.patch('/booking-request/:id', requireAuth, async (req, res) => {
       await createNotif({
         userId:    br.requester.userId,
         type:      'BOOKING_DECLINED',
-        content:   `Votre demande de booking du ${dateLabel} a été refusée par ${targetName}.`,
+        content:   `Votre proposition de booking du ${dateLabel} a été refusée par ${targetName}.`,
         actorId:   br.target.userId,
         messageId: linkedMsgId,
       });
@@ -230,7 +230,7 @@ router.patch('/booking-request/:id', requireAuth, async (req, res) => {
       await createNotif({
         userId:    br.target.userId,
         type:      'BOOKING_CANCELLED',
-        content:   `La demande de booking du ${dateLabel} a été annulée par ${requesterName}.`,
+        content:   `La proposition de booking du ${dateLabel} a été annulée par ${requesterName}.`,
         actorId:   br.requester.userId,
         messageId: linkedMsgId,
       });
