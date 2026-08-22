@@ -529,22 +529,6 @@ router.post('/send-file', requireAuth, (req, res) => {
       data: { updatedAt: new Date() },
     })
 
-    // ── Notification NEW_MESSAGE pour chaque autre participant ──────────────
-    const senderName = displayName(message.sender)
-    const otherParticipants = await prisma.conversationParticipant.findMany({
-      where: { conversationId: Number(conversationId), NOT: { userId: senderId } },
-      select: { userId: true },
-    })
-    for (const p of otherParticipants) {
-      await createNotif({
-        userId:    p.userId,
-        type:      'NEW_MESSAGE',
-        content:   `${senderName} vous a envoyé un message.`,
-        actorId:   senderId,
-        messageId: message.id,
-      })
-    }
-
     return res.json({
       conversationId: Number(conversationId),
       message: {
