@@ -66,6 +66,11 @@ router.post('/reset-password', validate(resetPasswordSchema), async (req, res) =
       return res.status(400).json({ error: 'Lien invalide ou expire.' });
     }
 
+    const user = await prisma.user.findUnique({ where: { id: pr.userId }, select: { password: true } });
+    if (user && await bcrypt.compare(password, user.password)) {
+      return res.status(400).json({ error: 'Le nouveau mot de passe doit être différent de l\'ancien.' });
+    }
+
     const hash = await bcrypt.hash(password, 10);
     await prisma.user.update({
       where: { id: pr.userId },
