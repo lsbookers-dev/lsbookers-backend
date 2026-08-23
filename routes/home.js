@@ -170,7 +170,13 @@ router.get('/feed', requireAuth, async (req, res) => {
       },
     }))
 
-    res.json({ posts: result, followCount })
+    // Fetch active admin posts
+    const adminPosts = await prisma.adminPost.findMany({
+      where: { active: true },
+      orderBy: { createdAt: 'desc' },
+    })
+
+    res.json({ posts: result, followCount, adminPosts })
   } catch (err) {
     console.error('❌ Home /feed :', err)
     res.status(500).json({ error: 'Erreur serveur' })

@@ -830,3 +830,14 @@ model LoginEvent {
   @@index([userId])
   @@index([createdAt])
 }
+
+model AdminPost {
+  id        Int        @id @default(autoincrement())
+  title     String?
+  content   String?
+  mediaUrl  String?
+  mediaType MediaType?
+  active    Boolean    @default(true)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+}

@@ -18,6 +18,7 @@ const searchRoutes = require('./routes/search');
 const usersRoutes = require('./routes/users');
 const adminRoutes = require('./routes/admin');
 const adminSettingsRoutes = require('./routes/adminSettings'); // paramètres du site
+const adminPostsRoutes = require('./routes/adminPosts'); // publications LSBookers
 const eventRoutes         = require('./routes/events');
 const eventBookingRoutes  = require('./routes/event-bookings');
 const eventStaffRoutes    = require('./routes/event-staff');
@@ -120,8 +121,9 @@ app.use('/api/feed', feedRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api', usersRoutes);
 
-// ⚠️ IMPORTANT : monter /api/admin/settings AVANT /api/admin
+// ⚠️ IMPORTANT : monter /api/admin/settings et /api/admin/posts AVANT /api/admin
 app.use('/api/admin/settings', adminSettingsRoutes);
+app.use('/api/admin/posts', adminPostsRoutes);
 app.use('/api/admin', adminRoutes);
 
 app.use('/api/events', eventRoutes);
