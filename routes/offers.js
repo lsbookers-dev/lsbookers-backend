@@ -40,6 +40,7 @@ function formatOffer(o) {
     type:           o.type,
     specialty:      o.specialty,
     date:           o.date,
+    endDate:        o.endDate ?? null,
     location:       o.location,
     country:        o.country,
     radiusKm:       o.radiusKm,
@@ -60,7 +61,7 @@ function formatOffer(o) {
 
 /* ── POST /api/offers — créer une offre (ORGANIZER) ─────── */
 router.post('/', requireAuth, validate(offerCreateSchema), async (req, res) => {
-  const { title, description, type, specialty, date, location, country, radiusKm, fee, eventId } = req.body;
+  const { title, description, type, specialty, date, endDate, location, country, radiusKm, fee, eventId } = req.body;
 
   try {
     if (req.user.role !== 'ORGANIZER') {
@@ -84,6 +85,7 @@ router.post('/', requireAuth, validate(offerCreateSchema), async (req, res) => {
         type,
         specialty:   specialty ? String(specialty).trim() : null,
         date:        offerDate,
+        endDate:     endDate ? new Date(endDate) : null,
         location:    String(location).trim(),
         country:     String(country).trim(),
         radiusKm:    radiusKm != null ? parseInt(radiusKm, 10) : null,
@@ -202,6 +204,7 @@ router.put('/:id', requireAuth, validate(offerUpdateSchema), async (req, res) =>
     if (type && ['ARTIST', 'PROVIDER', 'ALL'].includes(type)) data.type = type;
     if (specialty !== undefined) data.specialty = specialty ? String(specialty).trim() : null;
     if (date)    data.date     = new Date(date);
+    if (endDate !== undefined) data.endDate = endDate ? new Date(endDate) : null;
     if (location) data.location = String(location).trim();
     if (country)  data.country  = String(country).trim();
     if (radiusKm !== undefined) data.radiusKm = radiusKm != null ? parseInt(radiusKm, 10) : null;

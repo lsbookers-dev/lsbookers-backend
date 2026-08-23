@@ -101,6 +101,7 @@ const offerCreateSchema = z.object({
   type:        z.enum(['ARTIST', 'PROVIDER', 'ALL'], { message: 'Type invalide' }),
   specialty:   z.string().min(1, 'Spécialité requise').max(100).trim().transform(stripHtml),
   date:        z.string().min(1, 'Date requise'),
+  endDate:     z.string().optional().nullable(),
   location:    z.string().min(1, 'Ville requise').max(100).trim().transform(stripHtml),
   country:     z.string().min(1, 'Pays requis').max(100).trim().transform(stripHtml),
   radiusKm:    z.number().int().min(0).max(5000).optional().nullable(),

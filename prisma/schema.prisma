@@ -600,6 +600,7 @@ model Offer {
   type          OfferType
   specialty     String?
   date          DateTime
+  endDate       DateTime?     // Date de fin (optionnel)
   location      String
   country       String
   radiusKm      Int?
