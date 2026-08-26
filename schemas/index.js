@@ -39,6 +39,7 @@ const step2Schema = z.object({
   dateOfBirth:         z.string().optional(),
   phone:               z.string().max(20).trim().optional(),
   countryOfResidence:  z.string().max(100).trim().transform(stripHtml).optional(),
+  specialties:         z.array(z.string().max(100).transform(stripHtml)).max(20).optional(),
 });
 
 const step3Schema = z.object({

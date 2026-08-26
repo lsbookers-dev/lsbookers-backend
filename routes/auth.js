@@ -215,7 +215,7 @@ router.post('/register-complete', validate(registerCompleteSchema), async (req, 
     if (establishmentName) profileData.establishmentName = establishmentName.trim();
     if (typeEtablissement) profileData.typeEtablissement = typeEtablissement.trim();
     if (siret) profileData.siret = siret.trim();
-    if (city) profileData.city = city.trim();
+    if (city) profileData.location = city.trim();
     if (countryOfResidence) profileData.country = countryOfResidence.trim();
     if (Array.isArray(specialties) && specialties.length > 0) profileData.specialties = specialties;
 
