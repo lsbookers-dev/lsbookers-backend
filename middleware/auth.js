@@ -51,6 +51,7 @@ const requireAuth = async (req, res, next) => {
         role: true,
         isAdmin: true,
         registrationStep: true,
+        tokenVersion: true,
         profile: {
           select: { id: true, avatar: true, banner: true },
         },
@@ -59,6 +60,12 @@ const requireAuth = async (req, res, next) => {
 
     if (!user) {
       return res.status(401).json({ error: 'Utilisateur introuvable' });
+    }
+
+    // Vérifier tokenVersion — si l'utilisateur a invalidé ses sessions (reject-device)
+    // les anciens tokens (sans tokenVersion) sont acceptés pour la rétrocompatibilité
+    if (decoded.tokenVersion !== undefined && decoded.tokenVersion !== user.tokenVersion) {
+      return res.status(401).json({ error: 'Session expirée, veuillez vous reconnecter' });
     }
 
     req.user = user;

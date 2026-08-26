@@ -266,7 +266,7 @@ router.post('/register-complete', validate(registerCompleteSchema), async (req, 
     });
 
     const token = jwt.sign(
-      { id: user.id, email: user.email, role: user.role, isAdmin: user.isAdmin },
+      { id: user.id, email: user.email, role: user.role, isAdmin: user.isAdmin, tokenVersion: 0 },
       process.env.JWT_SECRET,
       { expiresIn: '7d' }
     );
@@ -321,42 +321,74 @@ router.post('/login', validate(loginSchema), async (req, res) => {
     }
 
     const token = jwt.sign(
-      { id: user.id, email: user.email, role: user.role, isAdmin: user.isAdmin },
+      { id: user.id, email: user.email, role: user.role, isAdmin: user.isAdmin, tokenVersion: user.tokenVersion },
       process.env.JWT_SECRET,
       { expiresIn: '7d' }
     );
 
     const { password: _pw, ...safeUser } = user;
 
-    // Cookie httpOnly — non accessible par JavaScript
     const isProduction = process.env.NODE_ENV === 'production';
+
+    // Cookie httpOnly session
     res.cookie('token', token, {
       httpOnly: true,
       secure: isProduction,
       sameSite: isProduction ? 'none' : 'lax',
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 jours
+      maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
-    // Détection nouvel appareil + enregistrement connexion (en arrière-plan)
+    // ── Détection nouvel appareil (système device token) ─────────────────────
     ;(async () => {
       try {
-        const ua = req.headers['user-agent'] || null
-        const lastLogin = await prisma.loginEvent.findFirst({
-          where: { userId: user.id },
-          orderBy: { createdAt: 'desc' },
-          select: { userAgent: true },
+        const ua            = req.headers['user-agent'] || null
+        const cookieToken   = req.cookies?.device_token || null
+
+        // 1. Appareil déjà de confiance → aucune notif
+        if (cookieToken) {
+          const trusted = await prisma.trustedDevice.findFirst({
+            where: { userId: user.id, deviceToken: cookieToken },
+          })
+          if (trusted) {
+            await prisma.loginEvent.create({ data: { userId: user.id, userAgent: ua, deviceToken: cookieToken } })
+            return
+          }
+
+          // 2. Cookie connu mais pas encore "trusted" → on l'a déjà vu (notif déjà envoyée)
+          const seen = await prisma.loginEvent.findFirst({
+            where: { userId: user.id, deviceToken: cookieToken },
+          })
+          if (seen) {
+            await prisma.loginEvent.create({ data: { userId: user.id, userAgent: ua, deviceToken: cookieToken } })
+            return
+          }
+        }
+
+        // 3. Nouvel appareil : générer un device token et set le cookie (30 jours)
+        const newDeviceToken = crypto.randomUUID()
+        res.cookie('device_token', newDeviceToken, {
+          httpOnly: true,
+          secure: isProduction,
+          sameSite: isProduction ? 'none' : 'lax',
+          maxAge: 30 * 24 * 60 * 60 * 1000,
         })
-        // Notif seulement si connexion précédente connue ET appareil différent
-        if (lastLogin?.userAgent && ua && lastLogin.userAgent !== ua) {
+
+        // 4. Envoyer la notif seulement si ce n'est pas le tout premier login
+        const prevLoginCount = await prisma.loginEvent.count({ where: { userId: user.id } })
+        if (prevLoginCount > 0) {
           const deviceLabel = parseUserAgent(ua)
           createNotif({
             userId: user.id,
             type: 'NEW_DEVICE_LOGIN',
-            content: `Connexion depuis un nouvel appareil détectée : ${deviceLabel}. Si ce n'est pas vous, changez votre mot de passe.`,
+            content: `Connexion depuis un nouvel appareil : ${deviceLabel}. Faites confiance à cet appareil ou signalez-le si ce n'est pas vous.`,
+            deviceToken: newDeviceToken,
           })
         }
-        await prisma.loginEvent.create({ data: { userId: user.id, userAgent: ua } })
-      } catch {}
+
+        await prisma.loginEvent.create({ data: { userId: user.id, userAgent: ua, deviceToken: newDeviceToken } })
+      } catch (err) {
+        console.error('Erreur détection appareil :', err)
+      }
     })()
 
     res.json({ message: 'Connexion reussie', token, user: safeUser });
@@ -390,6 +422,66 @@ router.post('/logout', async (req, res) => {
   });
   res.json({ message: 'Déconnecté' });
 });
+
+// ─────────────────────────────────────────────
+// FAIRE CONFIANCE À UN APPAREIL
+// POST /api/auth/trust-device
+// Body : { deviceToken }
+// ─────────────────────────────────────────────
+router.post('/trust-device', requireAuth, async (req, res) => {
+  try {
+    const userId      = req.user.id
+    const { deviceToken } = req.body
+    if (!deviceToken) return res.status(400).json({ error: 'deviceToken manquant' })
+
+    const existing = await prisma.trustedDevice.findUnique({ where: { deviceToken } })
+    if (existing) return res.json({ message: 'Appareil déjà de confiance' })
+
+    const ua   = req.headers['user-agent'] || null
+    const name = parseUserAgent(ua)
+
+    await prisma.trustedDevice.create({
+      data: { userId, deviceToken, name, userAgent: ua },
+    })
+
+    res.json({ message: 'Appareil marqué comme de confiance', name })
+  } catch (err) {
+    console.error('Erreur trust-device :', err)
+    res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
+// ─────────────────────────────────────────────
+// REJETER UN APPAREIL — invalide toutes les sessions
+// POST /api/auth/reject-device
+// ─────────────────────────────────────────────
+router.post('/reject-device', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.id
+
+    // Incrémenter tokenVersion → tous les JWT existants deviennent invalides
+    await prisma.user.update({
+      where: { id: userId },
+      data: { tokenVersion: { increment: 1 } },
+    })
+
+    // Supprimer tous les appareils de confiance (reset sécurité complet)
+    await prisma.trustedDevice.deleteMany({ where: { userId } })
+
+    // Effacer le cookie device_token de la réponse
+    const isProduction = process.env.NODE_ENV === 'production'
+    res.clearCookie('device_token', {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: isProduction ? 'none' : 'lax',
+    })
+
+    res.json({ message: 'Sessions invalidées. Changez votre mot de passe.' })
+  } catch (err) {
+    console.error('Erreur reject-device :', err)
+    res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
 
 // ─────────────────────────────────────────────
 // VERIFICATION EMAIL

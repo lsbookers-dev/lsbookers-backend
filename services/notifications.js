@@ -17,7 +17,7 @@ const prisma = require('../prisma/client')
  * @param {number} [opts.offerId]       — offre liée (permet le lien vers /offers)
  * @param {number} [opts.publicationId] — publication liée (permet le lien vers la publication)
  */
-async function createNotif({ userId, type, content, actorId, messageId, offerId, publicationId } = {}) {
+async function createNotif({ userId, type, content, actorId, messageId, offerId, publicationId, deviceToken } = {}) {
   try {
     if (!userId || !type || !content) return
     // Pas d'auto-notification
@@ -32,6 +32,7 @@ async function createNotif({ userId, type, content, actorId, messageId, offerId,
         ...(messageId     != null ? { messageId:     Number(messageId)     } : {}),
         ...(offerId       != null ? { offerId:       Number(offerId)       } : {}),
         ...(publicationId != null ? { publicationId: Number(publicationId) } : {}),
+        ...(deviceToken   != null ? { deviceToken                          } : {}),
       },
     })
   } catch (err) {

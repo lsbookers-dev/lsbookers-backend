@@ -52,6 +52,7 @@ router.get('/', requireAuth, async (req, res) => {
       messageId:      n.message?.id || null,
       offerId:        n.offerId || null,
       publicationId:  n.publicationId || null,
+      deviceToken:    n.deviceToken || null,
     }));
     console.log(`Notifications retournées pour user ${userId}: ${formatted.length}`); // ✅ Log pour débogage
     res.json({ notifications: formatted });

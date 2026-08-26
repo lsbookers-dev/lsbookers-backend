@@ -154,6 +154,8 @@ model User {
   passwordResets      PasswordReset[]
   subscription        Subscription?
   loginEvents         LoginEvent[]
+  trustedDevices      TrustedDevice[]
+  tokenVersion        Int                      @default(0)
 }
 
 model Profile {
@@ -742,6 +744,7 @@ model Notification {
   content       String?
   legacyMessage String?  @map("message")
   read          Boolean  @default(false)
+  deviceToken   String?  // Pour notifications NEW_DEVICE_LOGIN
   createdAt     DateTime @default(now())
 
   user      User     @relation(fields: [userId], references: [id])
@@ -822,14 +825,31 @@ model PasswordReset {
 // ─────────────────────────────────────────────
 
 model LoginEvent {
-  id        Int      @id @default(autoincrement())
-  userId    Int
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userAgent String?
-  createdAt DateTime @default(now())
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userAgent   String?
+  deviceToken String?  // Identifiant unique de l'appareil (cookie device_token)
+  createdAt   DateTime @default(now())
 
   @@index([userId])
   @@index([createdAt])
+}
+
+// ─────────────────────────────────────────────
+//  APPAREILS DE CONFIANCE
+// ─────────────────────────────────────────────
+
+model TrustedDevice {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceToken String   @unique
+  name        String   // Ex: "Chrome sur Windows", "Safari sur iPhone"
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
 }
 
 model AdminPost {
