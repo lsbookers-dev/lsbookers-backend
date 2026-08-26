@@ -15,6 +15,29 @@ const {
   resendVerificationSchema,
 } = require('../schemas');
 const { sendVerificationEmail } = require('../utils/email');
+const { createNotif } = require('../services/notifications');
+
+// ─────────────────────────────────────────────
+// Helper — parse User-Agent en texte lisible
+// ─────────────────────────────────────────────
+function parseUserAgent(ua) {
+  if (!ua) return 'appareil inconnu'
+  let browser = 'navigateur inconnu'
+  let os = ''
+  if      (ua.includes('Edg/'))                                    browser = 'Edge'
+  else if (ua.includes('OPR/') || ua.includes('Opera/'))           browser = 'Opera'
+  else if (ua.includes('Chrome/') && !ua.includes('Chromium/'))    browser = 'Chrome'
+  else if (ua.includes('Firefox/'))                                browser = 'Firefox'
+  else if (ua.includes('Safari/') && !ua.includes('Chrome/'))      browser = 'Safari'
+  else if (ua.includes('MSIE') || ua.includes('Trident/'))         browser = 'Internet Explorer'
+  if      (ua.includes('iPhone'))       os = 'iPhone'
+  else if (ua.includes('iPad'))         os = 'iPad'
+  else if (ua.includes('Android'))      os = 'Android'
+  else if (ua.includes('Windows NT'))   os = 'Windows'
+  else if (ua.includes('Mac OS X'))     os = 'Mac'
+  else if (ua.includes('Linux'))        os = 'Linux'
+  return os ? `${browser} sur ${os}` : browser
+}
 
 // ─────────────────────────────────────────────
 // ETAPE 1 : CREATION DU COMPTE
@@ -314,8 +337,27 @@ router.post('/login', validate(loginSchema), async (req, res) => {
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 jours
     });
 
-    // Enregistrer l'événement de connexion (en arrière-plan)
-    prisma.loginEvent.create({ data: { userId: user.id } }).catch(() => {})
+    // Détection nouvel appareil + enregistrement connexion (en arrière-plan)
+    ;(async () => {
+      try {
+        const ua = req.headers['user-agent'] || null
+        const lastLogin = await prisma.loginEvent.findFirst({
+          where: { userId: user.id },
+          orderBy: { createdAt: 'desc' },
+          select: { userAgent: true },
+        })
+        // Notif seulement si connexion précédente connue ET appareil différent
+        if (lastLogin?.userAgent && ua && lastLogin.userAgent !== ua) {
+          const deviceLabel = parseUserAgent(ua)
+          createNotif({
+            userId: user.id,
+            type: 'NEW_DEVICE_LOGIN',
+            content: `Connexion depuis un nouvel appareil détectée : ${deviceLabel}. Si ce n'est pas vous, changez votre mot de passe.`,
+          })
+        }
+        await prisma.loginEvent.create({ data: { userId: user.id, userAgent: ua } })
+      } catch {}
+    })()
 
     res.json({ message: 'Connexion reussie', token, user: safeUser });
   } catch (err) {
