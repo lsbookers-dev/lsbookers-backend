@@ -93,6 +93,12 @@ enum AvailabilityStatus {
   TENTATIVE    // En attente de confirmation
 }
 
+enum TagStatus {
+  PENDING   // En attente d'acceptation
+  ACCEPTED  // Tag accepté
+  DECLINED  // Tag refusé
+}
+
 enum BookingStatus {
   PENDING    // En attente de réponse
   ACCEPTED   // Acceptée
@@ -157,6 +163,8 @@ model User {
   trustedDevices        TrustedDevice[]
   deviceVerifications   DeviceVerification[]
   tokenVersion          Int                      @default(0)
+  tagsReceived          PublicationTag[]          @relation("TaggedUser")
+  tagsGiven             PublicationTag[]          @relation("TaggedByUser")
 }
 
 model Profile {
@@ -257,6 +265,25 @@ model Publication {
   notifications   Notification[]
   additionalMedia PublicationMedia[]
   albumItems      AlbumItem[]
+  tags            PublicationTag[]
+}
+
+model PublicationTag {
+  id            Int        @id @default(autoincrement())
+  publicationId Int
+  taggedUserId  Int        // Utilisateur tagué
+  taggedByUserId Int       // Auteur du tag (auteur de la publication)
+  status        TagStatus  @default(PENDING)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  publication   Publication @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+  taggedUser    User        @relation("TaggedUser", fields: [taggedUserId], references: [id], onDelete: Cascade)
+  taggedByUser  User        @relation("TaggedByUser", fields: [taggedByUserId], references: [id], onDelete: Cascade)
+
+  @@unique([publicationId, taggedUserId]) // Un seul tag par utilisateur par publication
+  @@index([publicationId])
+  @@index([taggedUserId])
 }
 
 model PublicationLike {

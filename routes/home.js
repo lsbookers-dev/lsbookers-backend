@@ -117,6 +117,18 @@ router.get('/feed', requireAuth, async (req, res) => {
       likes:           { select: { profileId: true } },
       _count:          { select: { comments: true } },
       additionalMedia: { orderBy: { order: 'asc' }, select: { id: true, url: true, mediaType: true, order: true } },
+      tags: {
+        where:  { status: 'ACCEPTED' },
+        select: {
+          id: true, status: true,
+          taggedUser: {
+            select: {
+              id: true, pseudo: true, firstName: true, lastName: true,
+              profile: { select: { id: true, avatar: true } },
+            },
+          },
+        },
+      },
     }
 
     // ── Score = récence (7j) + engagement ────────────────────

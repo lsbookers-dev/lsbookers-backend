@@ -11,15 +11,48 @@ const MEDIA_INCLUDE = {
   additionalMedia: { orderBy: { order: 'asc' }, select: { id: true, url: true, mediaType: true, order: true } },
 }
 
+// Helper — include tags acceptés (pour affichage)
+const TAG_INCLUDE = {
+  tags: {
+    where: { status: 'ACCEPTED' },
+    select: {
+      id: true,
+      status: true,
+      taggedUser: {
+        select: {
+          id: true, pseudo: true, firstName: true, lastName: true,
+          profile: { select: { id: true, avatar: true } },
+        },
+      },
+    },
+  },
+}
+
+// Helper — include tous les tags (pour le propriétaire qui veut voir PENDING aussi)
+const TAG_INCLUDE_ALL = {
+  tags: {
+    select: {
+      id: true,
+      status: true,
+      taggedUser: {
+        select: {
+          id: true, pseudo: true, firstName: true, lastName: true,
+          profile: { select: { id: true, avatar: true } },
+        },
+      },
+    },
+  },
+}
+
 // GET /api/publications/:id — récupérer une publication par son ID
 router.get('/:id(\\d+)', async (req, res) => {
   const id = Number(req.params.id)
   try {
     const pub = await prisma.publication.findUnique({
       where: { id },
-      select: {
-        id: true, title: true, media: true, mediaType: true, caption: true,
+      include: {
         ...MEDIA_INCLUDE,
+        ...TAG_INCLUDE,
         _count: { select: { likes: true, comments: true } },
       },
     })
@@ -45,6 +78,7 @@ router.get('/profile/:profileId', async (req, res) => {
       orderBy: { id: 'desc' },
       include: {
         ...MEDIA_INCLUDE,
+        ...TAG_INCLUDE,
         _count: { select: { likes: true, comments: true } },
       },
     });
@@ -385,6 +419,195 @@ router.post('/:id/like', requireAuth, async (req, res) => {
     return res.json({ liked: !existing, count })
   } catch (err) {
     console.error('❌ Like toggle :', err)
+    return res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
+// ─────────────────────────────────────────────
+//  TAGS
+// ─────────────────────────────────────────────
+
+// GET /api/publications/:id/tags — liste des tags d'une publication
+router.get('/:id/tags', async (req, res) => {
+  const id = parseInt(req.params.id, 10)
+  if (isNaN(id)) return res.status(400).json({ error: 'ID invalide' })
+  try {
+    const tags = await prisma.publicationTag.findMany({
+      where: { publicationId: id, status: 'ACCEPTED' },
+      select: {
+        id: true, status: true,
+        taggedUser: {
+          select: {
+            id: true, pseudo: true, firstName: true, lastName: true,
+            profile: { select: { id: true, avatar: true } },
+          },
+        },
+      },
+    })
+    return res.json({ tags })
+  } catch (err) {
+    console.error('❌ GET tags :', err)
+    return res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
+// POST /api/publications/:id/tags — taguer des utilisateurs (auteur seulement, max 5)
+router.post('/:id/tags', requireAuth, async (req, res) => {
+  const id = parseInt(req.params.id, 10)
+  if (isNaN(id)) return res.status(400).json({ error: 'ID invalide' })
+
+  const { userIds } = req.body // tableau d'IDs utilisateurs à taguer
+  if (!Array.isArray(userIds) || userIds.length === 0) {
+    return res.status(400).json({ error: 'userIds requis (tableau)' })
+  }
+
+  try {
+    const myProfile = await prisma.profile.findUnique({ where: { userId: req.user.id } })
+    if (!myProfile) return res.status(404).json({ error: 'Profil introuvable' })
+
+    const pub = await prisma.publication.findUnique({
+      where: { id },
+      include: {
+        profile: { select: { userId: true } },
+        tags: { select: { id: true } },
+      },
+    })
+    if (!pub) return res.status(404).json({ error: 'Publication introuvable' })
+    if (pub.profile.userId !== req.user.id) return res.status(403).json({ error: 'Accès interdit' })
+
+    // Max 5 tags au total
+    const existingCount = pub.tags.length
+    const toAdd = userIds.slice(0, Math.max(0, 5 - existingCount))
+    if (toAdd.length === 0) return res.status(400).json({ error: 'Maximum 5 tags par publication' })
+
+    // Créer les tags (ignorer les doublons)
+    const created = []
+    for (const uid of toAdd) {
+      const userId = parseInt(uid, 10)
+      if (isNaN(userId) || userId === req.user.id) continue
+      try {
+        const tag = await prisma.publicationTag.create({
+          data: { publicationId: id, taggedUserId: userId, taggedByUserId: req.user.id },
+          include: {
+            taggedUser: {
+              select: {
+                id: true, pseudo: true, firstName: true, lastName: true,
+                profile: { select: { id: true, avatar: true } },
+              },
+            },
+          },
+        })
+        created.push(tag)
+
+        // Notifier l'utilisateur tagué
+        const tagger = await prisma.user.findUnique({
+          where: { id: req.user.id },
+          select: { pseudo: true, firstName: true, lastName: true },
+        })
+        await createNotif({
+          userId:        userId,
+          type:          'TAG_ON_PUBLICATION',
+          content:       `${displayName(tagger)} t'a identifié(e) dans une publication.`,
+          actorId:       req.user.id,
+          publicationId: id,
+        }).catch(() => {})
+      } catch {
+        // Doublon ignoré
+      }
+    }
+
+    return res.status(201).json({ tags: created })
+  } catch (err) {
+    console.error('❌ POST tags :', err)
+    return res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
+// POST /api/publications/:id/tags/:tagId/respond — accepter ou refuser un tag
+router.post('/:id/tags/:tagId/respond', requireAuth, async (req, res) => {
+  const publicationId = parseInt(req.params.id, 10)
+  const tagId         = parseInt(req.params.tagId, 10)
+  const { action }    = req.body // 'accept' | 'decline'
+
+  if (isNaN(publicationId) || isNaN(tagId)) return res.status(400).json({ error: 'ID invalide' })
+  if (!['accept', 'decline'].includes(action)) return res.status(400).json({ error: 'action invalide (accept|decline)' })
+
+  try {
+    const tag = await prisma.publicationTag.findUnique({ where: { id: tagId } })
+    if (!tag) return res.status(404).json({ error: 'Tag introuvable' })
+    if (tag.taggedUserId !== req.user.id) return res.status(403).json({ error: 'Accès interdit' })
+    if (tag.publicationId !== publicationId) return res.status(400).json({ error: 'Tag ne correspond pas à la publication' })
+
+    const newStatus = action === 'accept' ? 'ACCEPTED' : 'DECLINED'
+    const updated = await prisma.publicationTag.update({
+      where: { id: tagId },
+      data:  { status: newStatus },
+      include: {
+        taggedUser: {
+          select: {
+            id: true, pseudo: true, firstName: true, lastName: true,
+            profile: { select: { id: true, avatar: true } },
+          },
+        },
+      },
+    })
+
+    return res.json({ tag: updated })
+  } catch (err) {
+    console.error('❌ POST respond tag :', err)
+    return res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
+// DELETE /api/publications/:id/tags/:tagId — supprimer un tag (auteur de la pub ou utilisateur tagué)
+router.delete('/:id/tags/:tagId', requireAuth, async (req, res) => {
+  const publicationId = parseInt(req.params.id, 10)
+  const tagId         = parseInt(req.params.tagId, 10)
+  if (isNaN(publicationId) || isNaN(tagId)) return res.status(400).json({ error: 'ID invalide' })
+
+  try {
+    const tag = await prisma.publicationTag.findUnique({
+      where: { id: tagId },
+      include: { publication: { include: { profile: { select: { userId: true } } } } },
+    })
+    if (!tag) return res.status(404).json({ error: 'Tag introuvable' })
+
+    const isAuthor = tag.publication.profile.userId === req.user.id
+    const isTagged = tag.taggedUserId === req.user.id
+    if (!isAuthor && !isTagged) return res.status(403).json({ error: 'Accès interdit' })
+
+    await prisma.publicationTag.delete({ where: { id: tagId } })
+    return res.json({ message: 'Tag supprimé' })
+  } catch (err) {
+    console.error('❌ DELETE tag :', err)
+    return res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
+// GET /api/publications/my-tags — publications où je suis tagué (PENDING pour répondre)
+router.get('/my-tags', requireAuth, async (req, res) => {
+  try {
+    const tags = await prisma.publicationTag.findMany({
+      where: { taggedUserId: req.user.id },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        publication: {
+          include: {
+            ...MEDIA_INCLUDE,
+            profile: {
+              select: {
+                id: true, avatar: true,
+                user: { select: { id: true, pseudo: true, firstName: true, lastName: true } },
+              },
+            },
+            _count: { select: { likes: true, comments: true } },
+          },
+        },
+      },
+    })
+    return res.json({ tags })
+  } catch (err) {
+    console.error('❌ GET my-tags :', err)
     return res.status(500).json({ error: 'Erreur serveur' })
   }
 })

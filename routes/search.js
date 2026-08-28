@@ -238,4 +238,39 @@ router.get('/', requireAuth, async (req, res) => {
   }
 })
 
+// GET /api/search/users?q=...&limit=8 — recherche rapide d'utilisateurs pour le système de tags
+router.get('/users', requireAuth, async (req, res) => {
+  const q     = String(req.query.q || '').trim()
+  const limit = Math.min(parseInt(req.query.limit, 10) || 8, 20)
+
+  if (!q || q.length < 2) return res.json({ users: [] })
+
+  try {
+    const users = await prisma.user.findMany({
+      where: {
+        id:       { not: req.user.id },
+        isAdmin:  false,
+        emailVerified: true,
+        OR: [
+          { pseudo:    { contains: q, mode: 'insensitive' } },
+          { firstName: { contains: q, mode: 'insensitive' } },
+          { lastName:  { contains: q, mode: 'insensitive' } },
+        ],
+      },
+      select: {
+        id: true,
+        pseudo: true,
+        firstName: true,
+        lastName: true,
+        profile: { select: { id: true, avatar: true } },
+      },
+      take: limit,
+    })
+    return res.json({ users })
+  } catch (err) {
+    console.error('❌ GET /search/users :', err)
+    return res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
 module.exports = router
