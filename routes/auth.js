@@ -338,85 +338,80 @@ router.post('/login', validate(loginSchema), async (req, res) => {
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
-    // ── Détection nouvel appareil (système device token) ─────────────────────
-    ;(async () => {
-      try {
-        const ua            = req.headers['user-agent'] || null
-        const cookieToken   = req.cookies?.device_token || null
+    // ── Détection appareil — AVANT res.json() pour pouvoir set le cookie ────
+    // Priorité : header X-Device-Token (localStorage) > cookie (fallback)
+    let deviceTokenForClient = null
+    try {
+      const ua             = req.headers['user-agent'] || null
+      const providedToken  = req.headers['x-device-token'] || req.cookies?.device_token || null
 
-        // 1. Appareil déjà de confiance → aucune notif
-        if (cookieToken) {
-          const trusted = await prisma.trustedDevice.findFirst({
-            where: { userId: user.id, deviceToken: cookieToken },
-          })
-          if (trusted) {
-            await prisma.loginEvent.create({ data: { userId: user.id, userAgent: ua, deviceToken: cookieToken } })
-            return
-          }
-
-          // 2. Cookie connu mais pas encore "trusted" → on l'a déjà vu (notif déjà envoyée)
+      if (providedToken) {
+        // 1. Appareil de confiance → silencieux
+        const trusted = await prisma.trustedDevice.findFirst({
+          where: { userId: user.id, deviceToken: providedToken },
+        })
+        if (trusted) {
+          await prisma.loginEvent.create({ data: { userId: user.id, userAgent: ua, deviceToken: providedToken } })
+          deviceTokenForClient = providedToken
+        } else {
+          // 2. Appareil déjà vu (email déjà envoyé) → silencieux
           const seen = await prisma.loginEvent.findFirst({
-            where: { userId: user.id, deviceToken: cookieToken },
+            where: { userId: user.id, deviceToken: providedToken },
           })
           if (seen) {
-            await prisma.loginEvent.create({ data: { userId: user.id, userAgent: ua, deviceToken: cookieToken } })
-            return
+            await prisma.loginEvent.create({ data: { userId: user.id, userAgent: ua, deviceToken: providedToken } })
+            deviceTokenForClient = providedToken
           }
         }
+      }
 
-        // 3. Nouvel appareil : générer un device token et set le cookie (30 jours)
+      if (!deviceTokenForClient) {
+        // 3. Nouvel appareil → générer token, set cookie, envoyer email
         const newDeviceToken = crypto.randomUUID()
+
         res.cookie('device_token', newDeviceToken, {
           httpOnly: true,
           secure: isProduction,
           sameSite: isProduction ? 'none' : 'lax',
-          maxAge: 30 * 24 * 60 * 60 * 1000,
+          maxAge: 30 * 24 * 60 * 60 * 1000, // 30 jours
         })
+        deviceTokenForClient = newDeviceToken
 
-        // 4. Envoyer l'email de vérification seulement si ce n'est pas le tout premier login
         const prevLoginCount = await prisma.loginEvent.count({ where: { userId: user.id } })
         if (prevLoginCount > 0) {
           const deviceLabel = parseUserAgent(ua)
-          const verifToken = crypto.randomBytes(32).toString('hex')
-          const expiresAt  = new Date(Date.now() + 24 * 60 * 60 * 1000) // 24h
+          const verifToken  = crypto.randomBytes(32).toString('hex')
+          const expiresAt   = new Date(Date.now() + 24 * 60 * 60 * 1000) // 24h
 
           await prisma.deviceVerification.create({
-            data: {
-              token:       verifToken,
-              userId:      user.id,
-              deviceToken: newDeviceToken,
-              deviceName:  deviceLabel,
-              expiresAt,
-            },
+            data: { token: verifToken, userId: user.id, deviceToken: newDeviceToken, deviceName: deviceLabel, expiresAt },
           })
 
-          const APP_URL   = process.env.APP_URL || 'https://www.lsbookers.com'
+          const APP_URL    = process.env.APP_URL || 'https://www.lsbookers.com'
           const trustLink  = `${APP_URL}/device-verified?token=${verifToken}&action=trust`
           const rejectLink = `${APP_URL}/device-verified?token=${verifToken}&action=reject`
-          const dateStr    = new Date().toLocaleString('fr-FR', { timeZone: 'Europe/Paris' })
 
           sendNewDeviceEmail(user.email, {
             deviceName: deviceLabel,
-            date:       dateStr,
+            date:       new Date().toLocaleString('fr-FR', { timeZone: 'Europe/Paris' }),
             trustLink,
             rejectLink,
           }).catch(err => console.error('Erreur sendNewDeviceEmail :', err))
 
-          // Notif informative (sans bouton d'action dans l'app)
           createNotif({
             userId:  user.id,
             type:    'NEW_DEVICE_LOGIN',
-            content: `Nouvelle connexion détectée depuis : ${deviceLabel}. Vérifiez votre email pour confirmer ou sécuriser votre compte.`,
+            content: `Nouvelle connexion depuis : ${deviceLabel}. Vérifiez votre email pour confirmer ou sécuriser votre compte.`,
           })
         }
 
         await prisma.loginEvent.create({ data: { userId: user.id, userAgent: ua, deviceToken: newDeviceToken } })
-      } catch (err) {
-        console.error('Erreur détection appareil :', err)
       }
-    })()
+    } catch (err) {
+      console.error('Erreur détection appareil :', err)
+    }
 
-    res.json({ message: 'Connexion reussie', token, user: safeUser });
+    res.json({ message: 'Connexion reussie', token, user: safeUser, deviceToken: deviceTokenForClient });
   } catch (err) {
     console.error('Erreur serveur lors de la connexion :', err);
     res.status(500).json({ error: 'Erreur serveur' });
