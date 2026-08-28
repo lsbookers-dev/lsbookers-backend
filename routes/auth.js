@@ -286,7 +286,23 @@ router.post('/register-complete', validate(registerCompleteSchema), async (req, 
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
-    res.status(201).json({ message: 'Compte créé', token, user: safeUser });
+    // ── Appareil de création = automatiquement de confiance ──
+    const ua              = req.headers['user-agent'] || null
+    const deviceName      = parseUserAgent(ua)
+    const registerToken   = crypto.randomUUID()
+
+    res.cookie('device_token', registerToken, {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: isProduction ? 'none' : 'lax',
+      maxAge: 30 * 24 * 60 * 60 * 1000,
+    })
+
+    await prisma.trustedDevice.create({
+      data: { userId: user.id, deviceToken: registerToken, name: deviceName, userAgent: ua },
+    }).catch(() => {}) // silencieux si erreur
+
+    res.status(201).json({ message: 'Compte créé', token, user: safeUser, deviceToken: registerToken });
   } catch (err) {
     console.error('Erreur dans /register-complete :', err);
     res.status(500).json({ error: 'Erreur serveur' });
