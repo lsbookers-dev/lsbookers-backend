@@ -153,9 +153,10 @@ model User {
   notificationsSent   Notification[]           @relation("NotificationActor")
   passwordResets      PasswordReset[]
   subscription        Subscription?
-  loginEvents         LoginEvent[]
-  trustedDevices      TrustedDevice[]
-  tokenVersion        Int                      @default(0)
+  loginEvents           LoginEvent[]
+  trustedDevices        TrustedDevice[]
+  deviceVerifications   DeviceVerification[]
+  tokenVersion          Int                      @default(0)
 }
 
 model Profile {
@@ -850,6 +851,25 @@ model TrustedDevice {
   createdAt   DateTime @default(now())
 
   @@index([userId])
+}
+
+// ─────────────────────────────────────────────
+//  VÉRIFICATION APPAREIL PAR EMAIL
+// ─────────────────────────────────────────────
+
+model DeviceVerification {
+  id          Int       @id @default(autoincrement())
+  token       String    @unique
+  userId      Int
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceToken String    // cookie UUID de l'appareil
+  deviceName  String    // "Chrome sur iPhone"
+  expiresAt   DateTime
+  usedAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([userId])
+  @@index([token])
 }
 
 model AdminPost {
