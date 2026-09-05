@@ -13,6 +13,75 @@ function normalizeText(value) {
   return String(value || '').trim().toLowerCase()
 }
 
+function buildPublicNameFilter(value) {
+  const query = String(value || '').trim()
+  if (!query) return undefined
+
+  return {
+    OR: [
+      { pseudo: { contains: query, mode: 'insensitive' } },
+      {
+        AND: [
+          { profile: { is: { showRealName: true } } },
+          {
+            OR: [
+              { firstName: { contains: query, mode: 'insensitive' } },
+              { lastName: { contains: query, mode: 'insensitive' } },
+            ],
+          },
+        ],
+      },
+    ],
+  }
+}
+
+const publicSearchSelect = {
+  id: true,
+  pseudo: true,
+  firstName: true,
+  lastName: true,
+  role: true,
+  createdAt: true,
+  profile: {
+    select: {
+      location: true,
+      country: true,
+      specialties: true,
+      styles: true,
+      typeEtablissement: true,
+      avatar: true,
+      showRealName: true,
+      // Utilisées uniquement côté serveur pour le filtre de distance.
+      latitude: true,
+      longitude: true,
+    },
+  },
+}
+
+function toPublicSearchUser(user) {
+  const profile = user.profile
+  const showRealName = profile?.showRealName === true
+
+  return {
+    id: user.id,
+    pseudo: showRealName ? null : user.pseudo,
+    firstName: showRealName ? user.firstName : null,
+    lastName: showRealName ? user.lastName : null,
+    role: user.role,
+    createdAt: user.createdAt,
+    profile: profile
+      ? {
+          location: profile.location,
+          country: profile.country,
+          specialties: profile.specialties,
+          styles: profile.styles,
+          typeEtablissement: profile.typeEtablissement,
+          avatar: profile.avatar,
+        }
+      : null,
+  }
+}
+
 // Haversine util
 function getDistance(lat1, lon1, lat2, lon2) {
   const R = 6371
@@ -127,15 +196,10 @@ router.get('/', requireAuth, async (req, res) => {
     const users = await prisma.user.findMany({
       where: {
         role: { not: 'ADMIN' },
+        emailVerified: true,
         id: { not: req.user.id, notIn: blockedIds.length ? blockedIds : undefined },
 
-        ...(name && {
-          OR: [
-            { pseudo:     { contains: String(name), mode: 'insensitive' } },
-            { firstName:  { contains: String(name), mode: 'insensitive' } },
-            { lastName:   { contains: String(name), mode: 'insensitive' } },
-          ],
-        }),
+        ...(name && buildPublicNameFilter(name)),
 
         ...(role &&
           String(role).toUpperCase() !== 'ADMIN' && {
@@ -171,9 +235,7 @@ router.get('/', requireAuth, async (req, res) => {
           }),
         },
       },
-      include: {
-        profile: true,
-      },
+      select: publicSearchSelect,
       orderBy: { createdAt: 'desc' },
     })
 
@@ -187,7 +249,7 @@ router.get('/', requireAuth, async (req, res) => {
         return normalizeText(p.location).includes(zoneText)
       })
 
-      return res.json({ users: finalUsers })
+      return res.json({ users: finalUsers.map(toPublicSearchUser) })
     }
 
     // Cas 2 : zone + rayon => distance réelle
@@ -227,11 +289,11 @@ router.get('/', requireAuth, async (req, res) => {
         }
       }
 
-      return res.json({ users: results })
+      return res.json({ users: results.map(toPublicSearchUser) })
     }
 
     // Cas 3 : pas de zone
-    return res.json({ users: finalUsers })
+    return res.json({ users: finalUsers.map(toPublicSearchUser) })
   } catch (err) {
     console.error('❌ Erreur lors de la recherche :', err)
     return res.status(500).json({ error: 'Erreur serveur lors de la recherche' })
@@ -251,22 +313,33 @@ router.get('/users', requireAuth, async (req, res) => {
         id:       { not: req.user.id },
         isAdmin:  false,
         emailVerified: true,
-        OR: [
-          { pseudo:    { contains: q, mode: 'insensitive' } },
-          { firstName: { contains: q, mode: 'insensitive' } },
-          { lastName:  { contains: q, mode: 'insensitive' } },
-        ],
+        ...buildPublicNameFilter(q),
       },
       select: {
         id: true,
         pseudo: true,
         firstName: true,
         lastName: true,
-        profile: { select: { id: true, avatar: true } },
+        role: true,
+        profile: { select: { id: true, avatar: true, showRealName: true } },
       },
       take: limit,
     })
-    return res.json({ users })
+    return res.json({
+      users: users.map((user) => {
+        const showRealName = user.profile?.showRealName === true
+        return {
+          id: user.id,
+          pseudo: showRealName ? null : user.pseudo,
+          firstName: showRealName ? user.firstName : null,
+          lastName: showRealName ? user.lastName : null,
+          role: user.role,
+          profile: user.profile
+            ? { id: user.profile.id, avatar: user.profile.avatar }
+            : null,
+        }
+      }),
+    })
   } catch (err) {
     console.error('❌ GET /search/users :', err)
     return res.status(500).json({ error: 'Erreur serveur' })

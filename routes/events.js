@@ -110,7 +110,11 @@ router.get('/availability/:profileId', async (req, res) => {
       const end   = new Date(parseInt(year), parseInt(month), 0, 23, 59, 59);
       where.date  = { gte: start, lte: end };
     }
-    const availability = await prisma.availability.findMany({ where, orderBy: { date: 'asc' } });
+    const availability = await prisma.availability.findMany({
+      where,
+      orderBy: { date: 'asc' },
+      select: { id: true, date: true, status: true },
+    });
     res.json({ availability });
   } catch (err) {
     console.error('GET availability:', err);

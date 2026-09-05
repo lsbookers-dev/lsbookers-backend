@@ -15,7 +15,6 @@ const followRoutes = require('./routes/follow');
 const blockRoutes  = require('./routes/block');
 const feedRoutes = require('./routes/feed');
 const searchRoutes = require('./routes/search');
-const usersRoutes = require('./routes/users');
 const adminRoutes = require('./routes/admin');
 const adminSettingsRoutes = require('./routes/adminSettings'); // paramètres du site
 const adminPostsRoutes = require('./routes/adminPosts'); // publications LSBookers
@@ -119,7 +118,6 @@ app.use('/api/follow', followRoutes);
 app.use('/api/block',  blockRoutes);
 app.use('/api/feed', feedRoutes);
 app.use('/api/search', searchRoutes);
-app.use('/api', usersRoutes);
 
 // ⚠️ IMPORTANT : monter /api/admin/settings et /api/admin/posts AVANT /api/admin
 app.use('/api/admin/settings', adminSettingsRoutes);

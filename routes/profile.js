@@ -40,6 +40,59 @@ const sanitizeStringArray = (value) => {
     .filter((item) => item.length > 0);
 };
 
+const toPublicProfile = (profile) => {
+  const { user, _count, ...publicFields } = profile;
+  const { _count: userCounts, ...userIdentity } = user;
+  const showRealName = profile.showRealName === true;
+
+  return {
+    ...publicFields,
+    user: {
+      ...userIdentity,
+      pseudo: showRealName ? null : user.pseudo,
+      firstName: showRealName ? user.firstName : null,
+      lastName: showRealName ? user.lastName : null,
+    },
+    followersCount: userCounts?.followers ?? 0,
+    followingCount: userCounts?.following ?? 0,
+  };
+};
+
+/**
+ * GET /api/profile/me
+ * Privé : profil complet de l'utilisateur connecté.
+ */
+router.get('/me', requireAuth, async (req, res) => {
+  try {
+    const profile = await prisma.profile.findUnique({
+      where: { userId: req.user.id },
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            pseudo: true,
+            firstName: true,
+            lastName: true,
+            role: true,
+          },
+        },
+        notificationPreferences: true,
+      },
+    });
+
+    if (!profile) {
+      return res.status(404).json({ error: 'Profil introuvable' });
+    }
+
+    res.set('Cache-Control', 'private, no-store');
+    return res.json({ profile });
+  } catch (error) {
+    console.error('❌ Erreur récupération profil privé /me :', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
 /**
  * GET /api/profile/user/:userId
  * Public : récupérer un profil par userId
@@ -54,10 +107,7 @@ router.get('/user/:userId', async (req, res) => {
   }
 
   try {
-    // SELECT explicite — seuls les champs publics sont renvoyés
-    // Les champs confidentiels (siret, address, postalCode, city, legalStatus,
-    // organizerType, establishmentName, notificationPreferences, user.email)
-    // sont volontairement exclus.
+    // SELECT explicite — seuls les champs destinés au profil public sont renvoyés.
     const profile = await prisma.profile.findUnique({
       where: { userId },
       select: {
@@ -84,13 +134,8 @@ router.get('/user/:userId', async (req, res) => {
         twitterUrl: true,
         linkedinUrl: true,
         websiteUrl: true,
-        address: true,
-        postalCode: true,
-        city: true,
         cvText: true,
         feeInfo: true,
-        latitude: true,
-        longitude: true,
         radiusKm: true,
         typeEtablissement: true,
         user: {
@@ -121,52 +166,13 @@ router.get('/user/:userId', async (req, res) => {
 
     return res.json({
       profile: {
-        ...profile,
-        followersCount: profile.user?._count?.followers ?? 0,
-        followingCount: profile.user?._count?.following ?? 0,
+        ...toPublicProfile(profile),
         reviewsAvg: reviews._avg.rating ?? null,
         reviewsCount: reviews._count.rating ?? 0,
       },
     });
   } catch (error) {
     console.error('❌ Erreur récupération profil public /user/:userId :', error);
-    return res.status(500).json({ error: 'Erreur serveur' });
-  }
-});
-
-/**
- * GET /api/profile/calendar/:userId
- * Public : calendrier d’un profil (via userId)
- * 👉 Invisibilité ADMIN : 404 si le profil est ADMIN
- */
-router.get('/calendar/:userId', async (req, res) => {
-  const raw = req.params.userId;
-  const userId = Number.parseInt(raw, 10);
-
-  if (Number.isNaN(userId)) {
-    return res.status(400).json({ error: 'Paramètre userId invalide' });
-  }
-
-  try {
-    const profile = await prisma.profile.findUnique({
-      where: { userId },
-      include: {
-        user: { select: { id: true, role: true } },
-      },
-    });
-
-    if (!profile || isAdminRole(profile?.user?.role)) {
-      return res.status(404).json({ error: 'Profil introuvable' });
-    }
-
-    const events = await prisma.event.findMany({
-      where: { profileId: profile.id },
-      orderBy: { start: 'asc' },
-    });
-
-    return res.json({ events });
-  } catch (error) {
-    console.error('❌ Erreur récupération calendrier :', error);
     return res.status(500).json({ error: 'Erreur serveur' });
   }
 });
@@ -202,6 +208,11 @@ router.get('/:id', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'Profil introuvable' });
     }
 
+    if (profile.userId !== req.user.id && callerRole !== 'ADMIN') {
+      return res.status(404).json({ error: 'Profil introuvable' });
+    }
+
+    res.set('Cache-Control', 'private, no-store');
     return res.json({ profile });
   } catch (error) {
     console.error('❌ Erreur récupération profil sécurisé /:id :', error);
