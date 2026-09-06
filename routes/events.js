@@ -149,8 +149,9 @@ router.put('/availability', requireAuth, async (req, res) => {
 router.get('/:id/detail', requireAuth, async (req, res) => {
   try {
     const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
+    if (!profile) return res.status(404).json({ error: 'Profil introuvable' });
     const event = await prisma.event.findFirst({
-      where: { id: parseInt(req.params.id), profileId: profile?.id },
+      where: { id: parseInt(req.params.id), profileId: profile.id },
       include: {
         staff: { include: { profile: { select: { id: true, avatar: true, user: { select: { pseudo: true, firstName: true, lastName: true, role: true } } } } } },
         expenses:  { orderBy: { createdAt: 'asc' } },
@@ -169,7 +170,7 @@ router.get('/:id/detail', requireAuth, async (req, res) => {
     const dayEnd = new Date(event.start);
     dayEnd.setHours(23, 59, 59, 999);
     const linkedBooking = await prisma.bookingRequest.findFirst({
-      where: { targetId: profile?.id, status: 'ACCEPTED', startDate: { gte: dayStart, lte: dayEnd } },
+      where: { targetId: profile.id, status: 'ACCEPTED', startDate: { gte: dayStart, lte: dayEnd } },
       include: { requester: { select: { id: true, avatar: true, user: { select: { pseudo: true, firstName: true, lastName: true } } } } },
     });
 
@@ -184,7 +185,8 @@ router.get('/:id/detail', requireAuth, async (req, res) => {
 router.delete('/:id', requireAuth, async (req, res) => {
   try {
     const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
-    const existing = await prisma.event.findFirst({ where: { id: parseInt(req.params.id), profileId: profile?.id } });
+    if (!profile) return res.status(404).json({ error: 'Profil introuvable' });
+    const existing = await prisma.event.findFirst({ where: { id: parseInt(req.params.id), profileId: profile.id } });
     if (!existing) return res.status(404).json({ error: 'Événement introuvable' });
     await prisma.event.delete({ where: { id: existing.id } });
     res.json({ success: true });
@@ -199,7 +201,8 @@ router.patch('/:id/notes', requireAuth, async (req, res) => {
   const { notes } = req.body;
   try {
     const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
-    const existing = await prisma.event.findFirst({ where: { id: parseInt(req.params.id), profileId: profile?.id } });
+    if (!profile) return res.status(404).json({ error: 'Profil introuvable' });
+    const existing = await prisma.event.findFirst({ where: { id: parseInt(req.params.id), profileId: profile.id } });
     if (!existing) return res.status(404).json({ error: 'Événement introuvable' });
     const event = await prisma.event.update({ where: { id: existing.id }, data: { notes: notes ?? null } });
     res.json({ event });
@@ -219,7 +222,8 @@ router.post('/:id/expenses', requireAuth, async (req, res) => {
   if (!label?.trim()) return res.status(400).json({ error: 'Libellé requis' });
   try {
     const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
-    const event = await prisma.event.findFirst({ where: { id: parseInt(req.params.id), profileId: profile?.id } });
+    if (!profile) return res.status(404).json({ error: 'Profil introuvable' });
+    const event = await prisma.event.findFirst({ where: { id: parseInt(req.params.id), profileId: profile.id } });
     if (!event) return res.status(404).json({ error: 'Événement introuvable' });
     const expense = await prisma.eventExpense.create({
       data: { eventId: event.id, label: label.trim(), amount: amount ? parseFloat(amount) : null, category: category || null },
@@ -236,10 +240,12 @@ router.patch('/:id/expenses/:expenseId', requireAuth, async (req, res) => {
   const { label, amount, category, paid } = req.body;
   try {
     const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
-    const event = await prisma.event.findFirst({ where: { id: parseInt(req.params.id), profileId: profile?.id } });
+    if (!profile) return res.status(404).json({ error: 'Profil introuvable' });
+    const event = await prisma.event.findFirst({ where: { id: parseInt(req.params.id), profileId: profile.id } });
     if (!event) return res.status(404).json({ error: 'Événement introuvable' });
-    const expense = await prisma.eventExpense.update({
-      where: { id: parseInt(req.params.expenseId) },
+    const expenseId = parseInt(req.params.expenseId);
+    const updated = await prisma.eventExpense.updateMany({
+      where: { id: expenseId, eventId: event.id },
       data: {
         ...(label    !== undefined && { label: label.trim() }),
         ...(amount   !== undefined && { amount: amount ? parseFloat(amount) : null }),
@@ -247,6 +253,8 @@ router.patch('/:id/expenses/:expenseId', requireAuth, async (req, res) => {
         ...(paid     !== undefined && { paid: Boolean(paid) }),
       },
     });
+    if (updated.count !== 1) return res.status(404).json({ error: 'Dépense introuvable' });
+    const expense = await prisma.eventExpense.findUnique({ where: { id: expenseId } });
     res.json({ expense });
   } catch (err) {
     console.error('PATCH expense:', err);
@@ -258,9 +266,13 @@ router.patch('/:id/expenses/:expenseId', requireAuth, async (req, res) => {
 router.delete('/:id/expenses/:expenseId', requireAuth, async (req, res) => {
   try {
     const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
-    const event = await prisma.event.findFirst({ where: { id: parseInt(req.params.id), profileId: profile?.id } });
+    if (!profile) return res.status(404).json({ error: 'Profil introuvable' });
+    const event = await prisma.event.findFirst({ where: { id: parseInt(req.params.id), profileId: profile.id } });
     if (!event) return res.status(404).json({ error: 'Événement introuvable' });
-    await prisma.eventExpense.delete({ where: { id: parseInt(req.params.expenseId) } });
+    const deleted = await prisma.eventExpense.deleteMany({
+      where: { id: parseInt(req.params.expenseId), eventId: event.id },
+    });
+    if (deleted.count !== 1) return res.status(404).json({ error: 'Dépense introuvable' });
     res.json({ ok: true });
   } catch (err) {
     console.error('DELETE expense:', err);
@@ -278,7 +290,8 @@ router.post('/:id/purchases', requireAuth, async (req, res) => {
   if (!item?.trim()) return res.status(400).json({ error: 'Article requis' });
   try {
     const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
-    const event = await prisma.event.findFirst({ where: { id: parseInt(req.params.id), profileId: profile?.id } });
+    if (!profile) return res.status(404).json({ error: 'Profil introuvable' });
+    const event = await prisma.event.findFirst({ where: { id: parseInt(req.params.id), profileId: profile.id } });
     if (!event) return res.status(404).json({ error: 'Événement introuvable' });
     const purchase = await prisma.eventPurchase.create({
       data: { eventId: event.id, item: item.trim(), quantity: quantity ? parseInt(quantity) : null, price: price ? parseFloat(price) : null },
@@ -295,10 +308,12 @@ router.patch('/:id/purchases/:purchaseId', requireAuth, async (req, res) => {
   const { item, quantity, price, done } = req.body;
   try {
     const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
-    const event = await prisma.event.findFirst({ where: { id: parseInt(req.params.id), profileId: profile?.id } });
+    if (!profile) return res.status(404).json({ error: 'Profil introuvable' });
+    const event = await prisma.event.findFirst({ where: { id: parseInt(req.params.id), profileId: profile.id } });
     if (!event) return res.status(404).json({ error: 'Événement introuvable' });
-    const purchase = await prisma.eventPurchase.update({
-      where: { id: parseInt(req.params.purchaseId) },
+    const purchaseId = parseInt(req.params.purchaseId);
+    const updated = await prisma.eventPurchase.updateMany({
+      where: { id: purchaseId, eventId: event.id },
       data: {
         ...(item     !== undefined && { item: item.trim() }),
         ...(quantity !== undefined && { quantity: quantity ? parseInt(quantity) : null }),
@@ -306,6 +321,8 @@ router.patch('/:id/purchases/:purchaseId', requireAuth, async (req, res) => {
         ...(done     !== undefined && { done: Boolean(done) }),
       },
     });
+    if (updated.count !== 1) return res.status(404).json({ error: 'Achat introuvable' });
+    const purchase = await prisma.eventPurchase.findUnique({ where: { id: purchaseId } });
     res.json({ purchase });
   } catch (err) {
     console.error('PATCH purchase:', err);
@@ -317,9 +334,13 @@ router.patch('/:id/purchases/:purchaseId', requireAuth, async (req, res) => {
 router.delete('/:id/purchases/:purchaseId', requireAuth, async (req, res) => {
   try {
     const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
-    const event = await prisma.event.findFirst({ where: { id: parseInt(req.params.id), profileId: profile?.id } });
+    if (!profile) return res.status(404).json({ error: 'Profil introuvable' });
+    const event = await prisma.event.findFirst({ where: { id: parseInt(req.params.id), profileId: profile.id } });
     if (!event) return res.status(404).json({ error: 'Événement introuvable' });
-    await prisma.eventPurchase.delete({ where: { id: parseInt(req.params.purchaseId) } });
+    const deleted = await prisma.eventPurchase.deleteMany({
+      where: { id: parseInt(req.params.purchaseId), eventId: event.id },
+    });
+    if (deleted.count !== 1) return res.status(404).json({ error: 'Achat introuvable' });
     res.json({ ok: true });
   } catch (err) {
     console.error('DELETE purchase:', err);
@@ -333,7 +354,8 @@ router.put('/:id', requireAuth, validate(eventUpdateSchema), async (req, res) =>
   const { title, description, start, end, allDay, lieu, category, isPrivate, budget, maxCapacity, status } = req.body;
   try {
     const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
-    const existing = await prisma.event.findFirst({ where: { id: parseInt(id), profileId: profile?.id } });
+    if (!profile) return res.status(404).json({ error: 'Profil introuvable' });
+    const existing = await prisma.event.findFirst({ where: { id: parseInt(id), profileId: profile.id } });
     if (!existing) return res.status(404).json({ error: 'Événement introuvable' });
     const event = await prisma.event.update({
       where: { id: parseInt(id) },

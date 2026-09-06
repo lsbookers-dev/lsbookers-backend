@@ -12,7 +12,8 @@ router.post('/:id/staff', requireAuth, async (req, res) => {
   if (!role?.trim()) return res.status(400).json({ error: 'Rôle requis' });
   try {
     const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
-    const event = await prisma.event.findFirst({ where: { id: parseInt(req.params.id), profileId: profile?.id } });
+    if (!profile) return res.status(404).json({ error: 'Profil introuvable' });
+    const event = await prisma.event.findFirst({ where: { id: parseInt(req.params.id), profileId: profile.id } });
     if (!event) return res.status(404).json({ error: 'Événement introuvable' });
 
     const staff = await prisma.eventStaff.create({
@@ -30,16 +31,6 @@ router.post('/:id/staff', requireAuth, async (req, res) => {
       },
     });
 
-    if (staffProfileId) {
-      const dayStart = new Date(event.start);
-      dayStart.setUTCHours(0, 0, 0, 0);
-      await prisma.availability.upsert({
-        where:  { profileId_date: { profileId: parseInt(staffProfileId), date: dayStart } },
-        update: { status: 'UNAVAILABLE' },
-        create: { profileId: parseInt(staffProfileId), date: dayStart, status: 'UNAVAILABLE' },
-      }).catch(() => {});
-    }
-
     res.status(201).json({ staff });
   } catch (err) {
     console.error('POST staff:', err);
@@ -51,9 +42,13 @@ router.post('/:id/staff', requireAuth, async (req, res) => {
 router.delete('/:id/staff/:staffId', requireAuth, async (req, res) => {
   try {
     const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
-    const event = await prisma.event.findFirst({ where: { id: parseInt(req.params.id), profileId: profile?.id } });
+    if (!profile) return res.status(404).json({ error: 'Profil introuvable' });
+    const event = await prisma.event.findFirst({ where: { id: parseInt(req.params.id), profileId: profile.id } });
     if (!event) return res.status(404).json({ error: 'Événement introuvable' });
-    await prisma.eventStaff.delete({ where: { id: parseInt(req.params.staffId) } });
+    const deleted = await prisma.eventStaff.deleteMany({
+      where: { id: parseInt(req.params.staffId), eventId: event.id },
+    });
+    if (deleted.count !== 1) return res.status(404).json({ error: 'Membre introuvable' });
     res.json({ ok: true });
   } catch (err) {
     console.error('DELETE staff:', err);
