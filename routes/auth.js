@@ -7,10 +7,7 @@ const prisma = require('../prisma/client');
 const { requireAuth } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const {
-  registerSchema,
   loginSchema,
-  step2Schema,
-  step3Schema,
   registerCompleteSchema,
   resendVerificationSchema,
 } = require('../schemas');
@@ -39,148 +36,16 @@ function parseUserAgent(ua) {
   return os ? `${browser} sur ${os}` : browser
 }
 
-// ─────────────────────────────────────────────
-// ETAPE 1 : CREATION DU COMPTE
-// Collecte : email, password, role
-// ─────────────────────────────────────────────
-router.post('/register', validate(registerSchema), async (req, res) => {
-  const { email, password, role } = req.body;
-
-  try {
-    const existing = await prisma.user.findUnique({ where: { email: email.toLowerCase().trim() } });
-    if (existing) {
-      return res.status(400).json({ error: 'Utilisateur deja inscrit' });
-    }
-
-    const hashedPassword = await bcrypt.hash(password, 12);
-    const emailVerificationToken = crypto.randomBytes(32).toString('hex');
-
-    const user = await prisma.user.create({
-      data: {
-        email: email.toLowerCase().trim(),
-        password: hashedPassword,
-        role,
-        isAdmin: false,
-        registrationStep: 1,
-        emailVerified: false,
-        emailVerificationToken,
-        profile: { create: {} },
-      },
-      include: { profile: true },
-    });
-
-    const token = jwt.sign(
-      { id: user.id, email: user.email, role: user.role, isAdmin: user.isAdmin },
-      process.env.JWT_SECRET,
-      { expiresIn: '7d' }
-    );
-
-    // Envoi de l'email de verification (en arriere-plan)
-    sendVerificationEmail(user.email, emailVerificationToken).catch(err =>
-      console.error('Erreur envoi email verification:', err)
-    );
-
-    const { password: _pw, ...safeUser } = user;
-
-    // Cookie httpOnly dès l'inscription
-    const isProduction = process.env.NODE_ENV === 'production';
-    res.cookie('token', token, {
-      httpOnly: true,
-      secure: isProduction,
-      sameSite: isProduction ? 'none' : 'lax',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
-
-    res.status(201).json({ message: 'Compte cree', token, user: safeUser });
-  } catch (err) {
-    console.error('Erreur dans /register :', err);
-    res.status(500).json({ error: 'Erreur serveur' });
-  }
-});
-
-// ─────────────────────────────────────────────
-// ETAPE 2 : IDENTITE
-// Collecte : pseudo, firstName, lastName, dateOfBirth, phone, countryOfResidence
-// ─────────────────────────────────────────────
-router.patch('/step2', requireAuth, validate(step2Schema), async (req, res) => {
-  const { pseudo, firstName, lastName, dateOfBirth, phone, countryOfResidence } = req.body;
-
-  try {
-    // Verifier que le pseudo n'est pas deja pris par quelqu'un d'autre
-    const takenBy = await prisma.user.findUnique({ where: { pseudo } });
-    if (takenBy && takenBy.id !== req.user.id) {
-      return res.status(409).json({ error: 'Ce pseudo est deja utilise' });
-    }
-
-    const data = {
-      pseudo,
-      firstName: firstName.trim(),
-      lastName: lastName.trim(),
-      registrationStep: 2,
-    };
-
-    if (dateOfBirth) data.dateOfBirth = new Date(dateOfBirth);
-    if (phone) data.phone = phone.trim();
-    if (countryOfResidence) data.countryOfResidence = countryOfResidence.trim();
-
-    const user = await prisma.user.update({
-      where: { id: req.user.id },
-      data,
-    });
-
-    const { password: _pw, ...safeUser } = user;
-    res.json({ message: 'Identite enregistree', user: safeUser });
-  } catch (err) {
-    console.error('Erreur dans /step2 :', err);
-    res.status(500).json({ error: 'Erreur serveur' });
-  }
-});
-
-// ─────────────────────────────────────────────
-// ETAPE 3 : PROFIL & INFOS LEGALES
-// Collecte : bio, profession, location, country, legalStatus,
-//            organizerType, establishmentName, typeEtablissement,
-//            siret, address, postalCode, city
-// ─────────────────────────────────────────────
-router.patch('/step3', requireAuth, validate(step3Schema), async (req, res) => {
+// Ne jamais exposer les secrets et compteurs internes du compte au navigateur.
+function toClientUser(user) {
   const {
-    bio, profession, location, country, legalStatus,
-    organizerType, establishmentName, typeEtablissement,
-    siret, address, postalCode, city,
-  } = req.body;
-
-  try {
-    const profileData = {};
-
-    if (bio) profileData.bio = bio.trim();
-    if (profession) profileData.profession = profession.trim();
-    if (location) profileData.location = location.trim();
-    if (country) profileData.country = country.trim();
-    if (legalStatus) profileData.legalStatus = legalStatus;
-    if (organizerType) profileData.organizerType = organizerType;
-    if (establishmentName) profileData.establishmentName = establishmentName.trim();
-    if (typeEtablissement) profileData.typeEtablissement = typeEtablissement.trim();
-    if (siret) profileData.siret = siret.trim();
-    if (address) profileData.address = address.trim();
-    if (postalCode) profileData.postalCode = postalCode.trim();
-    if (city) profileData.city = city.trim();
-
-    await prisma.profile.update({
-      where: { userId: req.user.id },
-      data: profileData,
-    });
-
-    await prisma.user.update({
-      where: { id: req.user.id },
-      data: { registrationStep: 3 },
-    });
-
-    res.json({ message: 'Profil enregistre' });
-  } catch (err) {
-    console.error('Erreur dans /step3 :', err);
-    res.status(500).json({ error: 'Erreur serveur' });
-  }
-});
+    password: _password,
+    emailVerificationToken: _emailVerificationToken,
+    tokenVersion: _tokenVersion,
+    ...safeUser
+  } = user
+  return safeUser
+}
 
 // ─────────────────────────────────────────────
 // VÉRIFICATION DISPONIBILITÉ DU PSEUDO
@@ -265,27 +130,12 @@ router.post('/register-complete', validate(registerCompleteSchema), async (req, 
       include: { profile: true },
     });
 
-    const token = jwt.sign(
-      { id: user.id, email: user.email, role: user.role, isAdmin: user.isAdmin, tokenVersion: 0 },
-      process.env.JWT_SECRET,
-      { expiresIn: '7d' }
-    );
-
     // Envoi de l'email de vérification
     sendVerificationEmail(user.email, emailVerificationToken).catch(err =>
       console.error('Erreur envoi email vérification:', err)
     );
 
-    const { password: _pw, ...safeUser } = user;
-
     const isProduction = process.env.NODE_ENV === 'production';
-    res.cookie('token', token, {
-      httpOnly: true,
-      secure: isProduction,
-      sameSite: isProduction ? 'none' : 'lax',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
-
     // ── Appareil de création = automatiquement de confiance ──
     const ua              = req.headers['user-agent'] || null
     const deviceName      = parseUserAgent(ua)
@@ -302,7 +152,11 @@ router.post('/register-complete', validate(registerCompleteSchema), async (req, 
       data: { userId: user.id, deviceToken: registerToken, name: deviceName, userAgent: ua },
     }).catch(() => {}) // silencieux si erreur
 
-    res.status(201).json({ message: 'Compte créé', token, user: safeUser, deviceToken: registerToken });
+    res.status(201).json({
+      message: 'Compte créé. Vérifiez votre adresse email avant de vous connecter.',
+      requiresEmailVerification: true,
+      deviceToken: registerToken,
+    });
   } catch (err) {
     console.error('Erreur dans /register-complete :', err);
     res.status(500).json({ error: 'Erreur serveur' });
@@ -342,7 +196,7 @@ router.post('/login', validate(loginSchema), async (req, res) => {
       { expiresIn: '7d' }
     );
 
-    const { password: _pw, ...safeUser } = user;
+    const safeUser = toClientUser(user);
 
     const isProduction = process.env.NODE_ENV === 'production';
 
@@ -601,7 +455,7 @@ router.get('/me', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'Utilisateur introuvable' });
     }
 
-    const { password: _pw, ...safeUser } = user;
+    const safeUser = toClientUser(user);
     res.json({ user: safeUser });
   } catch (err) {
     console.error('Erreur dans /me :', err);

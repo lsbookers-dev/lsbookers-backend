@@ -63,7 +63,7 @@ const corsOptions = {
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Authorization', 'Content-Type', 'Cache-Control', 'Pragma', 'Expires'],
+  allowedHeaders: ['Authorization', 'Content-Type', 'X-Device-Token', 'Cache-Control', 'Pragma', 'Expires'],
 };
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
@@ -106,6 +106,8 @@ app.use('/uploads', express.static('uploads'));
 // Rate limiting uniquement sur login et register (pas sur /me)
 app.use('/api/auth/login', authLimiter);
 app.use('/api/auth/register', authLimiter);
+app.use('/api/auth/register-complete', authLimiter);
+app.use('/api/auth/resend-verification', authLimiter);
 app.use('/api/auth/forgot-password', authLimiter);
 app.use('/api/auth/reset-password', authLimiter);
 app.use('/api/auth', authRoutes);

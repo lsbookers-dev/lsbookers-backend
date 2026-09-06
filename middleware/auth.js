@@ -10,8 +10,7 @@
  */
 
 const jwt = require('jsonwebtoken');
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const prisma = require('../prisma/client');
 
 /**
  * requireAuth
@@ -51,6 +50,7 @@ const requireAuth = async (req, res, next) => {
         role: true,
         isAdmin: true,
         registrationStep: true,
+        emailVerified: true,
         tokenVersion: true,
         profile: {
           select: { id: true, avatar: true, banner: true },
@@ -62,9 +62,13 @@ const requireAuth = async (req, res, next) => {
       return res.status(401).json({ error: 'Utilisateur introuvable' });
     }
 
-    // Vérifier tokenVersion — si l'utilisateur a invalidé ses sessions (reject-device)
-    // les anciens tokens (sans tokenVersion) sont acceptés pour la rétrocompatibilité
-    if (decoded.tokenVersion !== undefined && decoded.tokenVersion !== user.tokenVersion) {
+    // Une session normale n'est valable qu'après vérification de l'adresse email.
+    if (!user.emailVerified) {
+      return res.status(403).json({ error: 'EMAIL_NOT_VERIFIED' });
+    }
+
+    // Les jetons hérités sans version sont refusés : toute session doit être révocable.
+    if (!Number.isInteger(decoded.tokenVersion) || decoded.tokenVersion !== user.tokenVersion) {
       return res.status(401).json({ error: 'Session expirée, veuillez vous reconnecter' });
     }
 

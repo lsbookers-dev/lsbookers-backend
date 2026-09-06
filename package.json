@@ -4,6 +4,7 @@
   "description": "",
   "main": "server.js",
   "scripts": {
+    "test": "node --test",
     "dev": "nodemon server.js",
     "force-dev": "killall -9 node || true && nodemon server.js",
     "build": "prisma generate",

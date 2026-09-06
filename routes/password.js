@@ -72,15 +72,33 @@ router.post('/reset-password', validate(resetPasswordSchema), async (req, res) =
     }
 
     const hash = await bcrypt.hash(password, 10);
-    await prisma.user.update({
-      where: { id: pr.userId },
-      data: { password: hash },
+    const resetApplied = await prisma.$transaction(async tx => {
+      // Réclamer le lien dans la transaction empêche deux requêtes simultanées
+      // de réutiliser le même jeton.
+      const claimed = await tx.passwordReset.updateMany({
+        where: {
+          tokenHash,
+          usedAt: null,
+          expiresAt: { gt: new Date() },
+        },
+        data: { usedAt: new Date() },
+      });
+
+      if (claimed.count !== 1) return false;
+
+      await tx.user.update({
+        where: { id: pr.userId },
+        data: {
+          password: hash,
+          tokenVersion: { increment: 1 },
+        },
+      });
+      return true;
     });
 
-    await prisma.passwordReset.update({
-      where: { tokenHash },
-      data: { usedAt: new Date() },
-    });
+    if (!resetApplied) {
+      return res.status(400).json({ error: 'Lien invalide ou expire.' });
+    }
 
     return res.json({ message: 'Mot de passe reinitialise avec succes.' });
   } catch (e) {
