@@ -3,6 +3,7 @@ const router = express.Router();
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const rateLimit = require('express-rate-limit');
 const prisma = require('../prisma/client');
 const { requireAuth } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
@@ -13,6 +14,15 @@ const {
 } = require('../schemas');
 const { sendVerificationEmail, sendNewDeviceEmail } = require('../utils/email');
 const { createNotif } = require('../services/notifications');
+
+// Rate limiting pour les routes publiques d'énumération
+const pseudoCheckLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 20,             // max 20 vérifications par minute par IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Trop de vérifications, réessayez dans une minute' },
+});
 
 // ─────────────────────────────────────────────
 // Helper — parse User-Agent en texte lisible
@@ -51,7 +61,7 @@ function toClientUser(user) {
 // VÉRIFICATION DISPONIBILITÉ DU PSEUDO
 // GET /api/auth/check-pseudo?pseudo=xxx
 // ─────────────────────────────────────────────
-router.get('/check-pseudo', async (req, res) => {
+router.get('/check-pseudo', pseudoCheckLimiter, async (req, res) => {
   const pseudo = (req.query.pseudo || '').trim();
   if (!pseudo || pseudo.length < 3) {
     return res.json({ available: false });
