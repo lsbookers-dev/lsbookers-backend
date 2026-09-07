@@ -177,6 +177,7 @@ router.get('/conversations', requireAuth, async (req, res) => {
               }
             : null,
           updatedAt: c.updatedAt,
+          muted: Boolean(p.muted),
         }
       })
     )
@@ -206,7 +207,7 @@ router.get('/unread-count', requireAuth, async (req, res) => {
     if (!userId) return res.status(401).json({ error: 'Unauthorized' })
 
     const participations = await prisma.conversationParticipant.findMany({
-      where: { userId },
+      where: { userId, muted: false },
       select: { conversationId: true },
     })
 
@@ -224,6 +225,36 @@ router.get('/unread-count', requireAuth, async (req, res) => {
     return res.json({ count })
   } catch (err) {
     console.error('❌ [GET /unread-count]', err)
+    return res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
+/* =========================================================
+   PATCH /api/messages/conversations/:conversationId/mute
+========================================================= */
+router.patch('/conversations/:conversationId/mute', requireAuth, async (req, res) => {
+  try {
+    const userId = Number(req.user?.id)
+    const conversationId = Number(req.params.conversationId)
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' })
+    if (!conversationId || typeof req.body?.muted !== 'boolean') {
+      return res.status(400).json({ error: 'Paramètres invalides' })
+    }
+
+    const participation = await prisma.conversationParticipant.findUnique({
+      where: { userId_conversationId: { userId, conversationId } },
+      select: { id: true },
+    })
+    if (!participation) return res.status(403).json({ error: 'Accès interdit à cette conversation' })
+
+    const updated = await prisma.conversationParticipant.update({
+      where: { id: participation.id },
+      data: { muted: req.body.muted },
+      select: { muted: true },
+    })
+    return res.json(updated)
+  } catch (err) {
+    console.error('PATCH conversation mute:', err)
     return res.status(500).json({ error: 'Erreur serveur' })
   }
 })

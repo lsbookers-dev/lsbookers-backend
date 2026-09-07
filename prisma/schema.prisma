@@ -446,6 +446,7 @@ model ConversationParticipant {
   id             Int          @id @default(autoincrement())
   userId         Int
   conversationId Int
+  muted          Boolean      @default(false)
 
   user           User         @relation(fields: [userId], references: [id])
   conversation   Conversation @relation(fields: [conversationId], references: [id])
