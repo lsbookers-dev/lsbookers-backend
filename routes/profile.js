@@ -75,6 +75,12 @@ router.get('/me', requireAuth, async (req, res) => {
             firstName: true,
             lastName: true,
             role: true,
+            _count: {
+              select: {
+                followers: true,
+                following: true,
+              },
+            },
           },
         },
         notificationPreferences: true,
@@ -86,7 +92,15 @@ router.get('/me', requireAuth, async (req, res) => {
     }
 
     res.set('Cache-Control', 'private, no-store');
-    return res.json({ profile });
+    const { _count: userCounts, ...user } = profile.user;
+    return res.json({
+      profile: {
+        ...profile,
+        user,
+        followersCount: userCounts.followers,
+        followingCount: userCounts.following,
+      },
+    });
   } catch (error) {
     console.error('❌ Erreur récupération profil privé /me :', error);
     return res.status(500).json({ error: 'Erreur serveur' });
