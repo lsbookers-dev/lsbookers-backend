@@ -324,52 +324,94 @@ router.post('/logout', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────
-// VÉRIFICATION APPAREIL PAR EMAIL (lien one-time)
-// GET /api/auth/device-verify?token=xxx&action=trust|reject
-// Pas d'auth requise (lien reçu par email)
+// VÉRIFICATION APPAREIL — TRUST (lien email one-time)
+// GET /api/auth/device-verify?token=xxx&action=trust
+// Pas d'auth requise. L'update usedAt est ATOMIQUE (updateMany WHERE usedAt IS NULL)
+// pour résister aux pre-fetches parallèles des scanners d'email.
 // ─────────────────────────────────────────────
 router.get('/device-verify', async (req, res) => {
   const { token, action } = req.query
-  if (!token || !['trust', 'reject'].includes(action)) {
+
+  // Cette route ne gère plus que l'action trust.
+  // Le reject passe par POST /device-verify-reject (requiert une action explicite).
+  if (!token || action !== 'trust') {
     return res.status(400).json({ error: 'Lien invalide' })
   }
 
   try {
-    const verif = await prisma.deviceVerification.findUnique({ where: { token } })
-
-    if (!verif)               return res.status(400).json({ error: 'Lien invalide ou déjà utilisé' })
-    if (verif.usedAt)         return res.status(400).json({ error: 'Ce lien a déjà été utilisé' })
-    if (verif.expiresAt < new Date()) return res.status(400).json({ error: 'Ce lien a expiré' })
-
-    // Marquer le token comme utilisé
-    await prisma.deviceVerification.update({
-      where: { id: verif.id },
+    // Mise à jour atomique : on ne marque usedAt que si le token n'a pas encore été utilisé
+    // et n'a pas expiré. Si un autre pre-fetch concurrent arrive en même temps, il obtient
+    // count=0 et s'arrête → impossible de trust ET reject le même token en parallèle.
+    const updated = await prisma.deviceVerification.updateMany({
+      where: { token, usedAt: null, expiresAt: { gt: new Date() } },
       data:  { usedAt: new Date() },
     })
 
-    if (action === 'trust') {
-      // Ajouter l'appareil en liste de confiance
-      const existing = await prisma.trustedDevice.findUnique({ where: { deviceToken: verif.deviceToken } })
-      if (!existing) {
-        await prisma.trustedDevice.create({
-          data: { userId: verif.userId, deviceToken: verif.deviceToken, name: verif.deviceName, userAgent: null },
-        })
-      }
-      return res.json({ message: 'Appareil confirmé', deviceName: verif.deviceName })
+    if (updated.count === 0) {
+      // Déterminer pourquoi : déjà utilisé ou expiré
+      const verif = await prisma.deviceVerification.findUnique({ where: { token } })
+      if (!verif)        return res.status(400).json({ error: 'Lien invalide' })
+      if (verif.usedAt)  return res.status(400).json({ error: 'Ce lien a déjà été utilisé' })
+      return res.status(400).json({ error: 'Ce lien a expiré' })
     }
 
-    if (action === 'reject') {
-      // Incrémenter tokenVersion → tous les JWT existants deviennent invalides
-      await prisma.user.update({
-        where: { id: verif.userId },
-        data:  { tokenVersion: { increment: 1 } },
+    const verif = await prisma.deviceVerification.findUnique({ where: { token } })
+
+    // Ajouter l'appareil en liste de confiance (idempotent)
+    const existing = await prisma.trustedDevice.findUnique({ where: { deviceToken: verif.deviceToken } })
+    if (!existing) {
+      await prisma.trustedDevice.create({
+        data: { userId: verif.userId, deviceToken: verif.deviceToken, name: verif.deviceName, userAgent: null },
       })
-      // Supprimer tous les appareils de confiance (reset sécurité complet)
-      await prisma.trustedDevice.deleteMany({ where: { userId: verif.userId } })
-      return res.json({ message: 'Compte sécurisé. Toutes vos sessions ont été fermées.' })
     }
+
+    return res.json({ message: 'Appareil confirmé', deviceName: verif.deviceName })
   } catch (err) {
-    console.error('Erreur device-verify :', err)
+    console.error('Erreur device-verify trust :', err)
+    res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
+// ─────────────────────────────────────────────
+// VÉRIFICATION APPAREIL — REJECT (action destructive, POST requis)
+// POST /api/auth/device-verify-reject
+// Requiert un POST explicite depuis la page de confirmation →
+// les scanners d'email (qui font des GET) ne peuvent PAS déclencher ça.
+// ─────────────────────────────────────────────
+router.post('/device-verify-reject', async (req, res) => {
+  const { token } = req.body
+
+  if (!token) {
+    return res.status(400).json({ error: 'Token manquant' })
+  }
+
+  try {
+    // Même mécanique atomique que pour trust
+    const updated = await prisma.deviceVerification.updateMany({
+      where: { token, usedAt: null, expiresAt: { gt: new Date() } },
+      data:  { usedAt: new Date() },
+    })
+
+    if (updated.count === 0) {
+      const verif = await prisma.deviceVerification.findUnique({ where: { token } })
+      if (!verif)        return res.status(400).json({ error: 'Lien invalide' })
+      if (verif.usedAt)  return res.status(400).json({ error: 'Ce lien a déjà été utilisé' })
+      return res.status(400).json({ error: 'Ce lien a expiré' })
+    }
+
+    const verif = await prisma.deviceVerification.findUnique({ where: { token } })
+
+    // Invalider tous les JWT en incrémentant tokenVersion
+    await prisma.user.update({
+      where: { id: verif.userId },
+      data:  { tokenVersion: { increment: 1 } },
+    })
+    // Supprimer tous les appareils de confiance
+    await prisma.trustedDevice.deleteMany({ where: { userId: verif.userId } })
+
+    return res.json({ message: 'Compte sécurisé. Toutes vos sessions ont été fermées.' })
+  } catch (err) {
+    console.error('Erreur device-verify reject :', err)
     res.status(500).json({ error: 'Erreur serveur' })
   }
 })
