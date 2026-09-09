@@ -53,6 +53,10 @@ BEGIN
   END IF;
 END $$;
 
+-- Selon la façon dont la table historique a été créée, l'unicité peut être
+-- une contrainte PostgreSQL (avec index dépendant) ou un index autonome.
+ALTER TABLE "TrustedDevice"
+  DROP CONSTRAINT IF EXISTS "TrustedDevice_deviceToken_key";
 DROP INDEX IF EXISTS "TrustedDevice_deviceToken_key";
 CREATE UNIQUE INDEX IF NOT EXISTS "TrustedDevice_userId_deviceToken_key"
   ON "TrustedDevice"("userId", "deviceToken");
