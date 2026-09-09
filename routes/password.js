@@ -91,6 +91,7 @@ router.post('/reset-password', validate(resetPasswordSchema), async (req, res) =
         data: {
           password: hash,
           tokenVersion: { increment: 1 },
+          requiresPasswordReset: false,
         },
       });
       return true;

@@ -103,17 +103,19 @@ test('register-complete ne renvoie aucune session ni token email', async () => {
   const originals = {
     findUnique: prisma.user.findUnique,
     createUser: prisma.user.create,
-    createDevice: prisma.trustedDevice.create,
   }
+  let createdUserData
   prisma.user.findUnique = async () => null
-  prisma.user.create = async ({ data }) => ({
-    id: 42,
-    ...data,
-    password: 'hashed-password',
-    tokenVersion: 0,
-    profile: { id: 7 },
-  })
-  prisma.trustedDevice.create = async () => ({ id: 1 })
+  prisma.user.create = async ({ data }) => {
+    createdUserData = data
+    return {
+      id: 42,
+      ...data,
+      password: 'hashed-password',
+      tokenVersion: 0,
+      profile: { id: 7 },
+    }
+  }
 
   const handler = routeHandler(authRouter, '/register-complete')
   const req = {
@@ -136,7 +138,6 @@ test('register-complete ne renvoie aucune session ni token email', async () => {
   } finally {
     prisma.user.findUnique = originals.findUnique
     prisma.user.create = originals.createUser
-    prisma.trustedDevice.create = originals.createDevice
   }
 
   assert.equal(res.statusCode, 201)
@@ -146,6 +147,9 @@ test('register-complete ne renvoie aucune session ni token email', async () => {
   assert.equal('user' in res.body, false)
   assert.equal('emailVerificationToken' in res.body, false)
   assert.deepEqual(res.cookies.map(cookie => cookie.name), ['device_token'])
+  assert.equal(createdUserData.emailVerified, false)
+  assert.equal(createdUserData.pendingTrustedDevice.create.deviceToken, res.body.deviceToken)
+  assert.ok(createdUserData.pendingTrustedDevice.create.expiresAt instanceof Date)
 })
 
 test('reset-password révoque les sessions et refuse une réutilisation concurrente', async () => {
@@ -195,5 +199,6 @@ test('reset-password révoque les sessions et refuse une réutilisation concurre
   assert.deepEqual([res1.statusCode, res2.statusCode].sort(), [200, 400])
   assert.equal(userUpdates.length, 1)
   assert.deepEqual(userUpdates[0].data.tokenVersion, { increment: 1 })
+  assert.equal(userUpdates[0].data.requiresPasswordReset, false)
   assert.ok(userUpdates[0].data.password)
 })

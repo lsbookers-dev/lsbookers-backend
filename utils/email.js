@@ -7,7 +7,15 @@ const { Resend } = require('resend');
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 const FROM = 'LSBookers <noreply@lsbookers.com>';
-const APP_URL = process.env.APP_URL || 'https://www.lsbookers.com';
+const APP_URL = (process.env.APP_URL || 'https://lsbookers.com').replace(/\/+$/, '');
+
+async function deliverEmail(payload) {
+  const result = await resend.emails.send(payload)
+  if (result?.error) {
+    throw new Error(result.error.message || 'Le fournisseur email a refusé l’envoi')
+  }
+  return result
+}
 
 // ─────────────────────────────────────────────
 // Email de verification de compte
@@ -15,7 +23,7 @@ const APP_URL = process.env.APP_URL || 'https://www.lsbookers.com';
 async function sendVerificationEmail(to, token) {
   const link = `${APP_URL}/verify-email?token=${token}`;
 
-  await resend.emails.send({
+  await deliverEmail({
     from: FROM,
     to,
     subject: 'Confirme ton adresse email — LSBookers',
@@ -53,7 +61,7 @@ async function sendVerificationEmail(to, token) {
 async function sendPasswordResetEmail(to, token) {
   const link = `${APP_URL}/reset-password?token=${token}`;
 
-  await resend.emails.send({
+  await deliverEmail({
     from: FROM,
     to,
     subject: 'Réinitialise ton mot de passe — LSBookers',
@@ -89,7 +97,7 @@ async function sendPasswordResetEmail(to, token) {
 // Email de vérification d'un nouvel appareil
 // ─────────────────────────────────────────────
 async function sendNewDeviceEmail(to, { deviceName, date, trustLink, rejectLink }) {
-  await resend.emails.send({
+  await deliverEmail({
     from: FROM,
     to,
     subject: '🔐 Nouvelle connexion détectée — LSBookers',

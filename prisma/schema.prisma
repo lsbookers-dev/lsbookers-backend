@@ -138,6 +138,7 @@ model User {
   // Verification email
   emailVerified           Boolean   @default(false)
   emailVerificationToken  String?   @unique
+  requiresPasswordReset   Boolean   @default(false)
 
   // Paiements Stripe (actives uniquement lors de la premiere transaction)
   stripeAccountId     String?                  // ID Stripe Connect
@@ -162,6 +163,7 @@ model User {
   loginEvents           LoginEvent[]
   trustedDevices        TrustedDevice[]
   deviceVerifications   DeviceVerification[]
+  pendingTrustedDevice  PendingTrustedDevice?
   tokenVersion          Int                      @default(0)
   tagsReceived          PublicationTag[]          @relation("TaggedUser")
   tagsGiven             PublicationTag[]          @relation("TaggedByUser")
@@ -785,6 +787,8 @@ model Notification {
   message       Message?     @relation(fields: [messageId], references: [id])
   publicationId Int?
   publication   Publication? @relation(fields: [publicationId], references: [id], onDelete: SetNull)
+
+  @@index([userId, type, deviceToken])
 }
 
 model NotificationPreferences {
@@ -862,6 +866,7 @@ model LoginEvent {
   createdAt   DateTime @default(now())
 
   @@index([userId])
+  @@index([userId, deviceToken])
   @@index([createdAt])
 }
 
@@ -873,12 +878,27 @@ model TrustedDevice {
   id          Int      @id @default(autoincrement())
   userId      Int
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  deviceToken String   @unique
+  deviceToken String
   name        String   // Ex: "Chrome sur Windows", "Safari sur iPhone"
   userAgent   String?
   createdAt   DateTime @default(now())
+  lastUsedAt  DateTime @default(now())
 
   @@index([userId])
+  @@unique([userId, deviceToken])
+}
+
+// Appareil utilise pendant l'inscription. Il ne devient fiable qu'apres
+// validation de l'adresse email associee au compte.
+model PendingTrustedDevice {
+  id          Int      @id @default(autoincrement())
+  userId      Int      @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceToken String
+  name        String
+  userAgent   String?
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
 }
 
 // ─────────────────────────────────────────────
@@ -897,6 +917,7 @@ model DeviceVerification {
   createdAt   DateTime  @default(now())
 
   @@index([userId])
+  @@index([userId, deviceToken])
   @@index([token])
 }
 

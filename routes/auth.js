@@ -13,7 +13,53 @@ const {
   resendVerificationSchema,
 } = require('../schemas');
 const { sendVerificationEmail, sendNewDeviceEmail } = require('../utils/email');
-const { createNotif } = require('../services/notifications');
+
+const DEVICE_TOKEN_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const DEVICE_COOKIE_MAX_AGE = 365 * 24 * 60 * 60 * 1000
+const DEVICE_VERIFICATION_TTL = 24 * 60 * 60 * 1000
+const DEVICE_ALERT_COOLDOWN = 15 * 60 * 1000
+
+function validDeviceToken(value) {
+  return typeof value === 'string' && DEVICE_TOKEN_RE.test(value)
+}
+
+function readDeviceTokens(req) {
+  const cookieToken = req.cookies?.device_token
+  const headerToken = req.headers['x-device-token']
+  return [...new Set([cookieToken, headerToken].filter(validDeviceToken))]
+}
+
+function readDeviceToken(req) {
+  return readDeviceTokens(req)[0] || null
+}
+
+function setDeviceCookie(res, deviceToken) {
+  const isProduction = process.env.NODE_ENV === 'production'
+  res.cookie('device_token', deviceToken, {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax',
+    maxAge: DEVICE_COOKIE_MAX_AGE,
+  })
+}
+
+function appUrl() {
+  return (process.env.APP_URL || 'https://lsbookers.com').replace(/\/+$/, '')
+}
+
+class DeviceVerificationError extends Error {
+  constructor(code) {
+    super(code)
+    this.code = code
+  }
+}
+
+async function verificationErrorResponse(prismaClient, token, res) {
+  const verif = await prismaClient.deviceVerification.findUnique({ where: { token } })
+  if (!verif) return res.status(400).json({ error: 'Lien invalide' })
+  if (verif.usedAt) return res.status(400).json({ error: 'Ce lien a déjà été utilisé' })
+  return res.status(400).json({ error: 'Ce lien a expiré' })
+}
 
 // Rate limiting pour les routes publiques d'énumération
 const pseudoCheckLimiter = rateLimit({
@@ -52,6 +98,7 @@ function toClientUser(user) {
     password: _password,
     emailVerificationToken: _emailVerificationToken,
     tokenVersion: _tokenVersion,
+    requiresPasswordReset: _requiresPasswordReset,
     ...safeUser
   } = user
   return safeUser
@@ -105,6 +152,9 @@ router.post('/register-complete', validate(registerCompleteSchema), async (req, 
 
     const hashedPassword = await bcrypt.hash(password, 12);
     const emailVerificationToken = crypto.randomBytes(32).toString('hex');
+    const ua = req.headers['user-agent'] || null
+    const deviceName = parseUserAgent(ua)
+    const registerToken = readDeviceToken(req) || crypto.randomUUID()
 
     // Construire les données du profil (étape 3)
     const profileData = {};
@@ -130,6 +180,14 @@ router.post('/register-complete', validate(registerCompleteSchema), async (req, 
       emailVerified: false,
       emailVerificationToken,
       profile: { create: profileData },
+      pendingTrustedDevice: {
+        create: {
+          deviceToken: registerToken,
+          name: deviceName,
+          userAgent: ua,
+          expiresAt: new Date(Date.now() + DEVICE_VERIFICATION_TTL),
+        },
+      },
     };
     if (dateOfBirth) userData.dateOfBirth = new Date(dateOfBirth);
     if (phone) userData.phone = phone.trim();
@@ -145,22 +203,9 @@ router.post('/register-complete', validate(registerCompleteSchema), async (req, 
       console.error('Erreur envoi email vérification:', err)
     );
 
-    const isProduction = process.env.NODE_ENV === 'production';
-    // ── Appareil de création = automatiquement de confiance ──
-    const ua              = req.headers['user-agent'] || null
-    const deviceName      = parseUserAgent(ua)
-    const registerToken   = crypto.randomUUID()
-
-    res.cookie('device_token', registerToken, {
-      httpOnly: true,
-      secure: isProduction,
-      sameSite: isProduction ? 'none' : 'lax',
-      maxAge: 30 * 24 * 60 * 60 * 1000,
-    })
-
-    await prisma.trustedDevice.create({
-      data: { userId: user.id, deviceToken: registerToken, name: deviceName, userAgent: ua },
-    }).catch(() => {}) // silencieux si erreur
+    // Le navigateur d'inscription est mémorisé, mais ne devient fiable qu'après
+    // la validation explicite de l'email depuis ce même navigateur.
+    setDeviceCookie(res, registerToken)
 
     res.status(201).json({
       message: 'Compte créé. Vérifiez votre adresse email avant de vous connecter.',
@@ -186,9 +231,7 @@ router.post('/login', validate(loginSchema), async (req, res) => {
     });
 
     // Message generique pour ne pas indiquer si l'email existe
-    if (!user) {
-      return res.status(401).json({ error: 'Identifiants incorrects' });
-    }
+    if (!user) return res.status(401).json({ error: 'Identifiants incorrects' });
 
     const isValid = await bcrypt.compare(password, user.password);
     if (!isValid) {
@@ -200,98 +243,127 @@ router.post('/login', validate(loginSchema), async (req, res) => {
       return res.status(403).json({ error: 'EMAIL_NOT_VERIFIED' });
     }
 
+    if (user.requiresPasswordReset) {
+      return res.status(403).json({ error: 'PASSWORD_RESET_REQUIRED' })
+    }
+
+    const ua = req.headers['user-agent'] || null
+    const deviceName = parseUserAgent(ua)
+    const presentedDeviceTokens = readDeviceTokens(req)
+    let deviceToken = presentedDeviceTokens[0] || crypto.randomUUID()
+    const now = new Date()
+    let emailChallenge = null
+
+    emailChallenge = await prisma.$transaction(async tx => {
+        // Sérialise la création d'alertes pour un même compte, y compris si
+        // plusieurs appareils se connectent exactement au même instant.
+        await tx.$queryRawUnsafe('SELECT pg_advisory_xact_lock(1374389535, $1)', user.id)
+
+        let trusted = null
+        for (const candidateToken of presentedDeviceTokens) {
+          trusted = await tx.trustedDevice.findUnique({
+            where: { userId_deviceToken: { userId: user.id, deviceToken: candidateToken } },
+          })
+          if (trusted) {
+            deviceToken = candidateToken
+            break
+          }
+        }
+        if (trusted) {
+          await tx.trustedDevice.update({
+            where: { userId_deviceToken: { userId: user.id, deviceToken } },
+            data: { name: deviceName, userAgent: ua, lastUsedAt: now },
+          })
+          await tx.loginEvent.create({ data: { userId: user.id, userAgent: ua, deviceToken } })
+          return null
+        }
+
+        // LoginEvent reste un journal d'audit et ne confère jamais la confiance.
+        await tx.deviceVerification.updateMany({
+          where: { userId: user.id, usedAt: null, expiresAt: { lte: now } },
+          data: { usedAt: now },
+        })
+
+        const activeForDevice = await tx.deviceVerification.findFirst({
+          where: { userId: user.id, deviceToken, usedAt: null, expiresAt: { gt: now } },
+          orderBy: { createdAt: 'desc' },
+        })
+        const recentForAccount = await tx.deviceVerification.findFirst({
+          where: { userId: user.id, createdAt: { gt: new Date(now.getTime() - DEVICE_ALERT_COOLDOWN) } },
+          orderBy: { createdAt: 'desc' },
+        })
+
+        let challenge = null
+        if (!activeForDevice && !recentForAccount) {
+          const verificationToken = crypto.randomBytes(32).toString('hex')
+          challenge = await tx.deviceVerification.create({
+            data: {
+              token: verificationToken,
+              userId: user.id,
+              deviceToken,
+              deviceName,
+              expiresAt: new Date(now.getTime() + DEVICE_VERIFICATION_TTL),
+            },
+          })
+          await tx.notification.create({
+            data: {
+              userId: user.id,
+              type: 'NEW_DEVICE_LOGIN',
+              content: `Nouvelle connexion depuis : ${deviceName}. Vérifiez votre email pour confirmer ou sécuriser votre compte.`,
+              deviceToken,
+            },
+          })
+        }
+
+        await tx.loginEvent.create({ data: { userId: user.id, userAgent: ua, deviceToken } })
+        return challenge
+    })
+
+    if (emailChallenge) {
+      const baseUrl = appUrl()
+      try {
+        await sendNewDeviceEmail(user.email, {
+          deviceName,
+          date: new Date().toLocaleString('fr-FR', { timeZone: 'Europe/Paris' }),
+          trustLink: `${baseUrl}/device-verified?token=${emailChallenge.token}&action=trust`,
+          rejectLink: `${baseUrl}/device-verified?token=${emailChallenge.token}&action=reject`,
+        })
+      } catch (err) {
+        console.error('Erreur sendNewDeviceEmail :', err)
+        // Retire le challenge sans email. Le cooldown court reste applicable,
+        // puis une connexion ultérieure pourra retenter l'envoi.
+        await prisma.$transaction(async tx => {
+          await tx.deviceVerification.updateMany({
+            where: { token: emailChallenge.token, usedAt: null },
+            data: { usedAt: new Date() },
+          })
+          await tx.notification.deleteMany({
+            where: {
+              userId: user.id,
+              type: 'NEW_DEVICE_LOGIN',
+              deviceToken,
+              ...(emailChallenge.createdAt ? { createdAt: { gte: emailChallenge.createdAt } } : {}),
+            },
+          })
+        }).catch(cleanupError => console.error('Erreur nettoyage challenge non envoyé :', cleanupError))
+      }
+    }
+
     const token = jwt.sign(
       { id: user.id, email: user.email, role: user.role, isAdmin: user.isAdmin, tokenVersion: user.tokenVersion },
       process.env.JWT_SECRET,
       { expiresIn: '7d' }
-    );
-
-    const safeUser = toClientUser(user);
-
-    const isProduction = process.env.NODE_ENV === 'production';
-
-    // Cookie httpOnly session
+    )
+    const isProduction = process.env.NODE_ENV === 'production'
     res.cookie('token', token, {
       httpOnly: true,
       secure: isProduction,
       sameSite: isProduction ? 'none' : 'lax',
       maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
+    })
+    setDeviceCookie(res, deviceToken)
 
-    // ── Détection appareil — AVANT res.json() pour pouvoir set le cookie ────
-    // Priorité : header X-Device-Token (localStorage) > cookie (fallback)
-    let deviceTokenForClient = null
-    try {
-      const ua             = req.headers['user-agent'] || null
-      const providedToken  = req.headers['x-device-token'] || req.cookies?.device_token || null
-
-      if (providedToken) {
-        // 1. Appareil de confiance → silencieux
-        const trusted = await prisma.trustedDevice.findFirst({
-          where: { userId: user.id, deviceToken: providedToken },
-        })
-        if (trusted) {
-          await prisma.loginEvent.create({ data: { userId: user.id, userAgent: ua, deviceToken: providedToken } })
-          deviceTokenForClient = providedToken
-        } else {
-          // 2. Appareil déjà vu (email déjà envoyé) → silencieux
-          const seen = await prisma.loginEvent.findFirst({
-            where: { userId: user.id, deviceToken: providedToken },
-          })
-          if (seen) {
-            await prisma.loginEvent.create({ data: { userId: user.id, userAgent: ua, deviceToken: providedToken } })
-            deviceTokenForClient = providedToken
-          }
-        }
-      }
-
-      if (!deviceTokenForClient) {
-        // 3. Nouvel appareil → générer token, set cookie, envoyer email
-        const newDeviceToken = crypto.randomUUID()
-
-        res.cookie('device_token', newDeviceToken, {
-          httpOnly: true,
-          secure: isProduction,
-          sameSite: isProduction ? 'none' : 'lax',
-          maxAge: 30 * 24 * 60 * 60 * 1000, // 30 jours
-        })
-        deviceTokenForClient = newDeviceToken
-
-        const prevLoginCount = await prisma.loginEvent.count({ where: { userId: user.id } })
-        if (prevLoginCount > 0) {
-          const deviceLabel = parseUserAgent(ua)
-          const verifToken  = crypto.randomBytes(32).toString('hex')
-          const expiresAt   = new Date(Date.now() + 24 * 60 * 60 * 1000) // 24h
-
-          await prisma.deviceVerification.create({
-            data: { token: verifToken, userId: user.id, deviceToken: newDeviceToken, deviceName: deviceLabel, expiresAt },
-          })
-
-          const APP_URL    = process.env.APP_URL || 'https://www.lsbookers.com'
-          const trustLink  = `${APP_URL}/device-verified?token=${verifToken}&action=trust`
-          const rejectLink = `${APP_URL}/device-verified?token=${verifToken}&action=reject`
-
-          sendNewDeviceEmail(user.email, {
-            deviceName: deviceLabel,
-            date:       new Date().toLocaleString('fr-FR', { timeZone: 'Europe/Paris' }),
-            trustLink,
-            rejectLink,
-          }).catch(err => console.error('Erreur sendNewDeviceEmail :', err))
-
-          createNotif({
-            userId:  user.id,
-            type:    'NEW_DEVICE_LOGIN',
-            content: `Nouvelle connexion depuis : ${deviceLabel}. Vérifiez votre email pour confirmer ou sécuriser votre compte.`,
-          })
-        }
-
-        await prisma.loginEvent.create({ data: { userId: user.id, userAgent: ua, deviceToken: newDeviceToken } })
-      }
-    } catch (err) {
-      console.error('Erreur détection appareil :', err)
-    }
-
-    res.json({ message: 'Connexion reussie', token, user: safeUser, deviceToken: deviceTokenForClient });
+    res.json({ message: 'Connexion reussie', token, user: toClientUser(user), deviceToken });
   } catch (err) {
     console.error('Erreur serveur lors de la connexion :', err);
     res.status(500).json({ error: 'Erreur serveur' });
@@ -324,51 +396,53 @@ router.post('/logout', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────
-// VÉRIFICATION APPAREIL — TRUST (lien email one-time)
-// GET /api/auth/device-verify?token=xxx&action=trust
-// Pas d'auth requise. L'update usedAt est ATOMIQUE (updateMany WHERE usedAt IS NULL)
-// pour résister aux pre-fetches parallèles des scanners d'email.
+// VÉRIFICATION APPAREIL — TRUST (action explicite)
 // ─────────────────────────────────────────────
 router.get('/device-verify', async (req, res) => {
-  const { token, action } = req.query
+  return res.status(405).json({ error: 'Confirmation explicite requise' })
+})
 
-  // Cette route ne gère plus que l'action trust.
-  // Le reject passe par POST /device-verify-reject (requiert une action explicite).
-  if (!token || action !== 'trust') {
-    return res.status(400).json({ error: 'Lien invalide' })
-  }
+router.post('/device-verify-trust', async (req, res) => {
+  const { token } = req.body || {}
+  if (!token) return res.status(400).json({ error: 'Token manquant' })
 
   try {
-    // Mise à jour atomique : on ne marque usedAt que si le token n'a pas encore été utilisé
-    // et n'a pas expiré. Si un autre pre-fetch concurrent arrive en même temps, il obtient
-    // count=0 et s'arrête → impossible de trust ET reject le même token en parallèle.
-    const updated = await prisma.deviceVerification.updateMany({
-      where: { token, usedAt: null, expiresAt: { gt: new Date() } },
-      data:  { usedAt: new Date() },
+    const result = await prisma.$transaction(async tx => {
+      const verif = await tx.deviceVerification.findUnique({ where: { token } })
+      if (!verif || verif.usedAt || verif.expiresAt <= new Date()) {
+        throw new DeviceVerificationError('INVALID_OR_USED')
+      }
+
+      const claimed = await tx.deviceVerification.updateMany({
+        where: { token, usedAt: null, expiresAt: { gt: new Date() } },
+        data: { usedAt: new Date() },
+      })
+      if (claimed.count !== 1) throw new DeviceVerificationError('INVALID_OR_USED')
+
+      await tx.trustedDevice.upsert({
+        where: { userId_deviceToken: { userId: verif.userId, deviceToken: verif.deviceToken } },
+        update: { name: verif.deviceName, lastUsedAt: new Date() },
+        create: {
+          userId: verif.userId,
+          deviceToken: verif.deviceToken,
+          name: verif.deviceName,
+          userAgent: null,
+        },
+      })
+      await tx.notification.updateMany({
+        where: { userId: verif.userId, type: 'NEW_DEVICE_LOGIN', deviceToken: verif.deviceToken },
+        data: { read: true },
+      })
+      return { deviceName: verif.deviceName }
     })
 
-    if (updated.count === 0) {
-      // Déterminer pourquoi : déjà utilisé ou expiré
-      const verif = await prisma.deviceVerification.findUnique({ where: { token } })
-      if (!verif)        return res.status(400).json({ error: 'Lien invalide' })
-      if (verif.usedAt)  return res.status(400).json({ error: 'Ce lien a déjà été utilisé' })
-      return res.status(400).json({ error: 'Ce lien a expiré' })
-    }
-
-    const verif = await prisma.deviceVerification.findUnique({ where: { token } })
-
-    // Ajouter l'appareil en liste de confiance (idempotent)
-    const existing = await prisma.trustedDevice.findUnique({ where: { deviceToken: verif.deviceToken } })
-    if (!existing) {
-      await prisma.trustedDevice.create({
-        data: { userId: verif.userId, deviceToken: verif.deviceToken, name: verif.deviceName, userAgent: null },
-      })
-    }
-
-    return res.json({ message: 'Appareil confirmé', deviceName: verif.deviceName })
+    return res.json({ message: 'Appareil confirmé', deviceName: result.deviceName })
   } catch (err) {
+    if (err instanceof DeviceVerificationError) {
+      return verificationErrorResponse(prisma, token, res)
+    }
     console.error('Erreur device-verify trust :', err)
-    res.status(500).json({ error: 'Erreur serveur' })
+    return res.status(500).json({ error: 'Erreur serveur' })
   }
 })
 
@@ -386,33 +460,41 @@ router.post('/device-verify-reject', async (req, res) => {
   }
 
   try {
-    // Même mécanique atomique que pour trust
-    const updated = await prisma.deviceVerification.updateMany({
-      where: { token, usedAt: null, expiresAt: { gt: new Date() } },
-      data:  { usedAt: new Date() },
+    await prisma.$transaction(async tx => {
+      const verif = await tx.deviceVerification.findUnique({ where: { token } })
+      if (!verif || verif.usedAt || verif.expiresAt <= new Date()) {
+        throw new DeviceVerificationError('INVALID_OR_USED')
+      }
+
+      const claimed = await tx.deviceVerification.updateMany({
+        where: { token, usedAt: null, expiresAt: { gt: new Date() } },
+        data: { usedAt: new Date() },
+      })
+      if (claimed.count !== 1) throw new DeviceVerificationError('INVALID_OR_USED')
+
+      await tx.user.update({
+        where: { id: verif.userId },
+        data: { tokenVersion: { increment: 1 }, requiresPasswordReset: true },
+      })
+      await tx.trustedDevice.deleteMany({ where: { userId: verif.userId } })
+      await tx.pendingTrustedDevice.deleteMany({ where: { userId: verif.userId } })
+      await tx.deviceVerification.updateMany({
+        where: { userId: verif.userId, usedAt: null },
+        data: { usedAt: new Date() },
+      })
+      await tx.notification.updateMany({
+        where: { userId: verif.userId, type: 'NEW_DEVICE_LOGIN' },
+        data: { read: true },
+      })
     })
-
-    if (updated.count === 0) {
-      const verif = await prisma.deviceVerification.findUnique({ where: { token } })
-      if (!verif)        return res.status(400).json({ error: 'Lien invalide' })
-      if (verif.usedAt)  return res.status(400).json({ error: 'Ce lien a déjà été utilisé' })
-      return res.status(400).json({ error: 'Ce lien a expiré' })
-    }
-
-    const verif = await prisma.deviceVerification.findUnique({ where: { token } })
-
-    // Invalider tous les JWT en incrémentant tokenVersion
-    await prisma.user.update({
-      where: { id: verif.userId },
-      data:  { tokenVersion: { increment: 1 } },
-    })
-    // Supprimer tous les appareils de confiance
-    await prisma.trustedDevice.deleteMany({ where: { userId: verif.userId } })
 
     return res.json({ message: 'Compte sécurisé. Toutes vos sessions ont été fermées.' })
   } catch (err) {
+    if (err instanceof DeviceVerificationError) {
+      return verificationErrorResponse(prisma, token, res)
+    }
     console.error('Erreur device-verify reject :', err)
-    res.status(500).json({ error: 'Erreur serveur' })
+    return res.status(500).json({ error: 'Erreur serveur' })
   }
 })
 
@@ -420,25 +502,52 @@ router.post('/device-verify-reject', async (req, res) => {
 // VERIFICATION EMAIL
 // ─────────────────────────────────────────────
 router.get('/verify-email', async (req, res) => {
-  const { token } = req.query;
+  return res.status(405).json({ error: 'Confirmation explicite requise' })
+})
+
+router.post('/verify-email', async (req, res) => {
+  const { token } = req.body || {};
 
   if (!token) {
     return res.status(400).json({ error: 'Token manquant' });
   }
 
   try {
-    const user = await prisma.user.findUnique({
-      where: { emailVerificationToken: token },
-    });
+    const presentedDeviceTokens = readDeviceTokens(req)
+    const now = new Date()
+    const verified = await prisma.$transaction(async tx => {
+      const user = await tx.user.findUnique({ where: { emailVerificationToken: token } })
+      if (!user) return false
 
-    if (!user) {
-      return res.status(400).json({ error: 'Lien invalide ou deja utilise' });
-    }
+      const claimed = await tx.user.updateMany({
+        where: { id: user.id, emailVerificationToken: token, emailVerified: false },
+        data: { emailVerified: true, emailVerificationToken: null },
+      })
+      if (claimed.count !== 1) return false
 
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { emailVerified: true, emailVerificationToken: null },
-    });
+      const pending = await tx.pendingTrustedDevice.findUnique({ where: { userId: user.id } })
+      if (
+        pending &&
+        pending.expiresAt > now &&
+        presentedDeviceTokens.includes(pending.deviceToken)
+      ) {
+        await tx.trustedDevice.upsert({
+          where: { userId_deviceToken: { userId: user.id, deviceToken: pending.deviceToken } },
+          update: { name: pending.name, userAgent: pending.userAgent, lastUsedAt: now },
+          create: {
+            userId: user.id,
+            deviceToken: pending.deviceToken,
+            name: pending.name,
+            userAgent: pending.userAgent,
+            lastUsedAt: now,
+          },
+        })
+      }
+      await tx.pendingTrustedDevice.deleteMany({ where: { userId: user.id } })
+      return true
+    })
+
+    if (!verified) return res.status(400).json({ error: 'Lien invalide ou deja utilise' });
 
     res.json({ message: 'Email verifie avec succes' });
   } catch (err) {
@@ -462,10 +571,16 @@ router.post('/resend-verification', validate(resendVerificationSchema), async (r
     }
 
     const newToken = crypto.randomBytes(32).toString('hex');
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { emailVerificationToken: newToken },
-    });
+    await prisma.$transaction([
+      prisma.user.update({
+        where: { id: user.id },
+        data: { emailVerificationToken: newToken },
+      }),
+      prisma.pendingTrustedDevice.updateMany({
+        where: { userId: user.id },
+        data: { expiresAt: new Date(Date.now() + DEVICE_VERIFICATION_TTL) },
+      }),
+    ]);
 
     sendVerificationEmail(user.email, newToken).catch(err =>
       console.error('Erreur renvoi email verification:', err)
