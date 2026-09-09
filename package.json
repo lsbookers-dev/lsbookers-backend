@@ -7,9 +7,9 @@
     "test": "node --test",
     "dev": "nodemon server.js",
     "force-dev": "killall -9 node || true && nodemon server.js",
-    "build": "prisma migrate deploy && prisma generate",
+    "build": "prisma generate",
     "postinstall": "prisma generate",
-    "start": "node server.js"
+    "start": "prisma migrate deploy && node server.js"
   },
   "keywords": [],
   "author": "",
