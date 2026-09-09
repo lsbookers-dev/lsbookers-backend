@@ -257,7 +257,7 @@ router.post('/login', validate(loginSchema), async (req, res) => {
     emailChallenge = await prisma.$transaction(async tx => {
         // Sérialise la création d'alertes pour un même compte, y compris si
         // plusieurs appareils se connectent exactement au même instant.
-        await tx.$queryRawUnsafe('SELECT pg_advisory_xact_lock(1374389535::int, ($1)::int)', user.id)
+        await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(1374389535::int, ($1)::int)', user.id)
 
         let trusted = null
         for (const candidateToken of presentedDeviceTokens) {
