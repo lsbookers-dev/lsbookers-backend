@@ -122,13 +122,19 @@ router.get('/availability/:profileId', async (req, res) => {
   }
 });
 
-// PUT /api/events/availability — définir dispo d'un jour
+// PUT /api/events/availability — définir dispo d'un jour (status=NONE → supprimer)
 router.put('/availability', requireAuth, async (req, res) => {
   const { date, status, note } = req.body;
-  if (!date || !status) return res.status(400).json({ error: 'Date et statut requis' });
+  if (!date) return res.status(400).json({ error: 'Date requise' });
   try {
     const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
     if (!profile) return res.status(404).json({ error: 'Profil introuvable' });
+    if (!status || status === 'NONE') {
+      await prisma.availability.deleteMany({
+        where: { profileId: profile.id, date: new Date(date) },
+      });
+      return res.json({ availability: null });
+    }
     const availability = await prisma.availability.upsert({
       where:  { profileId_date: { profileId: profile.id, date: new Date(date) } },
       update: { status, note: note || null },
@@ -137,6 +143,33 @@ router.put('/availability', requireAuth, async (req, res) => {
     res.json({ availability });
   } catch (err) {
     console.error('PUT availability:', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// PUT /api/events/availability/bulk — appliquer un statut à plusieurs jours d'un coup
+router.put('/availability/bulk', requireAuth, async (req, res) => {
+  const { dates, status } = req.body;
+  if (!dates || !Array.isArray(dates) || dates.length === 0) return res.status(400).json({ error: 'Dates requises' });
+  try {
+    const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
+    if (!profile) return res.status(404).json({ error: 'Profil introuvable' });
+    if (!status || status === 'NONE') {
+      await prisma.availability.deleteMany({
+        where: { profileId: profile.id, date: { in: dates.map(d => new Date(d)) } },
+      });
+      return res.json({ deleted: dates.length });
+    }
+    await Promise.all(dates.map(date =>
+      prisma.availability.upsert({
+        where:  { profileId_date: { profileId: profile.id, date: new Date(date) } },
+        update: { status },
+        create: { profileId: profile.id, date: new Date(date), status },
+      })
+    ));
+    res.json({ updated: dates.length });
+  } catch (err) {
+    console.error('PUT availability/bulk:', err);
     res.status(500).json({ error: 'Erreur serveur' });
   }
 });
