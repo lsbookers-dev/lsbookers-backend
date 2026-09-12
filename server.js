@@ -1,9 +1,11 @@
+const http = require('http');
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 const cookieParser = require('cookie-parser');
+const { init: initSocket } = require('./socket');
 require('dotenv').config();
 
 // ✅ Importation des routes
@@ -81,10 +83,19 @@ const authLimiter = rateLimit({
 // Sur l'ensemble de l'API — protection générale
 const globalLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  max: 200,            // max 200 requêtes par IP par minute
+  max: 300,            // 300 requêtes par IP par minute (augmenté pour la messagerie)
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Trop de requêtes, ralentissez ❌' },
+});
+
+// Rate limit dédié messagerie — plus permissif (la messagerie est intensive)
+const messagingLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 600, // 10 req/s pour la messagerie (conversations, messages, mark-seen)
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Trop de requêtes messagerie' },
 });
 
 app.use(globalLimiter);
@@ -115,7 +126,7 @@ app.use('/api/auth', passwordRoutes);
 
 app.use('/api/profile', profileRoutes);
 app.use('/api/media', mediaRoutes);
-app.use('/api/messages', messageRoutes);
+app.use('/api/messages', messagingLimiter, messageRoutes);
 app.use('/api/follow', followRoutes);
 app.use('/api/block',  blockRoutes);
 app.use('/api/feed', feedRoutes);
@@ -147,6 +158,11 @@ app.use((err, req, res, next) => {
 
 /* ===================== Démarrage ===================== */
 const PORT = process.env.PORT || 5001;
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`✅ Serveur lancé sur http://0.0.0.0:${PORT}`);
+const httpServer = http.createServer(app);
+
+// Initialiser Socket.io sur le même serveur HTTP
+initSocket(httpServer);
+
+httpServer.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ Serveur lancé sur http://0.0.0.0:${PORT} (WebSocket activé)`);
 });

@@ -7,6 +7,7 @@ const { conversationCreateSchema } = require('../schemas')
 const multer = require('multer')
 const { put } = require('@vercel/blob')
 const { createNotif, displayName } = require('../services/notifications')
+const { getIO } = require('../socket')
 
 /* ─── Whitelist MIME pour les fichiers messages ─── */
 const MSG_ALLOWED_MIME = new Set([
@@ -288,9 +289,17 @@ router.get('/messages/:conversationId', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'Conversation introuvable' })
     }
 
+    // Chargement incrémental : ?after=<lastMessageId> pour ne récupérer que les nouveaux
+    const after = req.query.after ? Number(req.query.after) : null
+
     const messages = await prisma.message.findMany({
-      where: { conversationId },
+      where: {
+        conversationId,
+        ...(after ? { id: { gt: after } } : {}),
+      },
       orderBy: { createdAt: 'asc' },
+      // Charge initialement les 50 derniers messages ; les suivants se font via WebSocket
+      take: after ? undefined : 50,
       include: {
         sender: { include: { profile: true } },
         bookingRequest: {
@@ -463,6 +472,31 @@ router.post('/send', requireAuth, validate(conversationCreateSchema), async (req
       data: { updatedAt: new Date() },
     })
 
+    // ── Temps réel : pousser le message via WebSocket ──
+    try {
+      const io = getIO()
+      const msgPayload = {
+        id: String(message.id),
+        content: message.content || '',
+        type: 'TEXT',
+        attachmentUrl: null,
+        attachmentType: null,
+        attachmentName: null,
+        attachmentMimeType: null,
+        createdAt: message.createdAt,
+        seen: message.seen,
+        sender: {
+          id: message.senderId,
+          name: getUserDisplayName(message.sender),
+          image: message.sender?.profile?.avatar || null,
+        },
+        conversationId: conversation.id,
+      }
+      io.to(`conv:${conversation.id}`).emit('new_message', msgPayload)
+      io.to(`user:${senderId}`).emit('conversation_updated', { conversationId: conversation.id })
+      io.to(`user:${Number(recipientId)}`).emit('conversation_updated', { conversationId: conversation.id })
+    } catch (_) {}
+
     return res.json({
       conversationId: conversation.id,
       message: {
@@ -560,6 +594,35 @@ router.post('/send-file', requireAuth, (req, res) => {
       data: { updatedAt: new Date() },
     })
 
+    // ── Temps réel : pousser le message (avec pièce jointe) via WebSocket ──
+    try {
+      const io = getIO()
+      const convId = Number(conversationId)
+      const msgPayload = {
+        id: String(message.id),
+        content: message.content || '',
+        type: 'TEXT',
+        attachmentUrl: message.attachmentUrl || null,
+        attachmentType: message.attachmentType || null,
+        attachmentName: message.attachmentName || null,
+        attachmentMimeType: message.attachmentMimeType || null,
+        createdAt: message.createdAt,
+        seen: message.seen,
+        sender: {
+          id: message.senderId,
+          name: getUserDisplayName(message.sender),
+          image: message.sender?.profile?.avatar || null,
+        },
+        conversationId: convId,
+      }
+      io.to(`conv:${convId}`).emit('new_message', msgPayload)
+      const parts = await prisma.conversationParticipant.findMany({
+        where: { conversationId: convId },
+        select: { userId: true },
+      })
+      parts.forEach(p => io.to(`user:${p.userId}`).emit('conversation_updated', { conversationId: convId }))
+    } catch (_) {}
+
     return res.json({
       conversationId: Number(conversationId),
       message: {
@@ -600,10 +663,16 @@ router.post('/mark-seen/:conversationId', requireAuth, async (req, res) => {
     })
     if (!participation) return res.status(403).json({ error: 'Accès interdit' })
 
-    await prisma.message.updateMany({
+    // Smart mark-seen : évite un write DB inutile si tout est déjà lu
+    const unreadCount = await prisma.message.count({
       where: { conversationId, seen: false, NOT: { senderId: userId } },
-      data: { seen: true, seenAt: new Date() },
     })
+    if (unreadCount > 0) {
+      await prisma.message.updateMany({
+        where: { conversationId, seen: false, NOT: { senderId: userId } },
+        data: { seen: true, seenAt: new Date() },
+      })
+    }
 
     return res.json({ ok: true })
   } catch (err) {
@@ -699,6 +768,15 @@ router.post('/share-profile', requireAuth, async (req, res) => {
       data: { updatedAt: new Date() },
     })
 
+    // Temps réel
+    try {
+      const io = getIO()
+      const convId = Number(conversationId)
+      io.to(`conv:${convId}`).emit('new_message', { ...message, id: String(message.id), conversationId: convId })
+      const parts = await prisma.conversationParticipant.findMany({ where: { conversationId: convId }, select: { userId: true } })
+      parts.forEach(p => io.to(`user:${p.userId}`).emit('conversation_updated', { conversationId: convId }))
+    } catch (_) {}
+
     res.json(message)
   } catch (err) {
     console.error('share-profile:', err)
@@ -793,6 +871,14 @@ router.post('/share-offer', requireAuth, async (req, res) => {
       where: { id: conversation.id },
       data: { updatedAt: new Date() },
     })
+
+    // Temps réel
+    try {
+      const io = getIO()
+      io.to(`conv:${conversation.id}`).emit('new_message', { ...message, id: String(message.id), conversationId: conversation.id })
+      io.to(`user:${senderId}`).emit('conversation_updated', { conversationId: conversation.id })
+      io.to(`user:${Number(recipientId)}`).emit('conversation_updated', { conversationId: conversation.id })
+    } catch (_) {}
 
     res.json({ conversationId: conversation.id, message })
   } catch (err) {

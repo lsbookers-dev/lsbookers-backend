@@ -44,7 +44,7 @@ const TAG_INCLUDE_ALL = {
   },
 }
 
-// GET /api/publications/:id — récupérer une publication par son ID
+// GET /api/publications/:id — récupérer une publication par son ID (tous les tags, PENDING inclus)
 router.get('/:id(\\d+)', async (req, res) => {
   const id = Number(req.params.id)
   try {
@@ -52,7 +52,7 @@ router.get('/:id(\\d+)', async (req, res) => {
       where: { id },
       include: {
         ...MEDIA_INCLUDE,
-        ...TAG_INCLUDE,
+        ...TAG_INCLUDE_ALL,
         _count: { select: { likes: true, comments: true } },
       },
     })
