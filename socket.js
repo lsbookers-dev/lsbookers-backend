@@ -5,6 +5,7 @@
 
 const { Server } = require('socket.io')
 const jwt = require('jsonwebtoken')
+const prisma = require('./prisma/client')
 
 let io = null
 
@@ -29,14 +30,23 @@ function init(httpServer) {
     maxHttpBufferSize: 1e6, // 1 MB
   })
 
-  // ── Authentification JWT sur chaque connexion socket ──
-  io.use((socket, next) => {
+  // ── Authentification JWT + vérification DB sur chaque connexion socket ──
+  io.use(async (socket, next) => {
     try {
       const token = socket.handshake.auth?.token
       if (!token) return next(new Error('Unauthorized: no token'))
       const decoded = jwt.verify(token, process.env.JWT_SECRET)
-      socket.userId = Number(decoded.id || decoded.userId)
-      if (!socket.userId) return next(new Error('Unauthorized: invalid token'))
+      const userId = Number(decoded.id || decoded.userId)
+      if (!userId) return next(new Error('Unauthorized: invalid token'))
+
+      // Point 2 — Vérifier que l'utilisateur existe encore en base
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, emailVerified: true },
+      })
+      if (!user) return next(new Error('Unauthorized: user not found'))
+
+      socket.userId = userId
       next()
     } catch {
       next(new Error('Unauthorized: token invalid or expired'))
@@ -47,10 +57,18 @@ function init(httpServer) {
     // Chaque utilisateur rejoint automatiquement sa salle personnelle
     socket.join(`user:${socket.userId}`)
 
-    // Rejoindre une conversation (pour recevoir les nouveaux messages)
-    socket.on('join_conversation', (conversationId) => {
-      if (typeof conversationId === 'number' && conversationId > 0) {
+    // Rejoindre une conversation (Point 1 — vérifier que l'utilisateur est bien participant)
+    socket.on('join_conversation', async (conversationId) => {
+      if (typeof conversationId !== 'number' || conversationId <= 0) return
+      try {
+        const participant = await prisma.conversationParticipant.findFirst({
+          where: { conversationId, userId: socket.userId },
+          select: { id: true },
+        })
+        if (!participant) return // Accès refusé silencieusement
         socket.join(`conv:${conversationId}`)
+      } catch {
+        // Erreur DB silencieuse — l'utilisateur ne rejoint simplement pas la room
       }
     })
 

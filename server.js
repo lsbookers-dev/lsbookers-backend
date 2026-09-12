@@ -98,7 +98,13 @@ const messagingLimiter = rateLimit({
   message: { error: 'Trop de requêtes messagerie' },
 });
 
-app.use(globalLimiter);
+// Point 5 — Appliquer le globalLimiter uniquement sur les routes hors messagerie.
+// La messagerie a son propre limiter (600 req/min) monté directement sur /api/messages.
+// Si globalLimiter (300) était appliqué en premier, messagingLimiter (600) n'aurait aucun effet.
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/messages')) return next()
+  globalLimiter(req, res, next)
+});
 
 // Parsers
 app.use(cookieParser());
