@@ -59,6 +59,17 @@ function init(httpServer) {
       socket.leave(`conv:${conversationId}`)
     })
 
+    // Indicateur de frappe — relayer aux autres membres de la conv
+    socket.on('typing', ({ conversationId, isTyping }) => {
+      if (typeof conversationId !== 'number' || conversationId <= 0) return
+      // Émettre à tous sauf l'expéditeur
+      socket.to(`conv:${conversationId}`).emit('typing', {
+        conversationId,
+        userId: socket.userId,
+        isTyping: !!isTyping,
+      })
+    })
+
     socket.on('disconnect', () => {
       // Socket.io gère le nettoyage automatiquement
     })
