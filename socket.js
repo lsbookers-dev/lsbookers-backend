@@ -9,6 +9,9 @@ const prisma = require('./prisma/client')
 
 let io = null
 
+// Rate limit typing en mémoire — max 1 event/s par userId (pas de Redis nécessaire)
+const typingLastSent = new Map() // userId → timestamp
+
 const ALLOWED_ORIGINS = [
   'https://www.lsbookers.com',
   'https://lsbookers.com',
@@ -39,12 +42,14 @@ function init(httpServer) {
       const userId = Number(decoded.id || decoded.userId)
       if (!userId) return next(new Error('Unauthorized: invalid token'))
 
-      // Point 2 — Vérifier que l'utilisateur existe encore en base
+      // Vérifier que l'utilisateur existe, a vérifié son email et n'est pas en réinitialisation forcée
       const user = await prisma.user.findUnique({
         where: { id: userId },
-        select: { id: true, emailVerified: true },
+        select: { id: true, emailVerified: true, requiresPasswordReset: true },
       })
       if (!user) return next(new Error('Unauthorized: user not found'))
+      if (!user.emailVerified) return next(new Error('Unauthorized: email not verified'))
+      if (user.requiresPasswordReset) return next(new Error('Unauthorized: password reset required'))
 
       socket.userId = userId
       next()
@@ -78,14 +83,28 @@ function init(httpServer) {
     })
 
     // Indicateur de frappe — relayer aux autres membres de la conv
-    socket.on('typing', ({ conversationId, isTyping }) => {
-      if (typeof conversationId !== 'number' || conversationId <= 0) return
-      // Émettre à tous sauf l'expéditeur
-      socket.to(`conv:${conversationId}`).emit('typing', {
-        conversationId,
-        userId: socket.userId,
-        isTyping: !!isTyping,
-      })
+    socket.on('typing', (payload) => {
+      try {
+        // Validation stricte du payload pour éviter tout crash Node
+        if (!payload || typeof payload !== 'object') return
+        const { conversationId, isTyping } = payload
+        if (typeof conversationId !== 'number' || conversationId <= 0) return
+
+        // Rate limit : max 1 event typing/s par userId (anti-spam sans Redis)
+        const now = Date.now()
+        const last = typingLastSent.get(socket.userId) ?? 0
+        if (now - last < 1000) return
+        typingLastSent.set(socket.userId, now)
+
+        // Émettre à tous sauf l'expéditeur
+        socket.to(`conv:${conversationId}`).emit('typing', {
+          conversationId,
+          userId: socket.userId,
+          isTyping: !!isTyping,
+        })
+      } catch {
+        // Ne jamais laisser une exception tuer le process Node
+      }
     })
 
     socket.on('disconnect', () => {
