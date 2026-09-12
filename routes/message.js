@@ -289,16 +289,22 @@ router.get('/messages/:conversationId', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'Conversation introuvable' })
     }
 
-    // Chargement incrémental : ?after=<lastMessageId> pour ne récupérer que les nouveaux
-    const after = req.query.after ? Number(req.query.after) : null
+    // Chargement incrémental / pagination
+    // ?after=<id>   → messages plus récents que cet id (nouveaux via socket)
+    // ?before=<id>  → 50 messages plus anciens que cet id (load more)
+    // (rien)        → les 50 derniers messages (chargement initial)
+    const after  = req.query.after  ? Number(req.query.after)  : null
+    const before = req.query.before ? Number(req.query.before) : null
 
-    const messages = await prisma.message.findMany({
+    const rawMessages = await prisma.message.findMany({
       where: {
         conversationId,
-        ...(after ? { id: { gt: after } } : {}),
+        ...(after  ? { id: { gt: after  } } : {}),
+        ...(before ? { id: { lt: before } } : {}),
       },
-      orderBy: { createdAt: 'asc' },
-      // Charge initialement les 50 derniers messages ; les suivants se font via WebSocket
+      // DESC pour initial et before (on prend les N plus récents, puis on reverse)
+      // ASC  pour after (on prend les nouveaux dans l'ordre)
+      orderBy: { createdAt: after ? 'asc' : 'desc' },
       take: after ? undefined : 50,
       include: {
         sender: { include: { profile: true } },
@@ -310,6 +316,9 @@ router.get('/messages/:conversationId', requireAuth, async (req, res) => {
         },
       },
     })
+
+    // Remettre en ordre chronologique (initial et before sont triés DESC)
+    const messages = after ? rawMessages : [...rawMessages].reverse()
 
     const payload = messages.map((m) => {
       const br = m.bookingRequest
@@ -497,6 +506,15 @@ router.post('/send', requireAuth, validate(conversationCreateSchema), async (req
       io.to(`user:${Number(recipientId)}`).emit('conversation_updated', { conversationId: conversation.id })
     } catch (_) {}
 
+    // Notification pour le destinataire
+    createNotif({
+      userId: Number(recipientId),
+      type: 'NEW_MESSAGE',
+      actorId: senderId,
+      messageId: message.id,
+      content: `${displayName(message.sender)} vous a envoyé un message`,
+    })
+
     return res.json({
       conversationId: conversation.id,
       message: {
@@ -621,6 +639,17 @@ router.post('/send-file', requireAuth, (req, res) => {
         select: { userId: true },
       })
       parts.forEach(p => io.to(`user:${p.userId}`).emit('conversation_updated', { conversationId: convId }))
+
+      // Notification pour le(s) destinataire(s)
+      parts
+        .filter(p => p.userId !== senderId)
+        .forEach(p => createNotif({
+          userId: p.userId,
+          type: 'NEW_MESSAGE',
+          actorId: senderId,
+          messageId: message.id,
+          content: `${displayName(message.sender)} vous a envoyé un message`,
+        }))
     } catch (_) {}
 
     return res.json({
@@ -672,6 +701,16 @@ router.post('/mark-seen/:conversationId', requireAuth, async (req, res) => {
         where: { conversationId, seen: false, NOT: { senderId: userId } },
         data: { seen: true, seenAt: new Date() },
       })
+
+      // Notifier l'expéditeur en temps réel que ses messages ont été lus (✓ → ✓✓)
+      try {
+        const io = getIO()
+        const senders = await prisma.conversationParticipant.findMany({
+          where: { conversationId, NOT: { userId } },
+          select: { userId: true },
+        })
+        senders.forEach(s => io.to(`user:${s.userId}`).emit('messages_seen', { conversationId }))
+      } catch (_) {}
     }
 
     return res.json({ ok: true })
