@@ -608,6 +608,7 @@ model EventStaff {
   id         Int         @id @default(autoincrement())
   eventId    Int
   role       String      // Ex: "DJ", "Traiteur", "Photographe"
+  name       String?     // Nom libre si pas de profil lié
   count      Int         @default(1)
   notes      String?
   fee        Float?      // Cachet prevu pour ce poste

@@ -6,9 +6,9 @@ const router = express.Router();
 const prisma = require('../prisma/client');
 const { requireAuth } = require('../middleware/auth');
 
-// POST /api/events/:id/staff — ajouter un membre du personnel manuellement
+// POST /api/events/:id/staff — ajouter un membre du personnel
 router.post('/:id/staff', requireAuth, async (req, res) => {
-  const { role, fee, notes, profileId: staffProfileId } = req.body;
+  const { role, name, fee, notes, profileId: staffProfileId } = req.body;
   if (!role?.trim()) return res.status(400).json({ error: 'Rôle requis' });
   try {
     const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
@@ -20,6 +20,7 @@ router.post('/:id/staff', requireAuth, async (req, res) => {
       data: {
         eventId:   event.id,
         role:      role.trim(),
+        name:      staffProfileId ? null : (name?.trim() || null),
         fee:       fee ? parseFloat(fee) : null,
         notes:     notes?.trim() || null,
         profileId: staffProfileId ? parseInt(staffProfileId) : null,
@@ -34,6 +35,29 @@ router.post('/:id/staff', requireAuth, async (req, res) => {
     res.status(201).json({ staff });
   } catch (err) {
     console.error('POST staff:', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// PATCH /api/events/:id/staff/:staffId — mettre à jour le statut (entrées manuelles)
+router.patch('/:id/staff/:staffId', requireAuth, async (req, res) => {
+  const { status } = req.body;
+  const allowed = ['BOOKED', 'NEEDED', 'CANCELLED'];
+  if (!status || !allowed.includes(status)) return res.status(400).json({ error: 'Statut invalide' });
+  try {
+    const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
+    if (!profile) return res.status(404).json({ error: 'Profil introuvable' });
+    const event = await prisma.event.findFirst({ where: { id: parseInt(req.params.id), profileId: profile.id } });
+    if (!event) return res.status(404).json({ error: 'Événement introuvable' });
+
+    const staff = await prisma.eventStaff.updateMany({
+      where: { id: parseInt(req.params.staffId), eventId: event.id, profileId: null },
+      data: { status },
+    });
+    if (staff.count !== 1) return res.status(404).json({ error: 'Membre introuvable ou non modifiable' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('PATCH staff:', err);
     res.status(500).json({ error: 'Erreur serveur' });
   }
 });
