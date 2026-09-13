@@ -51,7 +51,7 @@ function init(httpServer) {
       if (!user.emailVerified) return next(new Error('Unauthorized: email not verified'))
       if (user.requiresPasswordReset) return next(new Error('Unauthorized: password reset required'))
       // Point 1 — tokenVersion : rejeter les anciens JWT révoqués (ex: après changement de mdp)
-      if (Number.isInteger(decoded.tokenVersion) && decoded.tokenVersion !== user.tokenVersion) {
+      if (!Number.isInteger(decoded.tokenVersion) || decoded.tokenVersion !== user.tokenVersion) {
         return next(new Error('Unauthorized: session revoked'))
       }
 
