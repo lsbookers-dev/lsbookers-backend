@@ -42,14 +42,18 @@ function init(httpServer) {
       const userId = Number(decoded.id || decoded.userId)
       if (!userId) return next(new Error('Unauthorized: invalid token'))
 
-      // Vérifier que l'utilisateur existe, a vérifié son email et n'est pas en réinitialisation forcée
+      // Vérifier que l'utilisateur existe, est actif et que sa session est toujours valide
       const user = await prisma.user.findUnique({
         where: { id: userId },
-        select: { id: true, emailVerified: true, requiresPasswordReset: true },
+        select: { id: true, emailVerified: true, requiresPasswordReset: true, tokenVersion: true },
       })
       if (!user) return next(new Error('Unauthorized: user not found'))
       if (!user.emailVerified) return next(new Error('Unauthorized: email not verified'))
       if (user.requiresPasswordReset) return next(new Error('Unauthorized: password reset required'))
+      // Point 1 — tokenVersion : rejeter les anciens JWT révoqués (ex: après changement de mdp)
+      if (Number.isInteger(decoded.tokenVersion) && decoded.tokenVersion !== user.tokenVersion) {
+        return next(new Error('Unauthorized: session revoked'))
+      }
 
       socket.userId = userId
       next()
@@ -89,6 +93,9 @@ function init(httpServer) {
         if (!payload || typeof payload !== 'object') return
         const { conversationId, isTyping } = payload
         if (typeof conversationId !== 'number' || conversationId <= 0) return
+
+        // Point 3 — vérifier que le socket est bien dans cette room (= participant vérifié via join_conversation)
+        if (!socket.rooms.has(`conv:${conversationId}`)) return
 
         // Rate limit : max 1 event typing/s par userId (anti-spam sans Redis)
         const now = Date.now()
