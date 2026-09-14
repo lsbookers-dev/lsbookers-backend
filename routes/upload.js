@@ -1,8 +1,9 @@
-// routes/upload.js — Vercel Blob (remplace Cloudinary)
+// routes/upload.js — Cloudflare R2 (remplace Vercel Blob)
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
-const { put } = require('@vercel/blob');
+const { PutObjectCommand } = require('@aws-sdk/client-s3');
+const { r2Client, R2_BUCKET, R2_PUBLIC_URL } = require('../lib/r2');
 const rateLimit = require('express-rate-limit');
 const { requireAuth } = require('../middleware/auth');
 
@@ -63,23 +64,18 @@ function sanitizeName(name) {
  * Les vidéos ne sont pas vérifiées car les formats sont trop variés.
  */
 function isValidImageBuffer(buf, mimetype) {
-  // Pour les vidéos, on fait confiance au fileFilter multer
   if (!mimetype.startsWith('image/')) return true;
   if (buf.length < 12) return false;
 
-  // JPEG: FF D8 FF
   if (mimetype === 'image/jpeg')
     return buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF;
 
-  // PNG: 89 50 4E 47 (‰PNG)
   if (mimetype === 'image/png')
     return buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47;
 
-  // GIF: 47 49 46 38 (GIF8)
   if (mimetype === 'image/gif')
     return buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46;
 
-  // WebP: RIFF....WEBP
   if (mimetype === 'image/webp')
     return buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
            buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50;
@@ -117,20 +113,24 @@ router.post('/', requireAuth, uploadLimiter, (req, res) => {
       const rawFolder = req.body.folder || 'media';
       const folder = ALLOWED_FOLDERS.has(rawFolder) ? rawFolder : 'media';
 
-      const filename = `lsbookers/${folder}/${Date.now()}-${sanitizeName(req.file.originalname)}`;
+      const key = `lsbookers/${folder}/${Date.now()}-${sanitizeName(req.file.originalname)}`;
 
-      const blob = await put(filename, req.file.buffer, {
-        access: 'public',
-        contentType: req.file.mimetype,
-        token: process.env.BLOB_READ_WRITE_TOKEN,
-      });
+      // Upload vers Cloudflare R2
+      await r2Client.send(new PutObjectCommand({
+        Bucket: R2_BUCKET,
+        Key: key,
+        Body: req.file.buffer,
+        ContentType: req.file.mimetype,
+        ContentLength: req.file.size,
+      }));
 
-      console.log('✅ Vercel Blob upload OK:', blob.url);
+      const url = `${R2_PUBLIC_URL}/${key}`;
+      console.log('✅ R2 upload OK:', url);
 
       return res.json({
-        url: blob.url,
-        pathname: blob.pathname,
-        contentType: blob.contentType,
+        url,
+        pathname: key,
+        contentType: req.file.mimetype,
         size: req.file.size,
       });
     } catch (e) {

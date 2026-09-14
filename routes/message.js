@@ -5,7 +5,8 @@ const { requireAuth } = require('../middleware/auth')
 const { validate } = require('../middleware/validate')
 const { conversationCreateSchema } = require('../schemas')
 const multer = require('multer')
-const { put } = require('@vercel/blob')
+const { PutObjectCommand } = require('@aws-sdk/client-s3')
+const { r2Client, R2_BUCKET, R2_PUBLIC_URL } = require('../lib/r2')
 const { createNotif, displayName } = require('../services/notifications')
 const { getIO } = require('../socket')
 
@@ -75,16 +76,19 @@ function detectAttachmentType(mimetype) {
   return 'DOCUMENT'
 }
 
-/* Upload vers Vercel Blob depuis un buffer en mémoire */
+/* Upload vers Cloudflare R2 depuis un buffer en mémoire */
 async function uploadBufferToBlob(buffer, mimetype, originalname) {
   const safeName = (originalname || 'file').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9._-]/g, '')
-  const filename = `lsbookers/messages/${Date.now()}-${safeName}`
-  const blob = await put(filename, buffer, {
-    access: 'public',
-    contentType: mimetype,
-    token: process.env.BLOB_READ_WRITE_TOKEN,
-  })
-  return { secure_url: blob.url, resource_type: detectAttachmentType(mimetype).toLowerCase() }
+  const key = `lsbookers/messages/${Date.now()}-${safeName}`
+  await r2Client.send(new PutObjectCommand({
+    Bucket: R2_BUCKET,
+    Key: key,
+    Body: buffer,
+    ContentType: mimetype,
+    ContentLength: buffer.length,
+  }))
+  const url = `${R2_PUBLIC_URL}/${key}`
+  return { secure_url: url, resource_type: detectAttachmentType(mimetype).toLowerCase() }
 }
 
 /* =========================================================
