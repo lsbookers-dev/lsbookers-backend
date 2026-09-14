@@ -31,6 +31,9 @@ router.get('/', requireAuth, async (req, res) => {
             conversationId: true,
           },
         },
+        staff: {
+          select: { id: true, eventId: true, status: true },
+        },
       },
     });
     // ⚡️ Normalisation du format
@@ -52,6 +55,9 @@ router.get('/', requireAuth, async (req, res) => {
       messageId:      n.message?.id || null,
       offerId:        n.offerId || null,
       publicationId:  n.publicationId || null,
+      staffId:        n.staffId || null,
+      eventId:        n.staff?.eventId || null,
+      staffStatus:    n.staff?.status || null,
     }));
     console.log(`Notifications retournées pour user ${userId}: ${formatted.length}`); // ✅ Log pour débogage
     res.json({ notifications: formatted });

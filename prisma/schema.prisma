@@ -109,6 +109,7 @@ enum BookingStatus {
 
 enum StaffStatus {
   NEEDED    // Poste a pourvoir
+  PENDING   // Invitation envoyee, en attente de reponse
   BOOKED    // Personne confirmee
   CANCELLED // Annule
 }
@@ -616,9 +617,10 @@ model EventStaff {
   profileId  Int?        // Personne assignee (null si pas encore pourvu)
   createdAt  DateTime    @default(now())
 
-  event      Event       @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  profile    Profile?    @relation(fields: [profileId], references: [id])
-  contract   Contract?
+  event         Event          @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  profile       Profile?       @relation(fields: [profileId], references: [id])
+  contract      Contract?
+  notifications Notification[]
 
   @@index([eventId])
 }
@@ -788,8 +790,11 @@ model Notification {
   message       Message?     @relation(fields: [messageId], references: [id])
   publicationId Int?
   publication   Publication? @relation(fields: [publicationId], references: [id], onDelete: SetNull)
+  staffId       Int?
+  staff         EventStaff?  @relation(fields: [staffId], references: [id], onDelete: SetNull)
 
   @@index([userId, type, deviceToken])
+  @@index([staffId])
 }
 
 model NotificationPreferences {
