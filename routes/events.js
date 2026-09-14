@@ -251,7 +251,7 @@ router.patch('/:id/notes', requireAuth, async (req, res) => {
 
 // POST /api/events/:id/expenses
 router.post('/:id/expenses', requireAuth, async (req, res) => {
-  const { label, amount, category } = req.body;
+  const { label, amount, category, paid } = req.body;
   if (!label?.trim()) return res.status(400).json({ error: 'Libellé requis' });
   try {
     const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
@@ -259,7 +259,13 @@ router.post('/:id/expenses', requireAuth, async (req, res) => {
     const event = await prisma.event.findFirst({ where: { id: parseInt(req.params.id), profileId: profile.id } });
     if (!event) return res.status(404).json({ error: 'Événement introuvable' });
     const expense = await prisma.eventExpense.create({
-      data: { eventId: event.id, label: label.trim(), amount: amount ? parseFloat(amount) : null, category: category || null },
+      data: {
+        eventId:  event.id,
+        label:    label.trim(),
+        amount:   amount ? parseFloat(amount) : null,
+        category: category?.trim() || null,
+        paid:     Boolean(paid),
+      },
     });
     res.status(201).json({ expense });
   } catch (err) {
