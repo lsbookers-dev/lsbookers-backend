@@ -419,4 +419,56 @@ router.put('/:id', requireAuth, validate(eventUpdateSchema), async (req, res) =>
   }
 });
 
+/* ══════════════════════════════════════════════
+   VUE STAFF — lecture seule pour le personnel assigné
+══════════════════════════════════════════════ */
+
+// GET /api/events/:id/staff-view
+// Accessible uniquement si l'utilisateur est BOOKED dans l'EventStaff de cet événement
+router.get('/:id/staff-view', requireAuth, async (req, res) => {
+  try {
+    const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
+    if (!profile) return res.status(404).json({ error: 'Profil introuvable' });
+
+    const eventId = parseInt(req.params.id);
+    if (!Number.isFinite(eventId)) return res.status(400).json({ error: 'ID invalide' });
+
+    // Vérifier que le membre est bien BOOKED dans le staff de cet événement
+    const staffEntry = await prisma.eventStaff.findFirst({
+      where: { eventId, profileId: profile.id, status: 'BOOKED' },
+    });
+    if (!staffEntry) return res.status(403).json({ error: 'Accès refusé — vous n\'êtes pas membre du staff de cet événement' });
+
+    const event = await prisma.event.findUnique({
+      where: { id: eventId },
+      include: {
+        documents: { orderBy: { createdAt: 'asc' } },
+      },
+    });
+    if (!event) return res.status(404).json({ error: 'Événement introuvable' });
+
+    // Retourner uniquement les infos pratiques — pas de budget, expenses, purchases
+    res.json({
+      event: {
+        id: event.id,
+        title: event.title,
+        description: event.description || null,
+        start: event.start,
+        end: event.end || null,
+        allDay: event.allDay,
+        lieu: event.lieu || null,
+        category: event.category || null,
+        status: event.status,
+        coverImage: event.coverImage || null,
+        documents: event.documents,
+      },
+      staffRole: staffEntry.role,
+      staffFee: staffEntry.fee ?? null,
+    });
+  } catch (err) {
+    console.error('GET events/:id/staff-view:', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
 module.exports = router;
