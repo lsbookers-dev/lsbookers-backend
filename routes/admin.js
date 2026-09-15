@@ -401,16 +401,23 @@ router.delete('/users/:id', requireAuth, requireAdmin, async (req, res) => {
       // 16. Media liés à l'utilisateur
       await tx.media.deleteMany({ where: { userId: id } });
 
-      // 17. Abonnement
+      // 17. BookingRequests (pas de cascade — requiert suppression explicite)
+      if (profileId) {
+        await tx.bookingRequest.deleteMany({
+          where: { OR: [{ requesterId: profileId }, { targetId: profileId }] },
+        });
+      }
+
+      // 18. Abonnement
       await tx.subscription.deleteMany({ where: { userId: id } });
 
-      // 18. Profil
+      // 19. Profil
       if (profileId) await tx.profile.delete({ where: { id: profileId } });
 
-      // 19. Réinitialisations de mot de passe
+      // 20. Réinitialisations de mot de passe
       await tx.passwordReset.deleteMany({ where: { userId: id } });
 
-      // 20. Utilisateur
+      // 21. Utilisateur
       await tx.user.delete({ where: { id } });
 
     }, { timeout: 30000 });
