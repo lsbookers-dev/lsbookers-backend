@@ -19,7 +19,7 @@ router.get('/', requireAuth, requireAdmin, async (req, res) => {
 
 // ─── POST / — créer une publication ────────────────────────────────────────
 router.post('/', requireAuth, requireAdmin, async (req, res) => {
-  const { title, content, mediaUrl, mediaType } = req.body
+  const { title, content, mediaUrl, mediaType, pinned } = req.body
 
   if (!content && !mediaUrl) {
     return res.status(400).json({ error: 'Au moins un contenu ou un média est requis.' })
@@ -33,6 +33,7 @@ router.post('/', requireAuth, requireAdmin, async (req, res) => {
         mediaUrl:  mediaUrl  || null,
         mediaType: mediaType || null,
         active:    true,
+        pinned:    pinned === true,
       },
     })
     res.status(201).json({ post })
@@ -72,6 +73,26 @@ router.patch('/:id/toggle', requireAuth, requireAdmin, async (req, res) => {
     res.json({ post: updated })
   } catch (err) {
     console.error('❌ AdminPosts PATCH /:id/toggle', err)
+    res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
+// ─── PATCH /:id/pin — basculer l'épinglage ──────────────────────────────────
+router.patch('/:id/pin', requireAuth, requireAdmin, async (req, res) => {
+  const id = parseInt(req.params.id, 10)
+  if (isNaN(id)) return res.status(400).json({ error: 'ID invalide' })
+
+  try {
+    const current = await prisma.adminPost.findUnique({ where: { id } })
+    if (!current) return res.status(404).json({ error: 'Publication introuvable' })
+
+    const updated = await prisma.adminPost.update({
+      where: { id },
+      data:  { pinned: !current.pinned },
+    })
+    res.json({ post: updated })
+  } catch (err) {
+    console.error('❌ AdminPosts PATCH /:id/pin', err)
     res.status(500).json({ error: 'Erreur serveur' })
   }
 })

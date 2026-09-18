@@ -934,6 +934,7 @@ model AdminPost {
   mediaUrl  String?
   mediaType MediaType?
   active    Boolean    @default(true)
+  pinned    Boolean    @default(false)
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
 }
