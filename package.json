@@ -9,7 +9,7 @@
     "force-dev": "killall -9 node || true && nodemon server.js",
     "build": "prisma generate",
     "postinstall": "prisma generate",
-    "start": "prisma migrate deploy && node server.js"
+    "start": "prisma generate && prisma migrate deploy && node server.js"
   },
   "keywords": [],
   "author": "",
