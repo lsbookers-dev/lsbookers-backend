@@ -9,18 +9,24 @@ const upload   = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5
 
 // ─── Helper : vérifie que l'utilisateur est organisateur ou cible du booking ──
 async function canAccessBooking(userId, bookingId) {
-  const booking = await prisma.bookingRequest.findUnique({
-    where: { id: bookingId },
-    include: {
-      requester: { include: { user: true } },
-      target:    { include: { user: true } },
-    },
-  })
-  if (!booking) return null
-  const isRequester = booking.requester.user.id === userId
-  const isTarget    = booking.target.user.id    === userId
-  if (!isRequester && !isTarget) return null
-  return { booking, isOrganizer: isRequester }
+  try {
+    const booking = await prisma.bookingRequest.findUnique({
+      where: { id: bookingId },
+      include: {
+        requester: { include: { user: true } },
+        target:    { include: { user: true } },
+      },
+    })
+    if (!booking) return null
+    if (!booking.requester?.user || !booking.target?.user) return null
+    const isRequester = booking.requester.user.id === userId
+    const isTarget    = booking.target.user.id    === userId
+    if (!isRequester && !isTarget) return null
+    return { booking, isOrganizer: isRequester }
+  } catch (err) {
+    console.error('❌ canAccessBooking error:', err)
+    return null
+  }
 }
 
 // ─── GET /:id — détail complet du booking ─────────────────────────────────────
