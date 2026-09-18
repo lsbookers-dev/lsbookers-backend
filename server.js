@@ -29,6 +29,7 @@ const publicationRoutes = require('./routes/publications');
 const albumsRoutes      = require('./routes/albums'); // albums
 const offersRoutes = require('./routes/offers'); // offres
 const notificationsRoutes = require('./routes/notifications'); // notifications
+const bookingDetailRoutes = require('./routes/bookingDetail'); // détail booking (logistique, médias, notes)
 const passwordRoutes = require('./routes/password'); // 🔐 forgot/reset password
 const reviewsRoutes = require('./routes/reviews'); // avis
 const homeRoutes = require('./routes/home'); // page d'accueil
@@ -147,6 +148,7 @@ app.use('/api/events', eventRoutes);
 app.use('/api/events', eventBookingRoutes);
 app.use('/api/events', eventStaffRoutes);
 app.use('/api/events', eventDocumentRoutes);
+app.use('/api/bookings', bookingDetailRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/publications', publicationRoutes);
 app.use('/api/albums', albumsRoutes);

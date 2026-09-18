@@ -114,6 +114,11 @@ enum StaffStatus {
   CANCELLED // Annule
 }
 
+enum LogisticType {
+  HOTEL
+  TRANSPORT
+}
+
 // ─────────────────────────────────────────────
 //  USER & PROFILE
 // ─────────────────────────────────────────────
@@ -595,13 +600,46 @@ model BookingRequest {
   createdAt               DateTime      @default(now())
   updatedAt               DateTime      @updatedAt
 
-  requester   Profile       @relation("BookingRequester", fields: [requesterId], references: [id])
-  target      Profile       @relation("BookingTarget", fields: [targetId], references: [id])
-  event       Event?        @relation(fields: [eventId], references: [id])
+  sharedNotes             String?       // Notes partagées organisateur ↔ artiste/prestataire
+
+  requester   Profile           @relation("BookingRequester", fields: [requesterId], references: [id])
+  target      Profile           @relation("BookingTarget", fields: [targetId], references: [id])
+  event       Event?            @relation(fields: [eventId], references: [id])
   messages    Message[]
+  logistics   BookingLogistic[]
+  media       BookingMedia[]
 
   @@index([requesterId])
   @@index([targetId])
+}
+
+// Logistique par booking (logement / transport)
+model BookingLogistic {
+  id               Int             @id @default(autoincrement())
+  bookingRequestId Int
+  type             LogisticType    // HOTEL | TRANSPORT
+  title            String
+  fileUrl          String?
+  fileName         String?
+  createdAt        DateTime        @default(now())
+
+  bookingRequest   BookingRequest  @relation(fields: [bookingRequestId], references: [id], onDelete: Cascade)
+
+  @@index([bookingRequestId])
+}
+
+// Médias promotionnels partagés par l'organisateur
+model BookingMedia {
+  id               Int             @id @default(autoincrement())
+  bookingRequestId Int
+  url              String
+  mediaType        String          @default("IMAGE")  // IMAGE | VIDEO
+  name             String?
+  createdAt        DateTime        @default(now())
+
+  bookingRequest   BookingRequest  @relation(fields: [bookingRequestId], references: [id], onDelete: Cascade)
+
+  @@index([bookingRequestId])
 }
 
 // Postes requis dans un evenement prive
