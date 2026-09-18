@@ -41,8 +41,16 @@ router.get('/:id', requireAuth, async (req, res) => {
     const booking = await prisma.bookingRequest.findUnique({
       where: { id },
       include: {
-        requester: { include: { user: { select: { id: true, pseudo: true, firstName: true, lastName: true, avatar: true } } } },
-        target:    { include: { user: { select: { id: true, pseudo: true, firstName: true, lastName: true, avatar: true } } } },
+        requester: {
+          include: {
+            user: { select: { id: true, pseudo: true, firstName: true, lastName: true } },
+          },
+        },
+        target: {
+          include: {
+            user: { select: { id: true, pseudo: true, firstName: true, lastName: true } },
+          },
+        },
       },
     })
 
