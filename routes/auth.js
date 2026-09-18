@@ -36,6 +36,34 @@ function toClientUser(user) {
 }
 
 // ─────────────────────────────────────────────
+// VALIDATION SIRET via API gouvernementale
+// GET /api/auth/validate-siret?siret=xxx
+// ─────────────────────────────────────────────
+router.get('/validate-siret', async (req, res) => {
+  const raw = (req.query.siret || '').replace(/\s/g, '')
+  if (!/^\d{14}$/.test(raw)) {
+    return res.status(400).json({ valid: false, error: 'Format invalide — 14 chiffres requis' })
+  }
+  try {
+    const apiRes = await fetch(
+      `https://recherche-entreprises.api.gouv.fr/search?q=${raw}&page=1&per_page=1`,
+      { headers: { Accept: 'application/json' } }
+    )
+    if (!apiRes.ok) return res.json({ valid: false, error: 'Service indisponible, réessayez' })
+    const data = await apiRes.json()
+    if (data.total_results > 0) {
+      const company = data.results[0]
+      const name = company.nom_complet || company.siege?.denomination || ''
+      return res.json({ valid: true, companyName: name })
+    }
+    return res.json({ valid: false, error: 'SIRET introuvable dans le registre officiel' })
+  } catch (err) {
+    console.error('❌ validate-siret:', err)
+    return res.status(500).json({ valid: false, error: 'Erreur lors de la vérification' })
+  }
+})
+
+// ─────────────────────────────────────────────
 // VÉRIFICATION DISPONIBILITÉ DU PSEUDO
 // GET /api/auth/check-pseudo?pseudo=xxx
 // ─────────────────────────────────────────────
