@@ -37,14 +37,27 @@ router.get('/:id', requireAuth, async (req, res) => {
       include: {
         requester: { include: { user: { select: { id: true, pseudo: true, firstName: true, lastName: true, avatar: true } } } },
         target:    { include: { user: { select: { id: true, pseudo: true, firstName: true, lastName: true, avatar: true } } } },
-        logistics: { orderBy: { createdAt: 'desc' } },
-        media:     { orderBy: { createdAt: 'desc' } },
       },
     })
-    res.json({ booking })
+
+    // Requêtes SQL brutes — évite toute dépendance à la version du client Prisma généré
+    const logistics = await prisma.$queryRaw`
+      SELECT id, "bookingRequestId", type::text, title, "fileUrl", "fileName", "createdAt"
+      FROM "BookingLogistic"
+      WHERE "bookingRequestId" = ${id}
+      ORDER BY "createdAt" DESC
+    `
+    const media = await prisma.$queryRaw`
+      SELECT id, "bookingRequestId", url, "mediaType", name, "createdAt"
+      FROM "BookingMedia"
+      WHERE "bookingRequestId" = ${id}
+      ORDER BY "createdAt" DESC
+    `
+
+    res.json({ booking: { ...booking, logistics, media } })
   } catch (err) {
     console.error('❌ bookingDetail GET /:id', err)
-    res.status(500).json({ error: 'Erreur serveur' })
+    res.status(500).json({ error: err.message || 'Erreur serveur' })
   }
 })
 
@@ -92,9 +105,11 @@ router.post('/:id/logistics', requireAuth, upload.single('file'), async (req, re
       fileName = req.file.originalname
     }
 
-    const logistic = await prisma.bookingLogistic.create({
-      data: { bookingRequestId: id, type, title: title.trim(), fileUrl, fileName },
-    })
+    const [logistic] = await prisma.$queryRaw`
+      INSERT INTO "BookingLogistic" ("bookingRequestId", type, title, "fileUrl", "fileName", "createdAt")
+      VALUES (${id}, ${type}::"LogisticType", ${title.trim()}, ${fileUrl}, ${fileName}, NOW())
+      RETURNING id, "bookingRequestId", type::text, title, "fileUrl", "fileName", "createdAt"
+    `
     res.status(201).json({ logistic })
   } catch (err) {
     console.error('❌ bookingDetail POST /:id/logistics', err)
@@ -112,7 +127,7 @@ router.delete('/:id/logistics/:logId', requireAuth, async (req, res) => {
   if (!result || !result.isOrganizer) return res.status(403).json({ error: 'Accès refusé' })
 
   try {
-    await prisma.bookingLogistic.delete({ where: { id: logId } })
+    await prisma.$executeRaw`DELETE FROM "BookingLogistic" WHERE id = ${logId}`
     res.json({ ok: true })
   } catch (err) {
     console.error('❌ bookingDetail DELETE /:id/logistics/:logId', err)
@@ -137,9 +152,11 @@ router.post('/:id/media', requireAuth, upload.single('file'), async (req, res) =
     const mediaType = req.file.mimetype.startsWith('video') ? 'VIDEO' : 'IMAGE'
     const name      = req.file.originalname
 
-    const media = await prisma.bookingMedia.create({
-      data: { bookingRequestId: id, url, mediaType, name },
-    })
+    const [media] = await prisma.$queryRaw`
+      INSERT INTO "BookingMedia" ("bookingRequestId", url, "mediaType", name, "createdAt")
+      VALUES (${id}, ${url}, ${mediaType}, ${name}, NOW())
+      RETURNING id, "bookingRequestId", url, "mediaType", name, "createdAt"
+    `
     res.status(201).json({ media })
   } catch (err) {
     console.error('❌ bookingDetail POST /:id/media', err)
@@ -157,7 +174,7 @@ router.delete('/:id/media/:mediaId', requireAuth, async (req, res) => {
   if (!result || !result.isOrganizer) return res.status(403).json({ error: 'Accès refusé' })
 
   try {
-    await prisma.bookingMedia.delete({ where: { id: mediaId } })
+    await prisma.$executeRaw`DELETE FROM "BookingMedia" WHERE id = ${mediaId}`
     res.json({ ok: true })
   } catch (err) {
     console.error('❌ bookingDetail DELETE /:id/media/:mediaId', err)
