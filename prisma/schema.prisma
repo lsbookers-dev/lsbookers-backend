@@ -859,6 +859,7 @@ model AdminSettings {
   loginBgUrl     String?
   registerBgUrl  String?
   headerLogoUrl  String?
+  landingLogoUrl String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 }

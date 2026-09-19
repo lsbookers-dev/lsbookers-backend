@@ -40,6 +40,7 @@ router.get('/', async (_req, res) => {
       loginBgUrl:     settings.loginBgUrl     || '',
       registerBgUrl:  settings.registerBgUrl  || '',
       headerLogoUrl:  settings.headerLogoUrl  || '',
+      landingLogoUrl: settings.landingLogoUrl || '',
       mainColor:      settings.mainColor      || '#FF0055',
       secondaryColor: settings.secondaryColor || '#000000',
       bannerUrl:      settings.bannerUrl      || '',
@@ -62,7 +63,7 @@ router.put('/', requireAuth, requireAdmin, validate(adminSettingsUpdateSchema), 
     const data = {};
     const fields = [
       'welcomeText', 'landingBgUrl', 'loginBgUrl', 'registerBgUrl',
-      'headerLogoUrl', 'mainColor', 'secondaryColor', 'bannerUrl', 'logoUrl',
+      'headerLogoUrl', 'landingLogoUrl', 'mainColor', 'secondaryColor', 'bannerUrl', 'logoUrl',
     ];
     for (const field of fields) {
       if (req.body[field] !== undefined) {
@@ -82,6 +83,7 @@ router.put('/', requireAuth, requireAdmin, validate(adminSettingsUpdateSchema), 
       loginBgUrl:     updated.loginBgUrl     || '',
       registerBgUrl:  updated.registerBgUrl  || '',
       headerLogoUrl:  updated.headerLogoUrl  || '',
+      landingLogoUrl: updated.landingLogoUrl || '',
       mainColor:      updated.mainColor      || '#FF0055',
       secondaryColor: updated.secondaryColor || '#000000',
       bannerUrl:      updated.bannerUrl      || '',

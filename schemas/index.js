@@ -220,6 +220,7 @@ const adminSettingsUpdateSchema = z.object({
   loginBgUrl:      z.string().max(2000).trim().optional(),
   registerBgUrl:   z.string().max(2000).trim().optional(),
   headerLogoUrl:   z.string().max(2000).trim().optional(),
+  landingLogoUrl:  z.string().max(2000).trim().optional(),
   mainColor:       z.string().max(20).trim().optional(),
   secondaryColor:  z.string().max(20).trim().optional(),
   bannerUrl:       z.string().max(2000).trim().optional(),
