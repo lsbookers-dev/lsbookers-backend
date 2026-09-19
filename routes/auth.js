@@ -109,6 +109,29 @@ router.post('/register-complete', validate(registerCompleteSchema), async (req, 
       return res.status(409).json({ error: 'Ce pseudo est déjà utilisé' });
     }
 
+    // Re-valider le SIRET côté serveur si statut professionnel
+    if (legalStatus === 'COMPANY' && siret) {
+      const raw = siret.replace(/\s/g, '')
+      if (!/^\d{14}$/.test(raw)) {
+        return res.status(400).json({ error: 'Format SIRET invalide — 14 chiffres requis' })
+      }
+      try {
+        const siretRes = await fetch(
+          `https://recherche-entreprises.api.gouv.fr/search?q=${raw}&page=1&per_page=1`,
+          { headers: { Accept: 'application/json' } }
+        )
+        if (siretRes.ok) {
+          const siretData = await siretRes.json()
+          if (!siretData.total_results || siretData.total_results === 0) {
+            return res.status(400).json({ error: 'SIRET introuvable dans le registre officiel' })
+          }
+        }
+        // Si l'API est indisponible on laisse passer (évite de bloquer l'inscription)
+      } catch (siretErr) {
+        console.error('⚠️ validate-siret (register-complete):', siretErr)
+      }
+    }
+
     const hashedPassword = await bcrypt.hash(password, 12);
     const emailVerificationToken = crypto.randomBytes(32).toString('hex');
 
