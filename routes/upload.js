@@ -122,6 +122,7 @@ router.post('/', requireAuth, uploadLimiter, (req, res) => {
         Body: req.file.buffer,
         ContentType: req.file.mimetype,
         ContentLength: req.file.size,
+        CacheControl: 'public, max-age=31536000, immutable',
       }));
 
       const url = `${R2_PUBLIC_URL}/${key}`;

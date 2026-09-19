@@ -34,6 +34,7 @@ async function getOrCreateSettings() {
 router.get('/', async (_req, res) => {
   try {
     const settings = await getOrCreateSettings();
+    res.set('Cache-Control', 'public, max-age=60, stale-while-revalidate=300');
     return res.json({
       welcomeText:    settings.welcomeText    || '',
       landingBgUrl:   settings.landingBgUrl   || '',
