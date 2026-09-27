@@ -648,6 +648,35 @@ router.delete('/:id/tags/:tagId', requireAuth, async (req, res) => {
   }
 })
 
+// GET /api/publications/tagged/:profileId — publications où un profil est identifié (ACCEPTED, public)
+router.get('/tagged/:profileId', async (req, res) => {
+  const profileId = parseInt(req.params.profileId, 10)
+  if (!profileId) return res.status(400).json({ error: 'profileId invalide' })
+  try {
+    // Récupérer le userId depuis le profil
+    const profile = await prisma.profile.findUnique({ where: { id: profileId }, select: { userId: true } })
+    if (!profile) return res.status(404).json({ error: 'Profil introuvable' })
+
+    const tags = await prisma.publicationTag.findMany({
+      where: { taggedUserId: profile.userId, status: 'ACCEPTED' },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        publication: {
+          include: {
+            ...MEDIA_INCLUDE,
+            ...TAG_INCLUDE,
+            _count: { select: { likes: true, comments: true } },
+          },
+        },
+      },
+    })
+    return res.json({ publications: tags.map(t => t.publication).filter(Boolean) })
+  } catch (err) {
+    console.error('❌ GET tagged/:profileId :', err)
+    return res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
 // GET /api/publications/my-tags — publications où je suis tagué (PENDING pour répondre)
 router.get('/my-tags', requireAuth, async (req, res) => {
   try {
