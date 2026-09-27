@@ -36,17 +36,21 @@ const fileFilter = (req, file, cb) => {
   return cb(new multer.MulterError('LIMIT_UNEXPECTED_FILE', 'FORMAT_NOT_ALLOWED'));
 };
 
+// Limite globale à 100 Mo (vidéo). La validation par type est faite dans la route.
+const IMAGE_MAX_SIZE = 25 * 1024 * 1024;  // 25 Mo pour les images
+const VIDEO_MAX_SIZE = 100 * 1024 * 1024; // 100 Mo pour les vidéos
+
 const upload = multer({
   storage,
   fileFilter,
-  limits: { fileSize: 100 * 1024 * 1024 }, // 100 Mo
+  limits: { fileSize: VIDEO_MAX_SIZE },
 });
 
 /* ----------------------------- Helpers ----------------------------------- */
 function mapMulterError(err) {
   if (err instanceof multer.MulterError) {
     if (err.code === 'LIMIT_FILE_SIZE')
-      return { status: 413, payload: { error: 'FILE_TOO_LARGE', max: '100MB' } };
+      return { status: 413, payload: { error: 'FILE_TOO_LARGE', max: '100MB (vidéo) / 25MB (image)' } };
     if (err.code === 'LIMIT_UNEXPECTED_FILE')
       return { status: 400, payload: { error: 'FORMAT_NOT_ALLOWED' } };
     return { status: 400, payload: { error: 'MULTER_ERROR', code: err.code } };
@@ -101,6 +105,14 @@ router.post('/', requireAuth, uploadLimiter, (req, res) => {
     try {
       if (!req.file) {
         return res.status(400).json({ error: 'NO_FILE' });
+      }
+
+      // Validation taille par type : images ≤ 25 Mo, vidéos ≤ 100 Mo
+      const isImage = req.file.mimetype.startsWith('image/');
+      const maxSize = isImage ? IMAGE_MAX_SIZE : VIDEO_MAX_SIZE;
+      if (req.file.size > maxSize) {
+        const maxLabel = isImage ? '25MB' : '100MB';
+        return res.status(413).json({ error: 'FILE_TOO_LARGE', max: maxLabel });
       }
 
       // Validation magic bytes pour les images (anti-spoofing)

@@ -15,7 +15,6 @@ const mediaRoutes = require('./routes/media');
 const messageRoutes = require('./routes/message');
 const followRoutes = require('./routes/follow');
 const blockRoutes  = require('./routes/block');
-const feedRoutes = require('./routes/feed');
 const searchRoutes = require('./routes/search');
 const adminRoutes = require('./routes/admin');
 const adminSettingsRoutes = require('./routes/adminSettings'); // paramètres du site
@@ -136,7 +135,6 @@ app.use('/api/media', mediaRoutes);
 app.use('/api/messages', messagingLimiter, messageRoutes);
 app.use('/api/follow', followRoutes);
 app.use('/api/block',  blockRoutes);
-app.use('/api/feed', feedRoutes);
 app.use('/api/search', searchRoutes);
 
 // ⚠️ IMPORTANT : monter /api/admin/settings et /api/admin/posts AVANT /api/admin

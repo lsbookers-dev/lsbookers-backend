@@ -79,9 +79,10 @@ router.get('/carousel', async (req, res) => {
 // Algorithme de feed progressif à 3 buckets
 // Tier basé sur followingCount → ratios followed/trending/suggestion
 router.get('/feed', requireAuth, async (req, res) => {
-  const userId   = req.user.id
-  const page     = Math.max(1, parseInt(req.query.page) || 1)
+  const userId    = req.user.id
   const PAGE_SIZE = 20
+  // Pagination par curseur : `after` = ISO date du dernier post vu (plus stable que skip)
+  const afterParam = req.query.after ? new Date(req.query.after) : null
 
   try {
     const [profile, follows] = await Promise.all([
@@ -105,17 +106,15 @@ router.get('/feed', requireAuth, async (req, res) => {
     const followedSlots   = Math.round(PAGE_SIZE * followedRatio)
     const suggestionSlots = Math.round(PAGE_SIZE * suggestionRatio)
     const trendingSlots   = PAGE_SIZE - followedSlots - suggestionSlots
-    const pageSkip        = (page - 1) * PAGE_SIZE
 
-    // ── Include commun ────────────────────────────────────────
+    // ── Include commun — likes remplacés par _count pour la perf ─
     const PUB_INCLUDE = {
       profile: {
         include: {
           user: { select: { id: true, pseudo: true, firstName: true, lastName: true, role: true } },
         },
       },
-      likes:           { select: { profileId: true } },
-      _count:          { select: { comments: true } },
+      _count:          { select: { likes: true, comments: true } },
       additionalMedia: { orderBy: { order: 'asc' }, select: { id: true, url: true, mediaType: true, order: true } },
       tags: {
         where:  { status: 'ACCEPTED' },
@@ -135,8 +134,11 @@ router.get('/feed', requireAuth, async (req, res) => {
     function score(pub) {
       const ageH    = (Date.now() - new Date(pub.createdAt).getTime()) / 3_600_000
       const recency = Math.max(0, 168 - ageH)
-      return recency + (pub.likes?.length ?? 0) * 2 + (pub._count?.comments ?? 0) * 3
+      return recency + (pub._count?.likes ?? 0) * 2 + (pub._count?.comments ?? 0) * 3
     }
+
+    // ── Filtre curseur (stable, évite le décalage de skip) ───
+    const cursorFilter = afterParam ? { createdAt: { lt: afterParam } } : {}
 
     // ── Profils des follows ───────────────────────────────────
     const followedProfiles = followedUserIds.length > 0
@@ -150,11 +152,10 @@ router.get('/feed', requireAuth, async (req, res) => {
 
     // ── BUCKET 1 — Follows + propres publications ─────────────
     const rawFollowed = await prisma.publication.findMany({
-      where:   { profileId: { in: ownAndFollowedProfileIds } },
+      where:   { profileId: { in: ownAndFollowedProfileIds }, ...cursorFilter },
       include: PUB_INCLUDE,
       orderBy: { createdAt: 'desc' },
       take:    Math.max(followedSlots, 4) * 3,
-      skip:    Math.floor(pageSkip * followedRatio),
     })
     const followedBucket = rawFollowed
       .map(p => ({ ...p, feedType: 'followed', _score: score(p) }))
@@ -169,11 +170,10 @@ router.get('/feed', requireAuth, async (req, res) => {
       where: {
         id:        { notIn: seenIds },
         profileId: { notIn: seenProfileIds },
-        createdAt: { gte: new Date(Date.now() - 90 * 24 * 3_600_000) }, // 90 jours
+        createdAt: { gte: new Date(Date.now() - 90 * 24 * 3_600_000), ...(afterParam ? { lt: afterParam } : {}) },
       },
       include: PUB_INCLUDE,
       take:    trendingSlots * 4,
-      skip:    Math.floor(pageSkip * trendingRatio),
     })
     const trendingBucket = rawTrending
       .map(p => ({ ...p, feedType: 'trending', _score: score(p) }))
@@ -207,7 +207,7 @@ router.get('/feed', requireAuth, async (req, res) => {
 
         if (fofProfileIds.length > 0) {
           const rawSugg = await prisma.publication.findMany({
-            where:   { id: { notIn: allSeenIds }, profileId: { in: fofProfileIds } },
+            where:   { id: { notIn: allSeenIds }, profileId: { in: fofProfileIds }, ...cursorFilter },
             include: PUB_INCLUDE,
             take:    suggestionSlots * 3,
           })
@@ -223,7 +223,7 @@ router.get('/feed', requireAuth, async (req, res) => {
         const missing     = suggestionSlots - suggestionBucket.length
         const allSeen2    = [...allSeenIds, ...suggestionBucket.map(p => p.id)]
         const fallback    = await prisma.publication.findMany({
-          where:   { id: { notIn: allSeen2 }, profileId: { notIn: allSeenProfileIds } },
+          where:   { id: { notIn: allSeen2 }, profileId: { notIn: allSeenProfileIds }, ...cursorFilter },
           include: PUB_INCLUDE,
           take:    missing * 3,
         })
@@ -259,6 +259,16 @@ router.get('/feed', requireAuth, async (req, res) => {
 
     const merged = interleave(followedBucket, trendingBucket, suggestionBucket)
 
+    // ── Requête unique pour savoir quels posts sont likés par le viewer ──
+    const mergedIds = merged.map(p => p.id)
+    const myLikes = mergedIds.length > 0
+      ? await prisma.publicationLike.findMany({
+          where: { profileId: profile.id, publicationId: { in: mergedIds } },
+          select: { publicationId: true },
+        })
+      : []
+    const likedIds = new Set(myLikes.map(l => l.publicationId))
+
     // ── Formatter la réponse ──────────────────────────────────
     const posts = merged.map(p => ({
       id:              p.id,
@@ -267,9 +277,9 @@ router.get('/feed', requireAuth, async (req, res) => {
       caption:         p.caption,
       title:           p.title,
       createdAt:       p.createdAt,
-      likesCount:      p.likes.length,
+      likesCount:      p._count?.likes ?? 0,
       commentsCount:   p._count?.comments ?? 0,
-      likedByMe:       p.likes.some(l => l.profileId === profile.id),
+      likedByMe:       likedIds.has(p.id),
       isFromFollow:    p.feedType === 'followed',
       feedType:        p.feedType,
       additionalMedia: p.additionalMedia ?? [],
@@ -284,8 +294,8 @@ router.get('/feed', requireAuth, async (req, res) => {
       },
     }))
 
-    // ── Publications admin (prioritaires — affichées en tête) ─
-    const adminPosts = page === 1
+    // ── Publications admin (prioritaires — première page seulement) ─
+    const adminPosts = !afterParam
       ? await prisma.adminPost.findMany({ where: { active: true }, orderBy: { createdAt: 'desc' } })
       : []
 
@@ -293,7 +303,6 @@ router.get('/feed', requireAuth, async (req, res) => {
       posts,
       followCount: followingCount,
       adminPosts,
-      page,
       hasMore: posts.length >= PAGE_SIZE,
     })
   } catch (err) {

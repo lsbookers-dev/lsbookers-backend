@@ -275,6 +275,8 @@ model Publication {
   additionalMedia PublicationMedia[]
   albumItems      AlbumItem[]
   tags            PublicationTag[]
+
+  @@index([profileId, createdAt])
 }
 
 model PublicationTag {

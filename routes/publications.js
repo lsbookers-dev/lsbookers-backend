@@ -5,6 +5,19 @@ const { requireAuth } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const { publicationCreateSchema, commentCreateSchema } = require('../schemas');
 const { createNotif, displayName } = require('../services/notifications');
+const { r2Client, R2_BUCKET, R2_PUBLIC_URL } = require('../lib/r2');
+const { DeleteObjectCommand } = require('@aws-sdk/client-s3');
+
+// Helper : supprimer un objet R2 par son URL publique (silencieux si erreur)
+async function deleteR2Object(url) {
+  if (!url || !R2_PUBLIC_URL || !url.startsWith(R2_PUBLIC_URL)) return;
+  try {
+    const key = url.slice(R2_PUBLIC_URL.length + 1); // +1 pour le /
+    await r2Client.send(new DeleteObjectCommand({ Bucket: R2_BUCKET, Key: key }));
+  } catch (e) {
+    console.warn('⚠️ R2 delete failed for', url, e.message);
+  }
+}
 
 // Helper — include médias additionnels
 const MEDIA_INCLUDE = {
@@ -64,26 +77,39 @@ router.get('/:id(\\d+)', async (req, res) => {
   }
 })
 
-// GET /api/publications/profile/:profileId
+// GET /api/publications/profile/:profileId?page=1&limit=20
 router.get('/profile/:profileId', async (req, res) => {
   const profileId = parseInt(req.params.profileId, 10);
+  const page  = Math.max(1, parseInt(req.query.page)  || 1);
+  const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 20));
 
   if (isNaN(profileId)) {
     return res.status(400).json({ error: 'Paramètre profileId invalide' });
   }
 
   try {
-    const publications = await prisma.publication.findMany({
-      where: { profileId },
-      orderBy: { id: 'desc' },
-      include: {
-        ...MEDIA_INCLUDE,
-        ...TAG_INCLUDE,
-        _count: { select: { likes: true, comments: true } },
-      },
-    });
+    const [publications, total] = await Promise.all([
+      prisma.publication.findMany({
+        where:   { profileId },
+        orderBy: { createdAt: 'desc' },
+        skip:    (page - 1) * limit,
+        take:    limit,
+        include: {
+          ...MEDIA_INCLUDE,
+          ...TAG_INCLUDE,
+          _count: { select: { likes: true, comments: true } },
+        },
+      }),
+      prisma.publication.count({ where: { profileId } }),
+    ]);
 
-    return res.json({ publications });
+    return res.json({
+      publications,
+      total,
+      page,
+      limit,
+      hasMore: page * limit < total,
+    });
   } catch (error) {
     console.error('❌ Erreur récupération publications :', error);
     return res.status(500).json({ error: 'Erreur serveur' });
@@ -112,6 +138,20 @@ router.post('/', requireAuth, validate(publicationCreateSchema), async (req, res
     // Vérifie que le profil appartient bien à l'utilisateur connecté
     if (profile.userId !== req.user.id) {
       return res.status(403).json({ error: 'Accès interdit' });
+    }
+
+    // Validation URL média principal (doit provenir de notre bucket R2)
+    if (R2_PUBLIC_URL && !String(media).startsWith(R2_PUBLIC_URL)) {
+      return res.status(400).json({ error: 'URL média invalide' });
+    }
+
+    // Validation URLs médias additionnels
+    if (Array.isArray(additionalMedia) && R2_PUBLIC_URL) {
+      for (const m of additionalMedia) {
+        if (!String(m.url).startsWith(R2_PUBLIC_URL)) {
+          return res.status(400).json({ error: 'URL média additionnel invalide' });
+        }
+      }
     }
 
     const newPublication = await prisma.publication.create({
@@ -151,7 +191,7 @@ router.delete('/:id', requireAuth, async (req, res) => {
   }
 
   try {
-    // On récupère la publication avec son profil pour vérifier le propriétaire
+    // On récupère la publication avec son profil + médias pour vérifier le propriétaire et nettoyer R2
     const publication = await prisma.publication.findUnique({
       where: { id },
       include: {
@@ -162,6 +202,7 @@ router.delete('/:id', requireAuth, async (req, res) => {
           },
         },
       },
+      // Note : `media` est un champ scalaire (String), il est toujours inclus
     });
 
     if (!publication) {
@@ -172,6 +213,16 @@ router.delete('/:id', requireAuth, async (req, res) => {
     if (!publication.profile || publication.profile.userId !== req.user.id) {
       return res.status(403).json({ error: 'Accès interdit' });
     }
+
+    // Supprimer les fichiers R2 (média principal + médias additionnels)
+    const additionalMediaToDelete = await prisma.publicationMedia.findMany({
+      where: { publicationId: id },
+      select: { url: true },
+    });
+    await Promise.all([
+      deleteR2Object(publication.media),
+      ...additionalMediaToDelete.map(m => deleteR2Object(m.url)),
+    ]);
 
     await prisma.publication.delete({
       where: { id },
@@ -251,12 +302,25 @@ router.post('/:id/comments', requireAuth, validate(commentCreateSchema), async (
     const profile = await prisma.profile.findUnique({ where: { userId: req.user.id } })
     if (!profile) return res.status(404).json({ error: 'Profil introuvable' })
 
+    // P7b — Vérifier que le commentaire parent appartient bien à la même publication
+    const parsedParentId = parentId ? parseInt(parentId, 10) : null
+    if (parsedParentId) {
+      const parentComment = await prisma.publicationComment.findUnique({
+        where: { id: parsedParentId },
+        select: { publicationId: true, parentId: true },
+      })
+      if (!parentComment) return res.status(404).json({ error: 'Commentaire parent introuvable' })
+      if (parentComment.publicationId !== id) return res.status(400).json({ error: 'Commentaire parent hors de cette publication' })
+      // Pas de réponse à une réponse (max 2 niveaux)
+      if (parentComment.parentId !== null) return res.status(400).json({ error: 'Les réponses imbriquées ne sont pas supportées' })
+    }
+
     const comment = await prisma.publicationComment.create({
       data: {
         content:       String(content).trim(),
         publicationId: id,
         profileId:     profile.id,
-        ...(parentId ? { parentId: parseInt(parentId, 10) } : {}),
+        ...(parsedParentId ? { parentId: parsedParentId } : {}),
       },
       include: {
         ...COMMENT_INCLUDE,
@@ -266,10 +330,10 @@ router.post('/:id/comments', requireAuth, validate(commentCreateSchema), async (
 
     const commenterName = displayName(comment.profile?.user)
 
-    if (parentId) {
+    if (parsedParentId) {
       // Réponse → notifier l'auteur du commentaire parent
       const parent = await prisma.publicationComment.findUnique({
-        where: { id: parseInt(parentId, 10) },
+        where: { id: parsedParentId },
         include: { profile: { select: { userId: true } } },
       })
       if (parent?.profile?.userId) {
