@@ -5,17 +5,9 @@
 const express = require('express');
 const router = express.Router();
 const prisma = require('../prisma/client');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const { adminSettingsUpdateSchema } = require('../schemas');
-
-/** Vérifie ADMIN */
-function requireAdmin(req, res, next) {
-  if (!req.user || req.user.role !== 'ADMIN') {
-    return res.status(403).json({ error: 'Accès réservé aux administrateurs' });
-  }
-  next();
-}
 
 /** Récupère (ou crée) la ligne de settings unique (id = 1) */
 async function getOrCreateSettings() {

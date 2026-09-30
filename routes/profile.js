@@ -10,7 +10,8 @@ const { profileUpdateSchema } = require('../schemas');
 // Import fetch (CommonJS compatible)
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
-const isAdminRole = (role) => String(role || '').toUpperCase() === 'ADMIN';
+const { isAdminUser } = require('../middleware/auth');
+const isAdminRole = (role) => isAdminUser({ role });
 
 const parseIntegerOrNull = (value) => {
   if (value === undefined || value === null || value === '') return null;
@@ -286,7 +287,6 @@ router.put('/:id', requireAuth, validate(profileUpdateSchema), async (req, res) 
     notificationPreferences,
   } = req.body;
 
-  console.log('🟢 Données reçues PUT /profile/:id', req.body);
 
   try {
     const profile = await prisma.profile.findUnique({
@@ -346,7 +346,6 @@ router.put('/:id', requireAuth, validate(profileUpdateSchema), async (req, res) 
           latitude = parseFloat(geoData[0].lat);
           longitude = parseFloat(geoData[0].lon);
           country = geoData[0].address?.country || sanitizedCountry || null;
-          console.log('📍 Coordonnées géocodées :', latitude, longitude, '🌐 Pays :', country);
         } else {
           // Géocodage sans résultat — on sauvegarde quand même la ville telle quelle
           console.warn('⚠️ Géocodage sans résultat pour :', sanitizedLocation);
@@ -369,7 +368,6 @@ router.put('/:id', requireAuth, validate(profileUpdateSchema), async (req, res) 
         );
         const revData = await revRes.json();
         country = sanitizedCountry || revData?.address?.country || profile.country || null;
-        console.log('🌐 Pays déterminé par coordonnées :', country);
       } catch (reverseError) {
         console.warn('⚠️ Reverse geocoding impossible :', reverseError.message);
         country = sanitizedCountry || profile.country || null;
@@ -486,7 +484,6 @@ router.put('/:id', requireAuth, validate(profileUpdateSchema), async (req, res) 
       },
     });
 
-    console.log('✅ Profil mis à jour avec succès');
     return res.json({ profile: fullUpdatedProfile || updatedProfile });
   } catch (error) {
     console.error('❌ Erreur mise à jour profil PUT /:id :', error);

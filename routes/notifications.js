@@ -59,7 +59,6 @@ router.get('/', requireAuth, async (req, res) => {
       eventId:        n.staff?.eventId || null,
       staffStatus:    n.staff?.status || null,
     }));
-    console.log(`Notifications retournées pour user ${userId}: ${formatted.length}`); // ✅ Log pour débogage
     res.json({ notifications: formatted });
   } catch (err) {
     console.error('❌ [GET /notifications] Error:', err);

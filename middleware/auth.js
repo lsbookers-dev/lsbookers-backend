@@ -107,22 +107,25 @@ const optionalAuth = async (req, res, next) => {
 };
 
 /**
+ * isAdminUser — règle UNIQUE « est-ce un admin ? » : le rôle ADMIN.
+ * (Le champ isAdmin de la base n'est plus utilisé pour donner des droits.)
+ */
+const isAdminUser = (user) => !!user && String(user.role || '').toUpperCase() === 'ADMIN';
+
+/**
  * requireAdmin
  * A utiliser APRES requireAuth.
- * Verifie que l'utilisateur a le role ADMIN ou isAdmin=true.
  */
 const requireAdmin = (req, res, next) => {
   if (!req.user) {
     return res.status(401).json({ error: 'Authentification requise' });
   }
 
-  const isAdmin = req.user.role === 'ADMIN' || req.user.isAdmin === true;
-
-  if (!isAdmin) {
+  if (!isAdminUser(req.user)) {
     return res.status(403).json({ error: 'Acces reserve aux administrateurs' });
   }
 
   next();
 };
 
-module.exports = { requireAuth, optionalAuth, requireAdmin };
+module.exports = { requireAuth, optionalAuth, requireAdmin, isAdminUser };

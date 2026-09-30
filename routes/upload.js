@@ -120,7 +120,6 @@ router.post('/', requireAuth, uploadLimiter, (req, res) => {
       }));
 
       const url = `${R2_PUBLIC_URL}/${key}`;
-      console.log('✅ R2 upload OK:', url);
 
       return res.json({
         url,

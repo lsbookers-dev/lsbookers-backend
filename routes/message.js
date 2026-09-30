@@ -1,7 +1,7 @@
 const express = require('express')
 const router = express.Router()
 const prisma = require('../prisma/client')
-const { requireAuth } = require('../middleware/auth')
+const { requireAuth, isAdminUser } = require('../middleware/auth')
 const { validate } = require('../middleware/validate')
 const { conversationCreateSchema } = require('../schemas')
 const multer = require('multer')
@@ -53,7 +53,6 @@ function pickUserPublic(u) {
   }
 }
 
-const isAdminUser = (u) => !!u && String(u.role).toUpperCase() === 'ADMIN'
 
 /* Seuls champs de l'expéditeur lus en base : jamais la fiche User complète
    (mot de passe chiffré, email, téléphone, jetons...). */

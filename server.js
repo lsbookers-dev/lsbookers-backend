@@ -112,9 +112,9 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Logs (désactivés en production pour les performances)
-if (process.env.NODE_ENV !== 'production') {
-  app.use(morgan('dev'));
-}
+// Journal des requêtes SANS la partie « ?… » de l'URL (peut contenir jetons, emails, recherches)
+morgan.token('path-only', (req) => (req.originalUrl || req.url || '').split('?')[0]);
+app.use(morgan(':method :path-only :status :response-time ms'));
 
 // Static (uploads locaux — à migrer vers Bunny.net)
 app.use('/uploads', express.static('uploads'));
@@ -157,9 +157,25 @@ app.use('/api/home', homeRoutes);
 app.use('/api/contact', contactRoutes);
 
 /* ===================== Gestion d’erreurs ===================== */
+// Route API inconnue → 404 JSON (et non la page HTML par défaut d'Express)
+app.use((req, res) => {
+  res.status(404).json({ error: 'Route introuvable' });
+});
+
+// Erreurs non gérées : détail dans les logs, message générique pour le client
 app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err);
-  res.status(err.status || 500).json({ error: err.message || 'Erreur serveur' });
+  const status = err.status || err.statusCode || 500;
+  if (status < 500) {
+    // Erreur « client » : on ne journalise jamais l'objet complet (il peut contenir le corps
+    // de la requête, donc un mot de passe ou des données personnelles)
+    console.warn('Client error:', req.method, req.path, status, err.type || err.code || 'unknown');
+  } else {
+    console.error('Unhandled error:', req.method, req.path, err);
+  }
+  // Erreurs « client » connues (JSON invalide, corps trop gros) : message simple, sans détail interne
+  if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Requête invalide' });
+  if (err.type === 'entity.too.large') return res.status(413).json({ error: 'Requête trop volumineuse' });
+  res.status(status >= 400 && status < 500 ? status : 500).json({ error: status < 500 ? 'Requête refusée' : 'Erreur serveur' });
 });
 
 /* ===================== Démarrage ===================== */
