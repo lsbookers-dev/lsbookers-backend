@@ -6,6 +6,7 @@ const { PutObjectCommand } = require('@aws-sdk/client-s3');
 const { r2Client, R2_BUCKET, R2_PUBLIC_URL } = require('../lib/r2');
 const rateLimit = require('express-rate-limit');
 const { requireAuth } = require('../middleware/auth');
+const { isFileContentValid, extensionFor } = require('../lib/fileCheck');
 
 /* -------------------- Rate limiter uploads -------------------- */
 // Max 30 uploads par IP par heure (protection stockage + abus)
@@ -58,33 +59,10 @@ function mapMulterError(err) {
   return { status: 500, payload: { error: 'UPLOAD_MIDDLEWARE_ERROR' } };
 }
 
-function sanitizeName(name) {
-  return (name || 'file').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9._-]/g, '');
-}
-
-/**
- * Vérifie les magic bytes du fichier pour les images.
- * Évite le spoofing de MIME type (ex: un HTML déguisé en JPEG).
- * Les vidéos ne sont pas vérifiées car les formats sont trop variés.
- */
-function isValidImageBuffer(buf, mimetype) {
-  if (!mimetype.startsWith('image/')) return true;
-  if (buf.length < 12) return false;
-
-  if (mimetype === 'image/jpeg')
-    return buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF;
-
-  if (mimetype === 'image/png')
-    return buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47;
-
-  if (mimetype === 'image/gif')
-    return buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46;
-
-  if (mimetype === 'image/webp')
-    return buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
-           buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50;
-
-  return false;
+// Nom de fichier sûr : base nettoyée (sans extension d'origine) + extension du type vérifié
+function sanitizeName(name, mimetype) {
+  const base = (name || 'file').replace(/\.[^.]*$/, '').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80) || 'file';
+  return `${base}.${extensionFor(mimetype)}`;
 }
 
 // Dossiers autorisés — évite path traversal ou stockage dans des dossiers arbitraires
@@ -115,9 +93,9 @@ router.post('/', requireAuth, uploadLimiter, (req, res) => {
         return res.status(413).json({ error: 'FILE_TOO_LARGE', max: maxLabel });
       }
 
-      // Validation magic bytes pour les images (anti-spoofing)
-      if (!isValidImageBuffer(req.file.buffer, req.file.mimetype)) {
-        console.warn(`⚠️ Magic bytes invalides pour ${req.file.originalname} (${req.file.mimetype})`);
+      // Validation du contenu réel (images ET vidéos) — anti-spoofing
+      if (!isFileContentValid(req.file.buffer, req.file.mimetype)) {
+        console.warn(`⚠️ Contenu invalide pour un fichier ${req.file.mimetype}`);
         return res.status(400).json({ error: 'FORMAT_NOT_ALLOWED' });
       }
 
@@ -125,7 +103,7 @@ router.post('/', requireAuth, uploadLimiter, (req, res) => {
       const rawFolder = req.body.folder || 'media';
       const folder = ALLOWED_FOLDERS.has(rawFolder) ? rawFolder : 'media';
 
-      const key = `lsbookers/${folder}/${Date.now()}-${sanitizeName(req.file.originalname)}`;
+      const key = `lsbookers/${folder}/${Date.now()}-${sanitizeName(req.file.originalname, req.file.mimetype)}`;
 
       // Upload vers Cloudflare R2
       await r2Client.send(new PutObjectCommand({

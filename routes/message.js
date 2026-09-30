@@ -9,6 +9,7 @@ const { PutObjectCommand } = require('@aws-sdk/client-s3')
 const { r2Client, R2_BUCKET, R2_PUBLIC_URL } = require('../lib/r2')
 const { createNotif, displayName } = require('../services/notifications')
 const { getIO } = require('../socket')
+const { isFileContentValid, extensionFor } = require('../lib/fileCheck')
 
 /* ─── Whitelist MIME pour les fichiers messages ─── */
 const MSG_ALLOWED_MIME = new Set([
@@ -21,22 +22,6 @@ const MSG_ALLOWED_MIME = new Set([
 const msgFileFilter = (req, file, cb) => {
   if (MSG_ALLOWED_MIME.has(file.mimetype)) return cb(null, true)
   return cb(new multer.MulterError('LIMIT_UNEXPECTED_FILE', 'FORMAT_NOT_ALLOWED'))
-}
-
-/* ─── Vérification magic bytes pour les images (anti-spoofing) ─── */
-function isMsgImageValid(buf, mimetype) {
-  if (!mimetype.startsWith('image/')) return true // vidéos/pdf/audio : on fait confiance au fileFilter
-  if (buf.length < 12) return false
-  if (mimetype === 'image/jpeg')
-    return buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF
-  if (mimetype === 'image/png')
-    return buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47
-  if (mimetype === 'image/gif')
-    return buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46
-  if (mimetype === 'image/webp')
-    return buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
-           buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50
-  return false
 }
 
 /* ─── Multer mémoire sécurisé ─── */
@@ -144,7 +129,8 @@ function detectAttachmentType(mimetype) {
 
 /* Upload vers Cloudflare R2 depuis un buffer en mémoire */
 async function uploadBufferToBlob(buffer, mimetype, originalname) {
-  const safeName = (originalname || 'file').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9._-]/g, '')
+  const base = (originalname || 'file').replace(/\.[^.]*$/, '').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80) || 'file'
+  const safeName = `${base}.${extensionFor(mimetype)}`
   const key = `lsbookers/messages/${Date.now()}-${safeName}`
   await r2Client.send(new PutObjectCommand({
     Bucket: R2_BUCKET,
@@ -617,8 +603,8 @@ router.post('/send-file', requireAuth, (req, res) => {
     let attachmentMimeType = null
 
     if (file) {
-      // Vérification magic bytes pour les images
-      if (!isMsgImageValid(file.buffer, file.mimetype)) {
+      // Vérification du contenu réel (images, vidéos, PDF, audio)
+      if (!isFileContentValid(file.buffer, file.mimetype)) {
         return res.status(400).json({ error: 'FORMAT_NOT_ALLOWED' })
       }
 

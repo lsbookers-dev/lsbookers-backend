@@ -4,8 +4,33 @@ const router   = express.Router()
 const prisma   = require('../prisma/client')
 const { requireAuth } = require('../middleware/auth')
 const { uploadBufferToR2 } = require('../lib/r2')
+const { isFileContentValid, extensionFor } = require('../lib/fileCheck')
 const multer   = require('multer')
-const upload   = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } })
+
+// Types acceptés : logistique = billets / réservations (PDF ou photo), médias promo = images / vidéos
+const LOGISTIC_MIME = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/webp'])
+const MEDIA_MIME    = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4', 'video/quicktime', 'video/webm'])
+
+function makeUpload(allowed) {
+  return multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 50 * 1024 * 1024 },
+    fileFilter: (req, file, cb) => allowed.has(file.mimetype)
+      ? cb(null, true)
+      : cb(new multer.MulterError('LIMIT_UNEXPECTED_FILE', 'FORMAT_NOT_ALLOWED')),
+  })
+}
+
+// Middleware multer avec erreurs JSON propres (format refusé / trop gros)
+function singleFile(allowed) {
+  const upload = makeUpload(allowed).single('file')
+  return (req, res, next) => upload(req, res, (err) => {
+    if (!err) return next()
+    if (err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'FILE_TOO_LARGE', max: '50MB' })
+    if (err instanceof multer.MulterError) return res.status(400).json({ error: 'FORMAT_NOT_ALLOWED' })
+    return res.status(400).json({ error: 'UPLOAD_ERROR' })
+  })
+}
 
 // ─── Helper : vérifie que l'utilisateur est organisateur ou cible du booking ──
 async function canAccessBooking(userId, bookingId) {
@@ -13,8 +38,8 @@ async function canAccessBooking(userId, bookingId) {
     const booking = await prisma.bookingRequest.findUnique({
       where: { id: bookingId },
       include: {
-        requester: { include: { user: true } },
-        target:    { include: { user: true } },
+        requester: { select: { user: { select: { id: true } } } },
+        target:    { select: { user: { select: { id: true } } } },
       },
     })
     if (!booking) return null
@@ -71,7 +96,7 @@ router.get('/:id', requireAuth, async (req, res) => {
     res.json({ booking: { ...booking, logistics, media } })
   } catch (err) {
     console.error('❌ bookingDetail GET /:id', err)
-    res.status(500).json({ error: err.message || 'Erreur serveur' })
+    res.status(500).json({ error: 'Erreur serveur' })
   }
 })
 
@@ -97,7 +122,7 @@ router.patch('/:id/notes', requireAuth, async (req, res) => {
 })
 
 // ─── POST /:id/logistics — ajouter un élément logistique ─────────────────────
-router.post('/:id/logistics', requireAuth, upload.single('file'), async (req, res) => {
+router.post('/:id/logistics', requireAuth, singleFile(LOGISTIC_MIME), async (req, res) => {
   const id = parseInt(req.params.id, 10)
   if (isNaN(id)) return res.status(400).json({ error: 'ID invalide' })
 
@@ -113,8 +138,10 @@ router.post('/:id/logistics', requireAuth, upload.single('file'), async (req, re
     let fileName = null
 
     if (req.file) {
-      const ext = req.file.originalname.split('.').pop()
-      const key = `logistics/${id}/${Date.now()}.${ext}`
+      if (!isFileContentValid(req.file.buffer, req.file.mimetype)) {
+        return res.status(400).json({ error: 'FORMAT_NOT_ALLOWED' })
+      }
+      const key = `logistics/${id}/${Date.now()}.${extensionFor(req.file.mimetype)}`
       fileUrl  = await uploadBufferToR2(req.file.buffer, key, req.file.mimetype)
       fileName = req.file.originalname
     }
@@ -141,7 +168,9 @@ router.delete('/:id/logistics/:logId', requireAuth, async (req, res) => {
   if (!result || !result.isOrganizer) return res.status(403).json({ error: 'Accès refusé' })
 
   try {
-    await prisma.$executeRaw`DELETE FROM "BookingLogistic" WHERE id = ${logId}`
+    // Ne supprimer que si l'élément appartient bien à CE booking
+    const deleted = await prisma.$executeRaw`DELETE FROM "BookingLogistic" WHERE id = ${logId} AND "bookingRequestId" = ${id}`
+    if (!deleted) return res.status(404).json({ error: 'Élément introuvable' })
     res.json({ ok: true })
   } catch (err) {
     console.error('❌ bookingDetail DELETE /:id/logistics/:logId', err)
@@ -150,7 +179,7 @@ router.delete('/:id/logistics/:logId', requireAuth, async (req, res) => {
 })
 
 // ─── POST /:id/media — upload un média promo ─────────────────────────────────
-router.post('/:id/media', requireAuth, upload.single('file'), async (req, res) => {
+router.post('/:id/media', requireAuth, singleFile(MEDIA_MIME), async (req, res) => {
   const id = parseInt(req.params.id, 10)
   if (isNaN(id)) return res.status(400).json({ error: 'ID invalide' })
 
@@ -158,13 +187,15 @@ router.post('/:id/media', requireAuth, upload.single('file'), async (req, res) =
   if (!result || !result.isOrganizer) return res.status(403).json({ error: 'Seul l\'organisateur peut ajouter un média' })
 
   if (!req.file) return res.status(400).json({ error: 'Fichier requis' })
+  if (!isFileContentValid(req.file.buffer, req.file.mimetype)) {
+    return res.status(400).json({ error: 'FORMAT_NOT_ALLOWED' })
+  }
 
   try {
-    const ext       = req.file.originalname.split('.').pop()
-    const key       = `booking-media/${id}/${Date.now()}.${ext}`
+    const key       = `booking-media/${id}/${Date.now()}.${extensionFor(req.file.mimetype)}`
     const url       = await uploadBufferToR2(req.file.buffer, key, req.file.mimetype)
     const mediaType = req.file.mimetype.startsWith('video') ? 'VIDEO' : 'IMAGE'
-    const name      = req.file.originalname
+    const name      = String(req.file.originalname || 'fichier').slice(0, 200)
 
     const [media] = await prisma.$queryRaw`
       INSERT INTO "BookingMedia" ("bookingRequestId", url, "mediaType", name, "createdAt")
@@ -188,7 +219,8 @@ router.delete('/:id/media/:mediaId', requireAuth, async (req, res) => {
   if (!result || !result.isOrganizer) return res.status(403).json({ error: 'Accès refusé' })
 
   try {
-    await prisma.$executeRaw`DELETE FROM "BookingMedia" WHERE id = ${mediaId}`
+    const deleted = await prisma.$executeRaw`DELETE FROM "BookingMedia" WHERE id = ${mediaId} AND "bookingRequestId" = ${id}`
+    if (!deleted) return res.status(404).json({ error: 'Média introuvable' })
     res.json({ ok: true })
   } catch (err) {
     console.error('❌ bookingDetail DELETE /:id/media/:mediaId', err)
