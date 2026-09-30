@@ -170,3 +170,17 @@ for (const [path, body, userMock] of [
     assert.equal(created, false)
   })
 }
+
+test('send : aucune notification « nouveau message » (seule la pastille enveloppe)', async () => {
+  const mocks = baseMocks()
+  let notifs = 0
+  mocks.user = { findUnique: async () => ({ id: 12, role: 'ARTIST' }) }
+  mocks.notification = { create: async () => { notifs += 1; return {} } }
+  const res = responseRecorder()
+  await withMocks(mocks, () => routeHandler(messageRouter, 'post', '/send')(
+    { user: { id: 9 }, body: { recipientId: 12, content: 'Salut' } }, res,
+  ))
+  await new Promise(r => setImmediate(r))
+  assert.equal(res.statusCode, 200)
+  assert.equal(notifs, 0)
+})

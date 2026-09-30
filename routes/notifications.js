@@ -7,12 +7,16 @@ const { requireAuth } = require('../middleware/auth');
    GET /api/notifications
    ➜ Lister les notifications d’un utilisateur
 ========================================================= */
+// Les messages ne passent jamais par la cloche : seule la pastille de l'enveloppe les signale
+// (anciennes notifications NEW_MESSAGE ignorées).
+const NOT_MESSAGE = { NOT: { type: 'NEW_MESSAGE' } };
+
 router.get('/', requireAuth, async (req, res) => {
   try {
     const userId = Number(req.user?.id);
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
     const notifications = await prisma.notification.findMany({
-      where: { userId },
+      where: { userId, ...NOT_MESSAGE },
       orderBy: { createdAt: 'desc' },
       include: {
         actor: {
@@ -122,7 +126,7 @@ router.get('/unread-count', requireAuth, async (req, res) => {
     const userId = Number(req.user?.id)
     if (!userId) return res.status(401).json({ error: 'Unauthorized' })
     const count = await prisma.notification.count({
-      where: { userId, read: false },
+      where: { userId, read: false, ...NOT_MESSAGE },
     })
     res.json({ count })
   } catch (err) {

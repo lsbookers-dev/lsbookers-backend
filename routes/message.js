@@ -7,7 +7,6 @@ const { conversationCreateSchema } = require('../schemas')
 const multer = require('multer')
 const { PutObjectCommand } = require('@aws-sdk/client-s3')
 const { r2Client, R2_BUCKET, R2_PUBLIC_URL } = require('../lib/r2')
-const { createNotif, displayName } = require('../services/notifications')
 const { getIO } = require('../socket')
 const { isFileContentValid, extensionFor } = require('../lib/fileCheck')
 const { isBlockedBetween } = require('../lib/blocks')
@@ -534,14 +533,8 @@ router.post('/send', requireAuth, validate(conversationCreateSchema), async (req
       io.to(`user:${Number(recipientId)}`).emit('conversation_updated', { conversationId: conversation.id })
     } catch (_) {}
 
-    // Notification pour le destinataire
-    createNotif({
-      userId: Number(recipientId),
-      type: 'NEW_MESSAGE',
-      actorId: senderId,
-      messageId: message.id,
-      content: `${displayName(message.sender)} vous a envoyé un message`,
-    })
+    // Pas de notification « nouveau message » : seule la pastille de l'enveloppe signale
+    // les messages non lus (choix produit, cf. commit db664a1 du 22/08).
 
     return res.json({
       conversationId: conversation.id,
@@ -639,17 +632,7 @@ router.post('/send-file', requireAuth, (req, res) => {
         select: { userId: true },
       })
       parts.forEach(p => io.to(`user:${p.userId}`).emit('conversation_updated', { conversationId: convId }))
-
-      // Notification pour le(s) destinataire(s)
-      parts
-        .filter(p => p.userId !== senderId)
-        .forEach(p => createNotif({
-          userId: p.userId,
-          type: 'NEW_MESSAGE',
-          actorId: senderId,
-          messageId: message.id,
-          content: `${displayName(message.sender)} vous a envoyé un message`,
-        }))
+      // Pas de notification « nouveau message » : seule la pastille de l'enveloppe les signale.
     } catch (_) {}
 
     return res.json({
@@ -696,6 +679,8 @@ router.post('/mark-seen/:conversationId', requireAuth, async (req, res) => {
           select: { userId: true },
         })
         senders.forEach(s => io.to(`user:${s.userId}`).emit('messages_seen', { conversationId }))
+        // Le lecteur aussi : sa pastille d'enveloppe (tous ses onglets / appareils) se met à jour
+        io.to(`user:${userId}`).emit('unread_changed', { conversationId })
       } catch (_) {}
     }
 
