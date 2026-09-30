@@ -30,6 +30,7 @@ const ALLOWED_MIME = [
   'video/quicktime',
   'video/webm',
   'video/ogg',
+  'application/pdf', // uniquement dans le dossier « documents » (vérifié dans la route)
 ];
 
 const fileFilter = (req, file, cb) => {
@@ -86,7 +87,7 @@ router.post('/', requireAuth, uploadLimiter, (req, res) => {
       }
 
       // Validation taille par type : images ≤ 25 Mo, vidéos ≤ 100 Mo
-      const isImage = req.file.mimetype.startsWith('image/');
+      const isImage = !req.file.mimetype.startsWith('video/'); // images et PDF : 25 Mo
       const maxSize = isImage ? IMAGE_MAX_SIZE : VIDEO_MAX_SIZE;
       if (req.file.size > maxSize) {
         const maxLabel = isImage ? '25MB' : '100MB';
@@ -102,6 +103,9 @@ router.post('/', requireAuth, uploadLimiter, (req, res) => {
       // Validation du dossier de destination (allowlist)
       const rawFolder = req.body.folder || 'media';
       const folder = ALLOWED_FOLDERS.has(rawFolder) ? rawFolder : 'media';
+      if (req.file.mimetype === 'application/pdf' && folder !== 'documents') {
+        return res.status(400).json({ error: 'FORMAT_NOT_ALLOWED' });
+      }
 
       const key = `lsbookers/${folder}/${Date.now()}-${sanitizeName(req.file.originalname, req.file.mimetype)}`;
 
@@ -126,7 +130,7 @@ router.post('/', requireAuth, uploadLimiter, (req, res) => {
       });
     } catch (e) {
       console.error('❌ Upload route error:', e);
-      return res.status(500).json({ error: 'SERVER_ERROR', details: e.message });
+      return res.status(500).json({ error: 'SERVER_ERROR' });
     }
   });
 });

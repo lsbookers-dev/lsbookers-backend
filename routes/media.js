@@ -5,6 +5,7 @@ const prisma = require('../prisma/client');
 const { requireAuth } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const { mediaCreateSchema } = require('../schemas');
+const { isOwnMediaUrl } = require('../lib/mediaUrl');
 
 /**
  * MODELE PRISMA ATTENDU (à titre indicatif) :
@@ -64,6 +65,7 @@ router.post('/', requireAuth, validate(mediaCreateSchema), async (req, res) => {
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
     const { title, url, caption } = req.body;
+    if (!isOwnMediaUrl(url)) return res.status(400).json({ error: 'URL média invalide' });
 
     const created = await prisma.media.create({
       data: {

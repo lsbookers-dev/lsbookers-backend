@@ -10,6 +10,7 @@ const { r2Client, R2_BUCKET, R2_PUBLIC_URL } = require('../lib/r2')
 const { createNotif, displayName } = require('../services/notifications')
 const { getIO } = require('../socket')
 const { isFileContentValid, extensionFor } = require('../lib/fileCheck')
+const { isBlockedBetween } = require('../lib/blocks')
 
 /* ─── Whitelist MIME pour les fichiers messages ─── */
 const MSG_ALLOWED_MIME = new Set([
@@ -90,20 +91,6 @@ function toMessagePayload(message, conversationId) {
     },
     ...(conversationId ? { conversationId } : {}),
   }
-}
-
-/* Vrai si l'un des deux utilisateurs a bloqué l'autre */
-async function isBlockedBetween(userA, userB) {
-  const block = await prisma.block.findFirst({
-    where: {
-      OR: [
-        { blockerId: userA, blockedId: userB },
-        { blockerId: userB, blockedId: userA },
-      ],
-    },
-    select: { id: true },
-  })
-  return !!block
 }
 
 /* Vrai si un blocage existe entre l'utilisateur et un autre participant de la conversation */

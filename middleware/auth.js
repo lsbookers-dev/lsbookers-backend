@@ -13,11 +13,11 @@ const jwt = require('jsonwebtoken');
 const prisma = require('../prisma/client');
 
 /**
- * requireAuth
- * Verifie que le token JWT est valide et que l'utilisateur existe en base.
- * Attache l'utilisateur a req.user.
+ * authenticate
+ * Lit le token (en-tête Authorization puis cookie httpOnly), le vérifie et charge
+ * l'utilisateur. Renvoie { user } ou { status, error } — ne répond jamais lui-même.
  */
-const requireAuth = async (req, res, next) => {
+async function authenticate(req) {
   // 1. Header Authorization en priorité (token explicite du client)
   const authHeader = req.headers['authorization'];
   const fromHeader = authHeader && authHeader.startsWith('Bearer ')
@@ -33,7 +33,7 @@ const requireAuth = async (req, res, next) => {
   }
 
   if (!token) {
-    return res.status(401).json({ error: 'Authentification requise' });
+    return { status: 401, error: 'Authentification requise' };
   }
 
   try {
@@ -59,27 +59,51 @@ const requireAuth = async (req, res, next) => {
     });
 
     if (!user) {
-      return res.status(401).json({ error: 'Utilisateur introuvable' });
+      return { status: 401, error: 'Utilisateur introuvable' };
     }
 
     // Une session normale n'est valable qu'après vérification de l'adresse email.
     if (!user.emailVerified) {
-      return res.status(403).json({ error: 'EMAIL_NOT_VERIFIED' });
+      return { status: 403, error: 'EMAIL_NOT_VERIFIED' };
     }
 
     // Les jetons hérités sans version sont refusés : toute session doit être révocable.
     if (!Number.isInteger(decoded.tokenVersion) || decoded.tokenVersion !== user.tokenVersion) {
-      return res.status(401).json({ error: 'Session expirée, veuillez vous reconnecter' });
+      return { status: 401, error: 'Session expirée, veuillez vous reconnecter' };
     }
 
-    req.user = user;
-    next();
+    return { user };
   } catch (err) {
     if (err.name === 'TokenExpiredError') {
-      return res.status(401).json({ error: 'Session expiree, veuillez vous reconnecter' });
+      return { status: 401, error: 'Session expiree, veuillez vous reconnecter' };
     }
-    return res.status(401).json({ error: 'Token invalide' });
+    return { status: 401, error: 'Token invalide' };
   }
+}
+
+/**
+ * requireAuth
+ * Verifie que le token JWT est valide et que l'utilisateur existe en base.
+ * Attache l'utilisateur a req.user.
+ */
+const requireAuth = async (req, res, next) => {
+  const result = await authenticate(req);
+  if (!result.user) {
+    return res.status(result.status).json({ error: result.error });
+  }
+  req.user = result.user;
+  next();
+};
+
+/**
+ * optionalAuth
+ * Pour les routes publiques : attache req.user si le visiteur est connecté,
+ * sinon laisse passer sans erreur (req.user reste undefined).
+ */
+const optionalAuth = async (req, res, next) => {
+  const result = await authenticate(req);
+  if (result.user) req.user = result.user;
+  next();
 };
 
 /**
@@ -101,4 +125,4 @@ const requireAdmin = (req, res, next) => {
   next();
 };
 
-module.exports = { requireAuth, requireAdmin };
+module.exports = { requireAuth, optionalAuth, requireAdmin };

@@ -3,6 +3,7 @@ const express = require('express');
 const router = express.Router();
 const prisma = require('../prisma/client');
 const { requireAuth } = require('../middleware/auth');
+const { isOwnMediaUrl } = require('../lib/mediaUrl');
 const { validate } = require('../middleware/validate');
 const { profileUpdateSchema } = require('../schemas');
 
@@ -450,6 +451,14 @@ router.put('/:id', requireAuth, validate(profileUpdateSchema), async (req, res) 
 
     if (sanitizedBanner !== undefined) dataToUpdate.banner = sanitizedBanner;
     else if (sanitizedBannerUrl !== undefined) dataToUpdate.banner = sanitizedBannerUrl;
+
+    // Avatar / bannière : uniquement des fichiers hébergés chez nous (ou valeur inchangée / vidée)
+    for (const field of ['avatar', 'banner']) {
+      const value = dataToUpdate[field];
+      if (value && value !== profile[field] && !isOwnMediaUrl(value)) {
+        return res.status(400).json({ error: 'URL média invalide' });
+      }
+    }
 
     const updatedProfile = await prisma.profile.update({
       where: { id },

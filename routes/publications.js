@@ -1,7 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const prisma = require('../prisma/client');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, optionalAuth } = require('../middleware/auth');
+const { isBlockedBetween, getBlockedUserIds, getBlockedProfileIds } = require('../lib/blocks');
+const { isOwnMediaUrl } = require('../lib/mediaUrl');
 const { validate } = require('../middleware/validate');
 const { publicationCreateSchema, commentCreateSchema } = require('../schemas');
 const { createNotif, displayName } = require('../services/notifications');
@@ -10,7 +12,7 @@ const { DeleteObjectCommand } = require('@aws-sdk/client-s3');
 
 // Helper : supprimer un objet R2 par son URL publique (silencieux si erreur)
 async function deleteR2Object(url) {
-  if (!url || !R2_PUBLIC_URL || !url.startsWith(R2_PUBLIC_URL)) return;
+  if (!url || !R2_PUBLIC_URL || !url.startsWith(`${R2_PUBLIC_URL}/`)) return;
   try {
     const key = url.slice(R2_PUBLIC_URL.length + 1); // +1 pour le /
     await r2Client.send(new DeleteObjectCommand({ Bucket: R2_BUCKET, Key: key }));
@@ -58,19 +60,31 @@ const TAG_INCLUDE_ALL = {
 }
 
 // GET /api/publications/:id — récupérer une publication par son ID (tous les tags, PENDING inclus)
-router.get('/:id(\\d+)', async (req, res) => {
+// Les identifications en attente / refusées ne sont visibles que par l'auteur et la personne identifiée.
+router.get('/:id(\\d+)', optionalAuth, async (req, res) => {
   const id = Number(req.params.id)
+  const viewerId = req.user?.id
   try {
     const pub = await prisma.publication.findUnique({
       where: { id },
       include: {
         ...MEDIA_INCLUDE,
         ...TAG_INCLUDE_ALL,
+        profile: { select: { userId: true } },
         _count: { select: { likes: true, comments: true } },
       },
     })
     if (!pub) return res.status(404).json({ error: 'Publication introuvable' })
-    return res.json(pub)
+    const authorId = pub.profile?.userId
+    if (viewerId && await isBlockedBetween(viewerId, authorId)) {
+      return res.status(404).json({ error: 'Publication introuvable' })
+    }
+    const isAuthor = !!viewerId && viewerId === authorId
+    const { profile, ...rest } = pub
+    return res.json({
+      ...rest,
+      tags: pub.tags.filter(t => t.status === 'ACCEPTED' || isAuthor || t.taggedUser?.id === viewerId),
+    })
   } catch (err) {
     console.error('❌ GET /publications/:id :', err)
     return res.status(500).json({ error: 'Erreur serveur' })
@@ -78,7 +92,7 @@ router.get('/:id(\\d+)', async (req, res) => {
 })
 
 // GET /api/publications/profile/:profileId?page=1&limit=20
-router.get('/profile/:profileId', async (req, res) => {
+router.get('/profile/:profileId', optionalAuth, async (req, res) => {
   const profileId = parseInt(req.params.profileId, 10);
   const page  = Math.max(1, parseInt(req.query.page)  || 1);
   const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 20));
@@ -88,6 +102,14 @@ router.get('/profile/:profileId', async (req, res) => {
   }
 
   try {
+    // Blocage (dans un sens ou l'autre) : aucune publication visible
+    if (req.user) {
+      const blockedProfileIds = await getBlockedProfileIds(req.user.id);
+      if (blockedProfileIds.includes(profileId)) {
+        return res.json({ publications: [], total: 0, page, limit, hasMore: false });
+      }
+    }
+
     const [publications, total] = await Promise.all([
       prisma.publication.findMany({
         where:   { profileId },
@@ -141,14 +163,14 @@ router.post('/', requireAuth, validate(publicationCreateSchema), async (req, res
     }
 
     // Validation URL média principal (doit provenir de notre bucket R2)
-    if (R2_PUBLIC_URL && !String(media).startsWith(R2_PUBLIC_URL)) {
+    if (!isOwnMediaUrl(String(media))) {
       return res.status(400).json({ error: 'URL média invalide' });
     }
 
     // Validation URLs médias additionnels
-    if (Array.isArray(additionalMedia) && R2_PUBLIC_URL) {
+    if (Array.isArray(additionalMedia)) {
       for (const m of additionalMedia) {
-        if (!String(m.url).startsWith(R2_PUBLIC_URL)) {
+        if (!isOwnMediaUrl(String(m?.url))) {
           return res.status(400).json({ error: 'URL média additionnel invalide' });
         }
       }
@@ -247,7 +269,7 @@ const COMMENT_INCLUDE = {
 }
 
 // GET /api/publications/:id/comments — liste des commentaires (top-level + replies)
-router.get('/:id/comments', async (req, res) => {
+router.get('/:id/comments', optionalAuth, async (req, res) => {
   const id = parseInt(req.params.id, 10)
   if (isNaN(id)) return res.status(400).json({ error: 'ID invalide' })
 
@@ -255,12 +277,17 @@ router.get('/:id/comments', async (req, res) => {
   const viewerProfileId = req.query.profileId ? parseInt(req.query.profileId, 10) : null
 
   try {
+    // Commentaires des utilisateurs bloqués (dans un sens ou l'autre) masqués
+    const blockedProfileIds = req.user ? await getBlockedProfileIds(req.user.id) : []
+    const notBlocked = blockedProfileIds.length ? { profileId: { notIn: blockedProfileIds } } : {}
+
     const comments = await prisma.publicationComment.findMany({
-      where: { publicationId: id, parentId: null }, // top-level seulement
+      where: { publicationId: id, parentId: null, ...notBlocked }, // top-level seulement
       orderBy: { createdAt: 'asc' },
       include: {
         ...COMMENT_INCLUDE,
         replies: {
+          where: notBlocked,
           orderBy: { createdAt: 'asc' },
           include: {
             ...COMMENT_INCLUDE,
@@ -302,14 +329,26 @@ router.post('/:id/comments', requireAuth, validate(commentCreateSchema), async (
     const profile = await prisma.profile.findUnique({ where: { userId: req.user.id } })
     if (!profile) return res.status(404).json({ error: 'Profil introuvable' })
 
+    const target = await prisma.publication.findUnique({
+      where: { id },
+      select: { profile: { select: { userId: true } } },
+    })
+    if (!target) return res.status(404).json({ error: 'Publication introuvable' })
+    if (await isBlockedBetween(req.user.id, target.profile?.userId)) {
+      return res.status(403).json({ error: 'BLOCKED' })
+    }
+
     // P7b — Vérifier que le commentaire parent appartient bien à la même publication
     const parsedParentId = parentId ? parseInt(parentId, 10) : null
     if (parsedParentId) {
       const parentComment = await prisma.publicationComment.findUnique({
         where: { id: parsedParentId },
-        select: { publicationId: true, parentId: true },
+        select: { publicationId: true, parentId: true, profile: { select: { userId: true } } },
       })
       if (!parentComment) return res.status(404).json({ error: 'Commentaire parent introuvable' })
+      if (await isBlockedBetween(req.user.id, parentComment.profile?.userId)) {
+        return res.status(403).json({ error: 'BLOCKED' })
+      }
       if (parentComment.publicationId !== id) return res.status(400).json({ error: 'Commentaire parent hors de cette publication' })
       // Pas de réponse à une réponse (max 2 niveaux)
       if (parentComment.parentId !== null) return res.status(400).json({ error: 'Les réponses imbriquées ne sont pas supportées' })
@@ -382,6 +421,17 @@ router.post('/comments/:id/like', requireAuth, async (req, res) => {
       where: { commentId_profileId: { commentId: id, profileId: profile.id } },
     })
 
+    if (!existing) {
+      const target = await prisma.publicationComment.findUnique({
+        where: { id },
+        select: { profile: { select: { userId: true } } },
+      })
+      if (!target) return res.status(404).json({ error: 'Commentaire introuvable' })
+      if (await isBlockedBetween(req.user.id, target.profile?.userId)) {
+        return res.status(403).json({ error: 'BLOCKED' })
+      }
+    }
+
     if (existing) {
       await prisma.publicationCommentLike.delete({
         where: { commentId_profileId: { commentId: id, profileId: profile.id } },
@@ -452,6 +502,17 @@ router.post('/:id/like', requireAuth, async (req, res) => {
     const existing = await prisma.publicationLike.findUnique({
       where: { publicationId_profileId: { publicationId: id, profileId: profile.id } },
     })
+
+    if (!existing) {
+      const target = await prisma.publication.findUnique({
+        where: { id },
+        select: { profile: { select: { userId: true } } },
+      })
+      if (!target) return res.status(404).json({ error: 'Publication introuvable' })
+      if (await isBlockedBetween(req.user.id, target.profile?.userId)) {
+        return res.status(403).json({ error: 'BLOCKED' })
+      }
+    }
 
     if (existing) {
       await prisma.publicationLike.delete({ where: { id: existing.id } })
@@ -544,11 +605,12 @@ router.post('/:id/tags', requireAuth, async (req, res) => {
     const toAdd = userIds.slice(0, Math.max(0, 5 - existingCount))
     if (toAdd.length === 0) return res.status(400).json({ error: 'Maximum 5 tags par publication' })
 
-    // Créer les tags (ignorer les doublons)
+    // Créer les tags (ignorer les doublons et les utilisateurs bloqués)
+    const blockedUserIds = await getBlockedUserIds(req.user.id)
     const created = []
     for (const uid of toAdd) {
       const userId = parseInt(uid, 10)
-      if (isNaN(userId) || userId === req.user.id) continue
+      if (isNaN(userId) || userId === req.user.id || blockedUserIds.includes(userId)) continue
       try {
         const tag = await prisma.publicationTag.create({
           data: { publicationId: id, taggedUserId: userId, taggedByUserId: req.user.id },
@@ -649,7 +711,7 @@ router.delete('/:id/tags/:tagId', requireAuth, async (req, res) => {
 })
 
 // GET /api/publications/tagged/:profileId — publications où un profil est identifié (ACCEPTED, public)
-router.get('/tagged/:profileId', async (req, res) => {
+router.get('/tagged/:profileId', optionalAuth, async (req, res) => {
   const profileId = parseInt(req.params.profileId, 10)
   if (!profileId) return res.status(400).json({ error: 'profileId invalide' })
   try {
@@ -657,8 +719,17 @@ router.get('/tagged/:profileId', async (req, res) => {
     const profile = await prisma.profile.findUnique({ where: { id: profileId }, select: { userId: true } })
     if (!profile) return res.status(404).json({ error: 'Profil introuvable' })
 
+    const blockedProfileIds = req.user ? await getBlockedProfileIds(req.user.id) : []
+    if (req.user && (await getBlockedUserIds(req.user.id)).includes(profile.userId)) {
+      return res.json({ publications: [] })
+    }
+
     const tags = await prisma.publicationTag.findMany({
-      where: { taggedUserId: profile.userId, status: 'ACCEPTED' },
+      where: {
+        taggedUserId: profile.userId,
+        status: 'ACCEPTED',
+        ...(blockedProfileIds.length ? { publication: { profileId: { notIn: blockedProfileIds } } } : {}),
+      },
       orderBy: { createdAt: 'desc' },
       include: {
         publication: {

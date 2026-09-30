@@ -2,6 +2,7 @@ const express = require('express')
 const router = express.Router()
 const prisma = require('../prisma/client')
 const { requireAuth } = require('../middleware/auth')
+const { isOwnMediaUrl } = require('../lib/mediaUrl')
 
 // ── Helpers ──────────────────────────────────────────────────
 async function getProfileOfUser(userId) {
@@ -168,6 +169,7 @@ router.post('/', requireAuth, async (req, res) => {
 router.put('/:id(\\d+)', requireAuth, async (req, res) => {
   const id = parseInt(req.params.id, 10)
   const { title, description, coverUrl, isPrivate } = req.body
+  if (coverUrl && !isOwnMediaUrl(coverUrl)) return res.status(400).json({ error: 'URL de couverture invalide' })
 
   try {
     const profile = await getProfileOfUser(req.user.id)
@@ -220,6 +222,7 @@ router.post('/:id(\\d+)/items', requireAuth, async (req, res) => {
   if (!publicationId && !mediaUrl) {
     return res.status(400).json({ error: 'publicationId ou mediaUrl requis' })
   }
+  if (mediaUrl && !isOwnMediaUrl(mediaUrl)) return res.status(400).json({ error: 'URL média invalide' })
 
   try {
     const profile = await getProfileOfUser(req.user.id)

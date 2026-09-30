@@ -2,6 +2,7 @@
 const express = require('express')
 const router = express.Router()
 const prisma = require('../prisma/client')
+const { getBlockedProfileIds } = require('../lib/blocks')
 const { requireAuth } = require('../middleware/auth')
 
 // ─── Helper : nom d'affichage ───────────────────────────────
@@ -147,7 +148,8 @@ router.get('/feed', requireAuth, async (req, res) => {
           select: { id: true },
         })
       : []
-    const followedProfileIds       = followedProfiles.map(p => p.id)
+    const blockedProfileIds        = await getBlockedProfileIds(userId)
+    const followedProfileIds       = followedProfiles.map(p => p.id).filter(id => !blockedProfileIds.includes(id))
     const ownAndFollowedProfileIds = [...new Set([profile.id, ...followedProfileIds])]
 
     // ── BUCKET 1 — Follows + propres publications ─────────────
@@ -164,7 +166,8 @@ router.get('/feed', requireAuth, async (req, res) => {
 
     // ── BUCKET 2 — Trending (exclu : follows + propres) ──────
     const seenIds        = followedBucket.map(p => p.id)
-    const seenProfileIds = ownAndFollowedProfileIds
+    // Profils bloqués (dans un sens ou l'autre) exclus des tendances et suggestions
+    const seenProfileIds = [...ownAndFollowedProfileIds, ...blockedProfileIds]
 
     const rawTrending = await prisma.publication.findMany({
       where: {
