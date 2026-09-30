@@ -69,6 +69,72 @@ function pickUserPublic(u) {
 
 const isAdminUser = (u) => !!u && String(u.role).toUpperCase() === 'ADMIN'
 
+/* Seuls champs de l'expéditeur lus en base : jamais la fiche User complète
+   (mot de passe chiffré, email, téléphone, jetons...). */
+const SENDER_SELECT = {
+  select: {
+    id: true, pseudo: true, firstName: true, lastName: true,
+    profile: { select: { avatar: true } },
+  },
+}
+
+/* Champs nécessaires à pickUserPublic (participants d'une conversation) */
+const PUBLIC_USER_SELECT = {
+  select: {
+    id: true, pseudo: true, firstName: true, lastName: true, role: true, lastActiveAt: true,
+    profile: { select: { id: true, avatar: true } },
+  },
+}
+
+/* Format unique d'un message renvoyé au client (réponse HTTP et socket) */
+function toMessagePayload(message, conversationId) {
+  return {
+    id: String(message.id),
+    content: message.content || '',
+    type: message.type || 'TEXT',
+    attachmentUrl: message.attachmentUrl || null,
+    attachmentType: message.attachmentType || null,
+    attachmentName: message.attachmentName || null,
+    attachmentMimeType: message.attachmentMimeType || null,
+    createdAt: message.createdAt,
+    seen: message.seen,
+    sender: {
+      id: message.senderId,
+      name: getUserDisplayName(message.sender),
+      image: message.sender?.profile?.avatar || null,
+    },
+    ...(conversationId ? { conversationId } : {}),
+  }
+}
+
+/* Vrai si l'un des deux utilisateurs a bloqué l'autre */
+async function isBlockedBetween(userA, userB) {
+  const block = await prisma.block.findFirst({
+    where: {
+      OR: [
+        { blockerId: userA, blockedId: userB },
+        { blockerId: userB, blockedId: userA },
+      ],
+    },
+    select: { id: true },
+  })
+  return !!block
+}
+
+/* Vrai si un blocage existe entre l'utilisateur et un autre participant de la conversation */
+async function isBlockedInConversation(userId, conversationId) {
+  const others = await prisma.conversationParticipant.findMany({
+    where: { conversationId, NOT: { userId } },
+    select: { userId: true },
+  })
+  for (const o of others) {
+    if (await isBlockedBetween(userId, o.userId)) return true
+  }
+  return false
+}
+
+const BLOCKED_ERROR = { error: 'BLOCKED', message: 'Vous ne pouvez pas échanger avec cet utilisateur.' }
+
 function detectAttachmentType(mimetype) {
   if (!mimetype) return 'DOCUMENT'
   if (mimetype.startsWith('image/')) return 'IMAGE'
@@ -108,7 +174,7 @@ router.get('/conversations', requireAuth, async (req, res) => {
         conversation: {
           include: {
             participants: {
-              include: { user: { include: { profile: true } } },
+              include: { user: PUBLIC_USER_SELECT },
             },
             messages: {
               orderBy: { createdAt: 'desc' },
@@ -139,7 +205,7 @@ router.get('/conversations', requireAuth, async (req, res) => {
         if (!hasOther) {
           const otherMsg = await prisma.message.findFirst({
             where: { conversationId: c.id, NOT: { senderId: userId } },
-            include: { sender: { include: { profile: true } } },
+            include: { sender: PUBLIC_USER_SELECT },
             orderBy: { createdAt: 'desc' },
           })
           if (otherMsg?.sender) {
@@ -282,7 +348,7 @@ router.get('/messages/:conversationId', requireAuth, async (req, res) => {
       include: {
         conversation: {
           include: {
-            participants: { include: { user: true } },
+            participants: { include: { user: { select: { id: true, role: true } } } },
           },
         },
       },
@@ -311,7 +377,7 @@ router.get('/messages/:conversationId', requireAuth, async (req, res) => {
       orderBy: { createdAt: after ? 'asc' : 'desc' },
       take: after ? undefined : 50,
       include: {
-        sender: { include: { profile: true } },
+        sender: SENDER_SELECT,
         bookingRequest: {
           include: {
             requester: { select: { id: true, userId: true } },
@@ -388,10 +454,11 @@ router.post('/start', requireAuth, async (req, res) => {
 
     const recipient = await prisma.user.findUnique({
       where: { id: recipientId },
-      include: { profile: true },
+      select: { id: true, role: true },
     })
     if (!recipient) return res.status(404).json({ error: 'Destinataire introuvable' })
     if (isAdminUser(recipient)) return res.status(403).json({ error: 'Action non autorisée' })
+    if (await isBlockedBetween(senderId, recipientId)) return res.status(403).json(BLOCKED_ERROR)
 
     let conversation = await prisma.conversation.findFirst({
       where: {
@@ -401,7 +468,7 @@ router.post('/start', requireAuth, async (req, res) => {
         ],
       },
       include: {
-        participants: { include: { user: { include: { profile: true } } } },
+        participants: { include: { user: PUBLIC_USER_SELECT } },
       },
     })
 
@@ -413,7 +480,7 @@ router.post('/start', requireAuth, async (req, res) => {
           },
         },
         include: {
-          participants: { include: { user: { include: { profile: true } } } },
+          participants: { include: { user: PUBLIC_USER_SELECT } },
         },
       })
     }
@@ -451,6 +518,7 @@ router.post('/send', requireAuth, validate(conversationCreateSchema), async (req
     })
     if (!recipient) return res.status(404).json({ error: 'Destinataire introuvable' })
     if (isAdminUser(recipient)) return res.status(403).json({ error: 'Action non autorisée' })
+    if (await isBlockedBetween(senderId, Number(recipientId))) return res.status(403).json(BLOCKED_ERROR)
 
     let conversation = await prisma.conversation.findFirst({
       where: {
@@ -477,7 +545,7 @@ router.post('/send', requireAuth, validate(conversationCreateSchema), async (req
         senderId,
         conversationId: conversation.id,
       },
-      include: { sender: { include: { profile: true } } },
+      include: { sender: SENDER_SELECT },
     })
 
     await prisma.conversation.update({
@@ -488,23 +556,7 @@ router.post('/send', requireAuth, validate(conversationCreateSchema), async (req
     // ── Temps réel : pousser le message via WebSocket ──
     try {
       const io = getIO()
-      const msgPayload = {
-        id: String(message.id),
-        content: message.content || '',
-        type: 'TEXT',
-        attachmentUrl: null,
-        attachmentType: null,
-        attachmentName: null,
-        attachmentMimeType: null,
-        createdAt: message.createdAt,
-        seen: message.seen,
-        sender: {
-          id: message.senderId,
-          name: getUserDisplayName(message.sender),
-          image: message.sender?.profile?.avatar || null,
-        },
-        conversationId: conversation.id,
-      }
+      const msgPayload = toMessagePayload(message, conversation.id)
       io.to(`conv:${conversation.id}`).emit('new_message', msgPayload)
       io.to(`user:${senderId}`).emit('conversation_updated', { conversationId: conversation.id })
       io.to(`user:${Number(recipientId)}`).emit('conversation_updated', { conversationId: conversation.id })
@@ -521,20 +573,7 @@ router.post('/send', requireAuth, validate(conversationCreateSchema), async (req
 
     return res.json({
       conversationId: conversation.id,
-      message: {
-        id: String(message.id),
-        content: message.content || '',
-        attachmentUrl: null,
-        attachmentType: null,
-        attachmentName: null,
-        createdAt: message.createdAt,
-        seen: message.seen,
-        sender: {
-          id: message.senderId,
-          name: getUserDisplayName(message.sender),
-          image: message.sender?.profile?.avatar || null,
-        },
-      },
+      message: toMessagePayload(message),
     })
   } catch (err) {
     console.error('❌ [POST /send]', err)
@@ -570,6 +609,7 @@ router.post('/send-file', requireAuth, (req, res) => {
       where: { conversationId: Number(conversationId), userId: senderId },
     })
     if (!participation) return res.status(403).json({ error: 'Accès interdit à cette conversation' })
+    if (await isBlockedInConversation(senderId, Number(conversationId))) return res.status(403).json(BLOCKED_ERROR)
 
     let attachmentUrl = null
     let attachmentType = null
@@ -608,7 +648,7 @@ router.post('/send-file', requireAuth, (req, res) => {
         senderId,
         conversationId: Number(conversationId),
       },
-      include: { sender: { include: { profile: true } } },
+      include: { sender: SENDER_SELECT },
     })
 
     await prisma.conversation.update({
@@ -620,23 +660,7 @@ router.post('/send-file', requireAuth, (req, res) => {
     try {
       const io = getIO()
       const convId = Number(conversationId)
-      const msgPayload = {
-        id: String(message.id),
-        content: message.content || '',
-        type: 'TEXT',
-        attachmentUrl: message.attachmentUrl || null,
-        attachmentType: message.attachmentType || null,
-        attachmentName: message.attachmentName || null,
-        attachmentMimeType: message.attachmentMimeType || null,
-        createdAt: message.createdAt,
-        seen: message.seen,
-        sender: {
-          id: message.senderId,
-          name: getUserDisplayName(message.sender),
-          image: message.sender?.profile?.avatar || null,
-        },
-        conversationId: convId,
-      }
+      const msgPayload = toMessagePayload(message, convId)
       io.to(`conv:${convId}`).emit('new_message', msgPayload)
       const parts = await prisma.conversationParticipant.findMany({
         where: { conversationId: convId },
@@ -658,21 +682,7 @@ router.post('/send-file', requireAuth, (req, res) => {
 
     return res.json({
       conversationId: Number(conversationId),
-      message: {
-        id: String(message.id),
-        content: message.content || '',
-        attachmentUrl: message.attachmentUrl || null,
-        attachmentType: message.attachmentType || null,
-        attachmentName: message.attachmentName || null,
-        attachmentMimeType: message.attachmentMimeType || null,
-        createdAt: message.createdAt,
-        seen: message.seen,
-        sender: {
-          id: message.senderId,
-          name: getUserDisplayName(message.sender),
-          image: message.sender?.profile?.avatar || null,
-        },
-      },
+      message: toMessagePayload(message),
     })
   } catch (err) {
     console.error('❌ [POST /send-file]', err)
@@ -773,13 +783,21 @@ router.post('/share-profile', requireAuth, async (req, res) => {
       where: { conversationId: Number(conversationId), userId: senderId },
     })
     if (!participant) return res.status(403).json({ error: 'Non autorisé' })
+    if (await isBlockedInConversation(senderId, Number(conversationId))) return res.status(403).json(BLOCKED_ERROR)
 
     // Récupérer les infos du profil partagé
     const targetUser = await prisma.user.findUnique({
       where: { id: Number(profileUserId) },
-      include: { profile: { select: { avatar: true, profession: true, location: true } } },
+      select: {
+        id: true, pseudo: true, firstName: true, lastName: true, role: true,
+        profile: { select: { id: true, avatar: true, profession: true, location: true } },
+      },
     })
-    if (!targetUser) return res.status(404).json({ error: 'Utilisateur introuvable' })
+    if (!targetUser || isAdminUser(targetUser)) return res.status(404).json({ error: 'Utilisateur introuvable' })
+    // Un profil qui nous a bloqué (ou que l'on a bloqué) ne peut pas être partagé
+    if (targetUser.id !== senderId && await isBlockedBetween(senderId, targetUser.id)) {
+      return res.status(404).json({ error: 'Utilisateur introuvable' })
+    }
 
     const displayNameStr = targetUser.pseudo || [targetUser.firstName, targetUser.lastName].filter(Boolean).join(' ') || 'Utilisateur'
     const roleLinks = { ARTIST: 'artist', ORGANIZER: 'organizer', PROVIDER: 'provider' }
@@ -803,7 +821,7 @@ router.post('/share-profile', requireAuth, async (req, res) => {
         content: sharedData,
         type: 'PROFILE_SHARE',
       },
-      include: { sender: true },
+      include: { sender: SENDER_SELECT },
     })
 
     await prisma.conversation.update({
@@ -815,12 +833,12 @@ router.post('/share-profile', requireAuth, async (req, res) => {
     try {
       const io = getIO()
       const convId = Number(conversationId)
-      io.to(`conv:${convId}`).emit('new_message', { ...message, id: String(message.id), conversationId: convId })
+      io.to(`conv:${convId}`).emit('new_message', toMessagePayload(message, convId))
       const parts = await prisma.conversationParticipant.findMany({ where: { conversationId: convId }, select: { userId: true } })
       parts.forEach(p => io.to(`user:${p.userId}`).emit('conversation_updated', { conversationId: convId }))
     } catch (_) {}
 
-    res.json(message)
+    res.json(toMessagePayload(message, Number(conversationId)))
   } catch (err) {
     console.error('share-profile:', err)
     res.status(500).json({ error: 'Erreur serveur' })
@@ -839,6 +857,7 @@ router.post('/share-offer', requireAuth, async (req, res) => {
     })
     if (!recipient) return res.status(404).json({ error: 'Destinataire introuvable' })
     if (isAdminUser(recipient)) return res.status(403).json({ error: 'Action non autorisée' })
+    if (await isBlockedBetween(senderId, Number(recipientId))) return res.status(403).json(BLOCKED_ERROR)
 
     // Trouver ou créer la conversation
     let conversation = await prisma.conversation.findFirst({
@@ -907,7 +926,7 @@ router.post('/share-offer', requireAuth, async (req, res) => {
         content: sharedData,
         type: 'OFFER_SHARE',
       },
-      include: { sender: true },
+      include: { sender: SENDER_SELECT },
     })
 
     await prisma.conversation.update({
@@ -918,12 +937,12 @@ router.post('/share-offer', requireAuth, async (req, res) => {
     // Temps réel
     try {
       const io = getIO()
-      io.to(`conv:${conversation.id}`).emit('new_message', { ...message, id: String(message.id), conversationId: conversation.id })
+      io.to(`conv:${conversation.id}`).emit('new_message', toMessagePayload(message, conversation.id))
       io.to(`user:${senderId}`).emit('conversation_updated', { conversationId: conversation.id })
       io.to(`user:${Number(recipientId)}`).emit('conversation_updated', { conversationId: conversation.id })
     } catch (_) {}
 
-    res.json({ conversationId: conversation.id, message })
+    res.json({ conversationId: conversation.id, message: toMessagePayload(message) })
   } catch (err) {
     console.error('share-offer:', err)
     res.status(500).json({ error: 'Erreur serveur' })
