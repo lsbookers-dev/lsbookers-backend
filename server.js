@@ -57,11 +57,9 @@ const allowedOrigins = [
 const corsOptions = {
   origin: (origin, callback) => {
     // Autorise les requêtes sans origin (ex: Postman, Railway health checks)
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error(`Origine non autorisée: ${origin}`));
-    }
+    // Origine inconnue : pas d'en-têtes CORS (le navigateur bloque la lecture) ;
+    // les modifications sont en plus refusées par csrfGuard ci-dessous.
+    callback(null, !origin || allowedOrigins.includes(origin));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -106,10 +104,26 @@ app.use((req, res, next) => {
   globalLimiter(req, res, next)
 });
 
-// Parsers
+// Parsers (pas de express.urlencoded : le site n'envoie que du JSON ou des fichiers,
+// et les formulaires HTML classiques sont le vecteur typique des attaques CSRF)
 app.use(cookieParser());
+
+// Protection CSRF : toute requête qui modifie des données doit venir de lsbookers.com.
+// Sans en-tête Origin (outil, serveur), le cookie de session n'est pas accepté.
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+function csrfGuard(req, res, next) {
+  if (SAFE_METHODS.has(req.method)) return next();
+  const origin = req.headers.origin;
+  if (origin) {
+    if (allowedOrigins.includes(origin)) return next();
+    return res.status(403).json({ error: 'Origine non autorisée' });
+  }
+  if (req.cookies?.token) return res.status(403).json({ error: 'Origine manquante' });
+  next();
+}
+app.use(csrfGuard);
+
 app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Logs (désactivés en production pour les performances)
 // Journal des requêtes SANS la partie « ?… » de l'URL (peut contenir jetons, emails, recherches)
@@ -118,6 +132,22 @@ app.use(morgan(':method :path-only :status :response-time ms'));
 
 // Static (uploads locaux — à migrer vers Bunny.net)
 app.use('/uploads', express.static('uploads'));
+
+/* ===================== Signalements CSP ===================== */
+// Le navigateur signale ici les ressources bloquées par la politique de sécurité du site
+// (permet de repérer un élément légitime oublié). Journal minimal : directive + domaine bloqué.
+const cspReportLimiter = rateLimit({ windowMs: 60 * 1000, max: 30, standardHeaders: true, legacyHeaders: false });
+app.post('/api/csp-report', cspReportLimiter,
+  express.json({ type: ['application/csp-report', 'application/reports+json', 'application/json'], limit: '20kb' }),
+  (req, res) => {
+    const r = req.body?.['csp-report'] || req.body?.[0]?.body || {};
+    let blocked = String(r['blocked-uri'] || r.blockedURL || '');
+    try { blocked = new URL(blocked).origin; } catch {}
+    let page = String(r['document-uri'] || r.documentURL || '');
+    try { page = new URL(page).pathname; } catch {}
+    console.warn('CSP bloqué:', r['violated-directive'] || r.effectiveDirective || '?', blocked.slice(0, 120), 'sur', page.slice(0, 80));
+    res.status(204).end();
+  });
 
 /* ===================== Routes API ===================== */
 // Rate limiting uniquement sur login et register (pas sur /me)
