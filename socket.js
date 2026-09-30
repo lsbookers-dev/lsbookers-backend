@@ -6,6 +6,7 @@
 const { Server } = require('socket.io')
 const jwt = require('jsonwebtoken')
 const prisma = require('./prisma/client')
+const { tokenFromCookieHeader } = require('./lib/session')
 
 let io = null
 
@@ -36,7 +37,8 @@ function init(httpServer) {
   // ── Authentification JWT + vérification DB sur chaque connexion socket ──
   io.use(async (socket, next) => {
     try {
-      const token = socket.handshake.auth?.token
+      // Jeton : envoyé explicitement (mode transition) ou cookie httpOnly (mode cookie uniquement)
+      const token = socket.handshake.auth?.token || tokenFromCookieHeader(socket.handshake.headers?.cookie)
       if (!token) return next(new Error('Unauthorized: no token'))
       const decoded = jwt.verify(token, process.env.JWT_SECRET)
       const userId = Number(decoded.id || decoded.userId)

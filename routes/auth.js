@@ -13,6 +13,7 @@ const {
   resendVerificationSchema,
 } = require('../schemas');
 const { sendVerificationEmail } = require('../utils/email');
+const { setSessionCookie, clearSessionCookie, isSameSiteRequest } = require('../lib/session');
 
 // Rate limiting pour les routes publiques d'énumération
 const pseudoCheckLimiter = rateLimit({
@@ -227,14 +228,12 @@ router.post('/login', validate(loginSchema), async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: '7d' }
     )
-    const isProduction = process.env.NODE_ENV === 'production'
-    res.cookie('token', token, {
-      httpOnly: true,
-      secure: isProduction,
-      sameSite: isProduction ? 'none' : 'lax',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    })
-    res.json({ message: 'Connexion reussie', token, user: toClientUser(user) });
+    setSessionCookie(req, res, token)
+    // Mode « cookie uniquement » (site et API sur le même site) : le jeton n'est jamais
+    // renvoyé au JavaScript de la page. Sinon (API sur railway.app), transition : jeton renvoyé.
+    const body = { message: 'Connexion reussie', user: toClientUser(user) }
+    if (!isSameSiteRequest(req)) body.token = token
+    res.json(body);
   } catch (err) {
     console.error('Erreur serveur lors de la connexion :', err);
     res.status(500).json({ error: 'Erreur serveur' });
@@ -245,7 +244,6 @@ router.post('/login', validate(loginSchema), async (req, res) => {
 // DÉCONNEXION
 // ─────────────────────────────────────────────
 router.post('/logout', async (req, res) => {
-  const isProduction = process.env.NODE_ENV === 'production';
   // Effacer lastActiveAt pour que le statut "en ligne" disparaisse immédiatement
   try {
     const authHeader = req.headers.authorization
@@ -258,12 +256,19 @@ router.post('/logout', async (req, res) => {
       }
     }
   } catch {}
-  res.clearCookie('token', {
-    httpOnly: true,
-    secure: isProduction,
-    sameSite: isProduction ? 'none' : 'lax',
-  });
+  clearSessionCookie(req, res);
   res.json({ message: 'Déconnecté' });
+});
+
+// ─────────────────────────────────────────────
+// CONVERSION D'UNE ANCIENNE SESSION (jeton localStorage) EN COOKIE httpOnly
+// Appelée une seule fois par le site lors du passage au mode « cookie uniquement ».
+// ─────────────────────────────────────────────
+router.post('/session', requireAuth, (req, res) => {
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (token) setSessionCookie(req, res, token);
+  res.json({ ok: true });
 });
 
 // ─────────────────────────────────────────────
