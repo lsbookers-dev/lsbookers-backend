@@ -5,8 +5,7 @@ const { requireAuth, isAdminUser } = require('../middleware/auth')
 const { validate } = require('../middleware/validate')
 const { conversationCreateSchema } = require('../schemas')
 const multer = require('multer')
-const { PutObjectCommand } = require('@aws-sdk/client-s3')
-const { r2Client, R2_BUCKET, R2_PUBLIC_URL } = require('../lib/r2')
+const { uploadBufferToR2 } = require('../lib/r2')
 const { getIO } = require('../socket')
 const { isFileContentValid, extensionFor } = require('../lib/fileCheck')
 const { isBlockedBetween } = require('../lib/blocks')
@@ -113,19 +112,10 @@ function detectAttachmentType(mimetype) {
 }
 
 /* Upload vers Cloudflare R2 depuis un buffer en mémoire */
-async function uploadBufferToBlob(buffer, mimetype, originalname) {
+async function uploadMessageFile(buffer, mimetype, originalname) {
   const base = (originalname || 'file').replace(/\.[^.]*$/, '').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80) || 'file'
   const safeName = `${base}.${extensionFor(mimetype)}`
-  const key = `lsbookers/messages/${Date.now()}-${safeName}`
-  await r2Client.send(new PutObjectCommand({
-    Bucket: R2_BUCKET,
-    Key: key,
-    Body: buffer,
-    ContentType: mimetype,
-    ContentLength: buffer.length,
-  }))
-  const url = `${R2_PUBLIC_URL}/${key}`
-  return { secure_url: url, resource_type: detectAttachmentType(mimetype).toLowerCase() }
+  return uploadBufferToR2(buffer, `messages/${Date.now()}-${safeName}`, mimetype)
 }
 
 /* =========================================================
@@ -547,7 +537,7 @@ router.post('/send', requireAuth, validate(conversationCreateSchema), async (req
 })
 
 /* =========================================================
-   POST /api/messages/send-file  — texte + fichier (Cloudinary)
+   POST /api/messages/send-file  — texte + fichier (Cloudflare R2)
 ========================================================= */
 router.post('/send-file', requireAuth, (req, res) => {
   upload.single('file')(req, res, async (err) => {
@@ -588,17 +578,12 @@ router.post('/send-file', requireAuth, (req, res) => {
       }
 
       try {
-        const result = await uploadBufferToBlob(
-          file.buffer,
-          file.mimetype,
-          file.originalname
-        )
-        attachmentUrl = result.secure_url
+        attachmentUrl = await uploadMessageFile(file.buffer, file.mimetype, file.originalname)
         attachmentType = detectAttachmentType(file.mimetype)
         attachmentName = file.originalname || null
         attachmentMimeType = file.mimetype || null
       } catch (uploadErr) {
-        console.error('❌ Cloudinary upload error:', uploadErr)
+        console.error('❌ Erreur envoi fichier message (R2) :', uploadErr)
         return res.status(500).json({ error: 'Erreur lors de l\'upload du fichier' })
       }
     }

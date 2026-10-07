@@ -43,7 +43,7 @@ app.set('trust proxy', 1);
 
 // Helmet — sécurité des headers HTTP (XSS, clickjacking, MIME sniffing, etc.)
 app.use(helmet({
-  crossOriginResourcePolicy: { policy: 'cross-origin' }, // autorise les images Cloudinary
+  crossOriginResourcePolicy: { policy: 'cross-origin' }, // réponses de l'API lisibles depuis lsbookers.com
 }));
 
 // CORS — autorise uniquement lsbookers.com et localhost en développement
@@ -129,9 +129,6 @@ app.use(express.json({ limit: '10mb' }));
 // Journal des requêtes SANS la partie « ?… » de l'URL (peut contenir jetons, emails, recherches)
 morgan.token('path-only', (req) => (req.originalUrl || req.url || '').split('?')[0]);
 app.use(morgan(':method :path-only :status :response-time ms'));
-
-// Static (uploads locaux — à migrer vers Bunny.net)
-app.use('/uploads', express.static('uploads'));
 
 /* ===================== Signalements CSP ===================== */
 // Le navigateur signale ici les ressources bloquées par la politique de sécurité du site

@@ -13,6 +13,23 @@ const { z } = require('zod');
 // Appliqué sur tous les champs texte libres avant stockage en base.
 const stripHtml = (s) => (typeof s === 'string' ? s.replace(/<[^>]*>/g, '') : s);
 
+// Lien externe facultatif (réseaux sociaux, site web…) :
+// "" → null, "instagram.com/x" → "https://instagram.com/x", seuls http/https acceptés.
+const optionalLink = (label) => z.preprocess(
+  (v) => {
+    if (typeof v !== 'string') return v;
+    const t = v.trim();
+    if (!t) return null;
+    return /^[a-z][a-z0-9+.-]*:/i.test(t) ? t : `https://${t}`;
+  },
+  z.string()
+    .max(500, `Lien ${label} trop long`)
+    .url(`Lien ${label} invalide`)
+    .refine((u) => /^https?:\/\//i.test(u), `Lien ${label} invalide`)
+    .nullable()
+    .optional(),
+);
+
 /* ─────────────────────────────────────────
    AUTH
 ───────────────────────────────────────── */
@@ -59,6 +76,10 @@ const step3Schema = z.object({
 
 const registerCompleteSchema = registerSchema.merge(step2Schema).merge(step3Schema);
 
+const deleteAccountSchema = z.object({
+  password: z.string().min(1, 'Mot de passe requis').max(200),
+});
+
 const resendVerificationSchema = z.object({
   email: z.string().email('Adresse email invalide').toLowerCase().trim(),
 });
@@ -82,8 +103,19 @@ const profileUpdateSchema = z.object({
   banner:                  z.string().max(2000).optional().nullable(),
   avatarUrl:               z.string().max(2000).optional().nullable(),
   bannerUrl:               z.string().max(2000).optional().nullable(),
-  soundcloudUrl:           z.string().url('URL SoundCloud invalide').optional().nullable().or(z.literal('')),
-  youtubeUrl:              z.string().url('URL YouTube invalide').optional().nullable().or(z.literal('')),
+  soundcloudUrl:           optionalLink('SoundCloud'),
+  youtubeUrl:              optionalLink('vidéo'),
+  instagramUrl:            optionalLink('Instagram'),
+  facebookUrl:             optionalLink('Facebook'),
+  tiktokUrl:               optionalLink('TikTok'),
+  twitterUrl:              optionalLink('X / Twitter'),
+  linkedinUrl:             optionalLink('LinkedIn'),
+  websiteUrl:              optionalLink('site web'),
+  address:                 z.string().max(200).trim().transform(stripHtml).optional().nullable(),
+  postalCode:              z.string().max(10).trim().optional().nullable(),
+  city:                    z.string().max(100).trim().transform(stripHtml).optional().nullable(),
+  cvText:                  z.string().max(5000, 'Présentation trop longue (5000 caractères maximum)').trim().transform(stripHtml).optional().nullable(),
+  feeInfo:                 z.string().max(2000, 'Tarifs trop longs (2000 caractères maximum)').trim().transform(stripHtml).optional().nullable(),
   showSoundcloud:          z.boolean().optional(),
   showStyles:              z.boolean().optional(),
   showYoutubeUrl:          z.boolean().optional(),
@@ -250,6 +282,7 @@ module.exports = {
   step3Schema,
   registerCompleteSchema,
   resendVerificationSchema,
+  deleteAccountSchema,
   // Profile
   profileUpdateSchema,
   // Offers

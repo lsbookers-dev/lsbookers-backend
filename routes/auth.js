@@ -5,13 +5,15 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const prisma = require('../prisma/client');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, isAdminUser } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const {
   loginSchema,
   registerCompleteSchema,
   resendVerificationSchema,
+  deleteAccountSchema,
 } = require('../schemas');
+const { deleteUserAccount } = require('../services/accountDeletion');
 const { sendVerificationEmail } = require('../utils/email');
 const { setSessionCookie, clearSessionCookie, isSameSiteRequest } = require('../lib/session');
 
@@ -258,6 +260,41 @@ router.post('/logout', async (req, res) => {
   } catch {}
   clearSessionCookie(req, res);
   res.json({ message: 'Déconnecté' });
+});
+
+// ─────────────────────────────────────────────
+// SUPPRESSION DE SON PROPRE COMPTE (RGPD)
+// Confirmation par mot de passe. Supprime toutes les données et fichiers.
+// ─────────────────────────────────────────────
+const deleteAccountLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Trop de tentatives, réessayez plus tard' },
+});
+
+router.delete('/account', deleteAccountLimiter, requireAuth, validate(deleteAccountSchema), async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: { id: true, role: true, password: true },
+    });
+    if (!user) return res.status(404).json({ error: 'Compte introuvable' });
+    if (isAdminUser(user)) {
+      return res.status(403).json({ error: 'Un compte admin ne peut pas être supprimé depuis le site' });
+    }
+
+    const isValid = await bcrypt.compare(req.body.password, user.password);
+    if (!isValid) return res.status(401).json({ error: 'Mot de passe incorrect' });
+
+    await deleteUserAccount(user.id);
+    clearSessionCookie(req, res);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Erreur suppression de compte :', err);
+    res.status(500).json({ error: 'Impossible de supprimer le compte' });
+  }
 });
 
 // ─────────────────────────────────────────────

@@ -7,19 +7,7 @@ const { isOwnMediaUrl } = require('../lib/mediaUrl');
 const { validate } = require('../middleware/validate');
 const { publicationCreateSchema, commentCreateSchema } = require('../schemas');
 const { createNotif, displayName } = require('../services/notifications');
-const { r2Client, R2_BUCKET, R2_PUBLIC_URL } = require('../lib/r2');
-const { DeleteObjectCommand } = require('@aws-sdk/client-s3');
-
-// Helper : supprimer un objet R2 par son URL publique (silencieux si erreur)
-async function deleteR2Object(url) {
-  if (!url || !R2_PUBLIC_URL || !url.startsWith(`${R2_PUBLIC_URL}/`)) return;
-  try {
-    const key = url.slice(R2_PUBLIC_URL.length + 1); // +1 pour le /
-    await r2Client.send(new DeleteObjectCommand({ Bucket: R2_BUCKET, Key: key }));
-  } catch (e) {
-    console.warn('⚠️ R2 delete failed for', url, e.message);
-  }
-}
+const { deleteR2Object } = require('../lib/r2');
 
 // Helper — include médias additionnels
 const MEDIA_INCLUDE = {
