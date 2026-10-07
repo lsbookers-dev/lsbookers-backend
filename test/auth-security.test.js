@@ -142,14 +142,11 @@ test('register-complete ne renvoie aucune session ni token email', async () => {
 
   assert.equal(res.statusCode, 201)
   assert.equal(res.body.requiresEmailVerification, true)
-  assert.equal(typeof res.body.deviceToken, 'string')
   assert.equal('token' in res.body, false)
   assert.equal('user' in res.body, false)
   assert.equal('emailVerificationToken' in res.body, false)
-  assert.deepEqual(res.cookies.map(cookie => cookie.name), ['device_token'])
+  assert.equal(res.cookies.length, 0)
   assert.equal(createdUserData.emailVerified, false)
-  assert.equal(createdUserData.pendingTrustedDevice.create.deviceToken, res.body.deviceToken)
-  assert.ok(createdUserData.pendingTrustedDevice.create.expiresAt instanceof Date)
 })
 
 test('reset-password révoque les sessions et refuse une réutilisation concurrente', async () => {
