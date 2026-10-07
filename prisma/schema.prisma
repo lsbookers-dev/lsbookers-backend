@@ -624,6 +624,7 @@ model BookingLogistic {
   title            String
   fileUrl          String?
   fileName         String?
+  addedByProfileId Int?            // Qui l'a ajouté (organisateur ou artiste/prestataire) — null = ancien élément de l'organisateur
   createdAt        DateTime        @default(now())
 
   bookingRequest   BookingRequest  @relation(fields: [bookingRequestId], references: [id], onDelete: Cascade)

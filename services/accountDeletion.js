@@ -33,6 +33,11 @@ async function collectFileUrls(tx, userId, profileId, eventIds, bookingIds) {
       docs.forEach(d => push(d.url));
     }
 
+    const contractWhere = { OR: [{ senderId: profileId }, { recipientId: profileId }] };
+    if (eventIds.length) contractWhere.OR.push({ eventId: { in: eventIds } });
+    const contracts = await tx.contract.findMany({ where: contractWhere, select: { fileUrl: true } });
+    contracts.forEach(c => push(c.fileUrl));
+
     if (bookingIds.length) {
       const logistics = await tx.bookingLogistic.findMany({ where: { bookingRequestId: { in: bookingIds } }, select: { fileUrl: true } });
       logistics.forEach(l => push(l.fileUrl));

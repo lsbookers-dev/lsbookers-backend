@@ -7,6 +7,49 @@ const prisma = require('../prisma/client');
 const { requireAuth } = require('../middleware/auth');
 const { createNotif, displayName } = require('../services/notifications');
 
+/**
+ * Rattache un booking accepté à l'événement de l'organisateur :
+ * - l'événement choisi lors de la demande s'il appartient à l'organisateur,
+ * - sinon un événement de l'organisateur le même jour,
+ * - sinon un nouvel événement privé « Booking — <artiste> ».
+ * Ajoute l'artiste/prestataire au personnel (BOOKED) s'il n'y est pas déjà.
+ */
+async function attachBookingToOrganizerEvent(br, targetName) {
+  const bookingDay = new Date(br.startDate);
+  bookingDay.setUTCHours(0, 0, 0, 0);
+  const dayEnd = new Date(bookingDay.getTime() + 24 * 60 * 60 * 1000 - 1);
+
+  let event = br.eventId
+    ? await prisma.event.findFirst({ where: { id: br.eventId, profileId: br.requesterId } })
+    : null;
+  if (!event) {
+    event = await prisma.event.findFirst({
+      where: { profileId: br.requesterId, start: { gte: bookingDay, lte: dayEnd } },
+      orderBy: { start: 'asc' },
+    });
+  }
+  if (!event) {
+    event = await prisma.event.create({
+      data: { title: `Booking — ${targetName}`, start: br.startDate, status: 'PUBLISHED', profileId: br.requesterId, isPrivate: true, budget: br.fee || null },
+    });
+  }
+
+  const existingStaff = await prisma.eventStaff.findFirst({ where: { eventId: event.id, profileId: br.targetId } });
+  if (existingStaff) {
+    if (existingStaff.status !== 'BOOKED' || (existingStaff.fee == null && br.fee != null)) {
+      await prisma.eventStaff.update({
+        where: { id: existingStaff.id },
+        data: { status: 'BOOKED', fee: existingStaff.fee ?? br.fee ?? null },
+      });
+    }
+  } else {
+    await prisma.eventStaff.create({
+      data: { eventId: event.id, role: br.target.user?.role || 'ARTIST', status: 'BOOKED', profileId: br.targetId, fee: br.fee || null },
+    });
+  }
+  return event.id;
+}
+
 // POST /api/events/booking-request — envoyer une demande de booking
 router.post('/booking-request', requireAuth, async (req, res) => {
   const { targetProfileId, date, message, fee, eventId } = req.body;
@@ -167,7 +210,6 @@ router.patch('/booking-request/:id', requireAuth, async (req, res) => {
     if (status === 'ACCEPTED') {
       const bookingDay = new Date(br.startDate);
       bookingDay.setUTCHours(0, 0, 0, 0);
-      const dayEnd = new Date(bookingDay.getTime() + 24 * 60 * 60 * 1000 - 1);
 
       await prisma.availability.upsert({
         where:  { profileId_date: { profileId: br.targetId, date: bookingDay } },
@@ -175,35 +217,10 @@ router.patch('/booking-request/:id', requireAuth, async (req, res) => {
         create: { profileId: br.targetId, date: bookingDay, status: 'UNAVAILABLE' },
       });
 
-      const existingOrgEvent = await prisma.event.findFirst({
-        where: { profileId: br.requesterId, start: { gte: bookingDay, lte: dayEnd } },
-      });
-      let eventId = existingOrgEvent?.id ?? null;
-
-      if (existingOrgEvent) {
-        await prisma.eventStaff.create({
-          data: { eventId: existingOrgEvent.id, role: br.target.user?.role || 'ARTIST', status: 'BOOKED', profileId: br.targetId, fee: br.fee || null },
-        }).catch(() => {});
-      } else {
-        const orgEvent = await prisma.event.create({
-          data: { title: `Booking — ${targetName}`, start: br.startDate, status: 'PUBLISHED', profileId: br.requesterId, isPrivate: true, budget: br.fee || null },
-        });
-        eventId = orgEvent.id;
-        await prisma.eventStaff.create({
-          data: { eventId: orgEvent.id, role: br.target.user?.role || 'ARTIST', status: 'BOOKED', profileId: br.targetId, fee: br.fee || null },
-        }).catch(() => {});
-      }
-
-      const existingArtistEvent = await prisma.event.findFirst({
-        where: { profileId: br.targetId, start: { gte: bookingDay, lte: dayEnd } },
-      });
-      if (!existingArtistEvent) {
-        await prisma.event.create({
-          data: { title: `Booking — ${requesterName}`, start: br.startDate, status: 'PUBLISHED', profileId: br.targetId, isPrivate: true, budget: br.fee || null },
-        });
-      }
-
-      if (eventId) {
+      // Un seul événement : celui de l'organisateur. L'artiste/prestataire y est ajouté
+      // comme membre du personnel (BOOKED) et le voit dans son agenda avec la vue « booké ».
+      const eventId = await attachBookingToOrganizerEvent(br, targetName);
+      if (eventId && eventId !== br.eventId) {
         await prisma.bookingRequest.update({ where: { id: br.id }, data: { eventId } }).catch(() => {});
       }
 
@@ -391,3 +408,4 @@ router.post('/booking-request/:id/cancel-response', requireAuth, async (req, res
 });
 
 module.exports = router;
+module.exports.attachBookingToOrganizerEvent = attachBookingToOrganizerEvent;

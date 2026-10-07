@@ -4,6 +4,7 @@
 const express = require('express');
 const router = express.Router();
 const prisma = require('../prisma/client');
+const { deleteR2Object } = require('../lib/r2');
 const { requireAuth } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const { eventCreateSchema, eventUpdateSchema } = require('../schemas');
@@ -198,16 +199,9 @@ router.get('/:id/detail', requireAuth, async (req, res) => {
     });
     if (!event) return res.status(404).json({ error: 'Événement introuvable' });
 
-    const dayStart = new Date(event.start);
-    dayStart.setHours(0, 0, 0, 0);
-    const dayEnd = new Date(event.start);
-    dayEnd.setHours(23, 59, 59, 999);
-    const linkedBooking = await prisma.bookingRequest.findFirst({
-      where: { targetId: profile.id, status: 'ACCEPTED', startDate: { gte: dayStart, lte: dayEnd } },
-      include: { requester: { select: { id: true, avatar: true, user: { select: { pseudo: true, firstName: true, lastName: true } } } } },
-    });
-
-    res.json({ event, linkedBooking: linkedBooking || null });
+    // Ses propres événements s'affichent toujours en vue complète (organisation).
+    // Les événements où l'on est booké passent par /:id/staff-view.
+    res.json({ event, linkedBooking: null });
   } catch (err) {
     console.error('GET events/:id/detail:', err);
     res.status(500).json({ error: 'Erreur serveur' });
@@ -221,7 +215,19 @@ router.delete('/:id', requireAuth, async (req, res) => {
     if (!profile) return res.status(404).json({ error: 'Profil introuvable' });
     const existing = await prisma.event.findFirst({ where: { id: parseInt(req.params.id), profileId: profile.id } });
     if (!existing) return res.status(404).json({ error: 'Événement introuvable' });
-    await prisma.event.delete({ where: { id: existing.id } });
+    // Liens sans suppression en cascade : on les détache (bookings, offres, avis) ou on supprime
+    // ce qui n'a de sens qu'avec l'événement (contrats et leurs fichiers)
+    const contracts = await prisma.contract.findMany({ where: { eventId: existing.id }, select: { id: true, fileUrl: true } });
+    const contractIds = contracts.map(c => c.id);
+    await prisma.$transaction([
+      prisma.payment.deleteMany({ where: { contractId: { in: contractIds } } }),
+      prisma.contract.deleteMany({ where: { id: { in: contractIds } } }),
+      prisma.bookingRequest.updateMany({ where: { eventId: existing.id }, data: { eventId: null } }),
+      prisma.offer.updateMany({ where: { eventId: existing.id }, data: { eventId: null } }),
+      prisma.review.updateMany({ where: { eventId: existing.id }, data: { eventId: null } }),
+      prisma.event.delete({ where: { id: existing.id } }),
+    ]);
+    await Promise.all(contracts.map(c => deleteR2Object(c.fileUrl)));
     res.json({ success: true });
   } catch (err) {
     console.error('DELETE events/:id:', err);
@@ -443,11 +449,32 @@ router.get('/:id/staff-view', requireAuth, async (req, res) => {
       where: { id: eventId },
       include: {
         documents: { orderBy: { createdAt: 'asc' } },
+        profile: { select: { id: true, avatar: true, showRealName: true, user: { select: { id: true, pseudo: true, firstName: true, lastName: true } } } },
       },
     });
     if (!event) return res.status(404).json({ error: 'Événement introuvable' });
 
-    // Retourner uniquement les infos pratiques — pas de budget, expenses, purchases
+    // Booking qui a amené cette personne sur l'événement (s'il existe)
+    const dayStart = new Date(event.start); dayStart.setUTCHours(0, 0, 0, 0);
+    const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000 - 1);
+    const booking = await prisma.bookingRequest.findFirst({
+      where: {
+        targetId: profile.id,
+        status: 'ACCEPTED',
+        OR: [
+          { eventId: event.id },
+          { eventId: null, requesterId: event.profileId, startDate: { gte: dayStart, lte: dayEnd } },
+        ],
+      },
+      orderBy: { updatedAt: 'desc' },
+      select: { id: true, fee: true, paymentStatus: true, startDate: true },
+    });
+
+    const orgUser = event.profile?.user;
+    const realName = [orgUser?.firstName, orgUser?.lastName].filter(Boolean).join(' ');
+    const organizerName = (event.profile?.showRealName && realName) || orgUser?.pseudo || realName || 'Organisateur';
+
+    // Retourner uniquement les infos utiles à la personne bookée — pas de budget, dépenses, achats
     res.json({
       event: {
         id: event.id,
@@ -462,8 +489,10 @@ router.get('/:id/staff-view', requireAuth, async (req, res) => {
         coverImage: event.coverImage || null,
         documents: event.documents,
       },
+      organizer: { userId: orgUser?.id ?? null, profileId: event.profileId, name: organizerName, avatar: event.profile?.avatar || null },
       staffRole: staffEntry.role,
       staffFee: staffEntry.fee ?? null,
+      booking: booking || null,
     });
   } catch (err) {
     console.error('GET events/:id/staff-view:', err);
