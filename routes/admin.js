@@ -259,7 +259,6 @@ router.get('/users/:id', requireAuth, requireAdmin, async (req, res) => {
             banner: true,
             soundcloudUrl: true,
             youtubeUrl: true,
-            availableForBooking: true,
             showRealName: true,
             legalStatus: true,
             siret: true,

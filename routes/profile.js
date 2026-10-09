@@ -5,7 +5,7 @@ const prisma = require('../prisma/client');
 const { requireAuth } = require('../middleware/auth');
 const { isOwnMediaUrl } = require('../lib/mediaUrl');
 const { validate } = require('../middleware/validate');
-const { profileUpdateSchema } = require('../schemas');
+const { profileUpdateSchema, accountUpdateSchema } = require('../schemas');
 
 // Import fetch (CommonJS compatible)
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
@@ -40,6 +40,16 @@ const sanitizeStringArray = (value) => {
   return value
     .map((item) => (typeof item === 'string' ? item.trim() : String(item).trim()))
     .filter((item) => item.length > 0);
+};
+
+// Moyenne et nombre d'avis vérifiés (laissés après une vraie prestation)
+const reviewStats = async (profileId) => {
+  const stats = await prisma.review.aggregate({
+    where: { targetId: profileId, OR: [{ bookingId: { not: null } }, { staffId: { not: null } }] },
+    _avg: { rating: true },
+    _count: { rating: true },
+  });
+  return { reviewsAvg: stats._avg.rating ?? null, reviewsCount: stats._count.rating ?? 0 };
 };
 
 const toPublicProfile = (profile) => {
@@ -77,6 +87,9 @@ router.get('/me', requireAuth, async (req, res) => {
             firstName: true,
             lastName: true,
             role: true,
+            dateOfBirth: true,
+            phone: true,
+            countryOfResidence: true,
             _count: {
               select: {
                 followers: true,
@@ -101,6 +114,7 @@ router.get('/me', requireAuth, async (req, res) => {
         user,
         followersCount: userCounts.followers,
         followingCount: userCounts.following,
+        ...(await reviewStats(profile.id)),
       },
     });
   } catch (error) {
@@ -137,7 +151,6 @@ router.get('/user/:userId', async (req, res) => {
         profession: true,
         specialties: true,
         styles: true,
-        availableForBooking: true,
         showRealName: true,
         soundcloudUrl: true,
         youtubeUrl: true,
@@ -154,6 +167,9 @@ router.get('/user/:userId', async (req, res) => {
         feeInfo: true,
         radiusKm: true,
         typeEtablissement: true,
+        // Coordonnées de la ville (géocodée), pas de l'adresse postale
+        latitude: true,
+        longitude: true,
         user: {
           select: {
             id: true,
@@ -165,7 +181,6 @@ router.get('/user/:userId', async (req, res) => {
             _count: { select: { followers: true, following: true } },
           },
         },
-        _count: { select: { reviewsReceived: true } },
       },
     });
 
@@ -173,22 +188,92 @@ router.get('/user/:userId', async (req, res) => {
       return res.status(404).json({ error: 'Profil introuvable' });
     }
 
-    // Moyenne des avis
-    const reviews = await prisma.review.aggregate({
-      where: { targetId: profile.id },
-      _avg: { rating: true },
-      _count: { rating: true },
-    });
-
     return res.json({
       profile: {
         ...toPublicProfile(profile),
-        reviewsAvg: reviews._avg.rating ?? null,
-        reviewsCount: reviews._count.rating ?? 0,
+        ...(await reviewStats(profile.id)),
       },
     });
   } catch (error) {
     console.error('❌ Erreur récupération profil public /user/:userId :', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+/**
+ * PUT /api/profile/me/account
+ * Privé : informations saisies à l'inscription (identité, statut, SIRET…).
+ * Ces données ne sont jamais affichées sur le profil public.
+ */
+router.put('/me/account', requireAuth, validate(accountUpdateSchema), async (req, res) => {
+  const {
+    pseudo, firstName, lastName, dateOfBirth, phone, countryOfResidence,
+    legalStatus, organizerType, establishmentName, siret,
+  } = req.body;
+  const emptyToNull = (v) => (v === undefined ? undefined : (v || null));
+
+  try {
+    const current = await prisma.profile.findUnique({
+      where: { userId: req.user.id },
+      select: { id: true, legalStatus: true, siret: true },
+    });
+    if (!current) return res.status(404).json({ error: 'Profil introuvable' });
+
+    if (pseudo !== undefined) {
+      const taken = await prisma.user.findFirst({
+        where: { pseudo: { equals: pseudo, mode: 'insensitive' }, NOT: { id: req.user.id } },
+        select: { id: true },
+      });
+      if (taken) return res.status(409).json({ error: 'Ce pseudo est déjà utilisé' });
+    }
+
+    // SIRET vérifié dans le registre officiel pour une société (comme à l'inscription)
+    const nextStatus = legalStatus !== undefined ? legalStatus : current.legalStatus;
+    const nextSiret = siret !== undefined ? (siret || '').replace(/\s/g, '') : current.siret;
+    if (siret !== undefined && nextStatus === 'COMPANY' && nextSiret && nextSiret !== current.siret) {
+      if (!/^\d{14}$/.test(nextSiret)) {
+        return res.status(400).json({ error: 'Format SIRET invalide — 14 chiffres requis' });
+      }
+      try {
+        const siretRes = await fetch(
+          `https://recherche-entreprises.api.gouv.fr/search?q=${nextSiret}&page=1&per_page=1`,
+          { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(8000) }
+        );
+        if (siretRes.ok) {
+          const siretData = await siretRes.json();
+          if (!siretData.total_results) {
+            return res.status(400).json({ error: 'SIRET introuvable dans le registre officiel' });
+          }
+        }
+        // API indisponible : on laisse passer (comme à l'inscription)
+      } catch (siretErr) {
+        console.warn('⚠️ Vérification SIRET impossible :', siretErr.message);
+      }
+    }
+
+    const userData = {};
+    if (pseudo !== undefined) userData.pseudo = pseudo;
+    if (firstName !== undefined) userData.firstName = firstName;
+    if (lastName !== undefined) userData.lastName = lastName;
+    if (dateOfBirth !== undefined) userData.dateOfBirth = dateOfBirth ? new Date(dateOfBirth) : null;
+    if (phone !== undefined) userData.phone = emptyToNull(phone);
+    if (countryOfResidence !== undefined) userData.countryOfResidence = emptyToNull(countryOfResidence);
+
+    const profileData = {};
+    if (legalStatus !== undefined) profileData.legalStatus = legalStatus || null;
+    if (organizerType !== undefined) profileData.organizerType = organizerType || null;
+    if (establishmentName !== undefined) profileData.establishmentName = emptyToNull(establishmentName);
+    if (siret !== undefined) profileData.siret = nextSiret || null;
+
+    await prisma.$transaction([
+      prisma.user.update({ where: { id: req.user.id }, data: userData }),
+      prisma.profile.update({ where: { id: current.id }, data: profileData }),
+    ]);
+
+    return res.json({ ok: true });
+  } catch (error) {
+    if (error.code === 'P2002') return res.status(409).json({ error: 'Ce pseudo est déjà utilisé' });
+    console.error('❌ Erreur mise à jour compte PUT /me/account :', error);
     return res.status(500).json({ error: 'Erreur serveur' });
   }
 });
@@ -282,7 +367,6 @@ router.put('/:id', requireAuth, validate(profileUpdateSchema), async (req, res) 
     cvText,
     feeInfo,
     styles,
-    availableForBooking,
     showRealName,
     notificationPreferences,
   } = req.body;
@@ -433,10 +517,6 @@ router.put('/:id', requireAuth, validate(profileUpdateSchema), async (req, res) 
     const sanitizedStyles = sanitizeStringArray(styles);
     if (sanitizedStyles !== undefined) {
       dataToUpdate.styles = sanitizedStyles;
-    }
-
-    if (availableForBooking !== undefined) {
-      dataToUpdate.availableForBooking = Boolean(availableForBooking);
     }
 
     if (showRealName !== undefined) {

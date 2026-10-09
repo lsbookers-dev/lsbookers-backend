@@ -2,6 +2,7 @@
 const express = require('express');
 const router = express.Router();
 const prisma = require('../prisma/client');
+const { expiredOfferWhere } = require('../services/offerCleanup');
 const { requireAuth } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const { offerCreateSchema, offerUpdateSchema } = require('../schemas');
@@ -143,7 +144,8 @@ router.get('/', async (req, res) => {
   const { type, specialty, location, country, organizerId, eventId } = req.query;
 
   try {
-    const where = { status: 'ACTIVE' };
+    // Offres passées exclues (elles sont supprimées le lendemain, cf. services/offerCleanup)
+    const where = { status: 'ACTIVE', NOT: expiredOfferWhere() };
 
     if (type && ['ARTIST', 'PROVIDER', 'ALL'].includes(type)) where.type = type;
     if (specialty) where.specialty = { contains: specialty, mode: 'insensitive' };
@@ -174,7 +176,7 @@ router.get('/:id', async (req, res) => {
       include: offerInclude,
     });
 
-    if (!offer || offer.status !== 'ACTIVE') {
+    if (!offer || offer.status !== 'ACTIVE' || (offer.endDate || offer.date) < new Date(Date.now() - 24 * 60 * 60 * 1000)) {
       return res.status(404).json({ error: 'OFFRE_INTROUVABLE' });
     }
 

@@ -64,7 +64,7 @@ const step3Schema = z.object({
   profession:         z.string().max(100).trim().transform(stripHtml).optional(),
   location:           z.string().max(100).trim().transform(stripHtml).optional(),
   country:            z.string().max(100).trim().transform(stripHtml).optional(),
-  legalStatus:        z.enum(['INDIVIDUAL', 'AUTO_ENTREPRENEUR', 'COMPANY']).optional(),
+  legalStatus:        z.enum(['INDIVIDUAL', 'AUTO_ENTREPRENEUR', 'COMPANY', 'INTERMITTENT']).optional(),
   organizerType:      z.enum(['INDIVIDUAL', 'PROFESSIONAL']).optional(),
   establishmentName:  z.string().max(200).trim().transform(stripHtml).optional(),
   typeEtablissement:  z.string().max(100).trim().transform(stripHtml).optional(),
@@ -94,7 +94,7 @@ const profileUpdateSchema = z.object({
   country:                 z.string().max(100).trim().transform(stripHtml).optional().nullable(),
   profession:              z.string().max(100).trim().transform(stripHtml).optional().nullable(),
   typeEtablissement:       z.string().max(100).trim().transform(stripHtml).optional().nullable(),
-  radiusKm:                z.number().int().min(0).max(5000).optional().nullable(),
+  radiusKm:                z.number().int().min(0).max(9999).optional().nullable(), // 9999 = toute la France
   latitude:                z.number().min(-90).max(90).optional().nullable(),
   longitude:               z.number().min(-180).max(180).optional().nullable(),
   specialties:             z.array(z.string().max(100).transform(stripHtml)).max(20).optional(),
@@ -119,9 +119,23 @@ const profileUpdateSchema = z.object({
   showSoundcloud:          z.boolean().optional(),
   showStyles:              z.boolean().optional(),
   showYoutubeUrl:          z.boolean().optional(),
-  availableForBooking:     z.boolean().optional(),
   showRealName:            z.boolean().optional(),
-  notificationPreferences: z.record(z.string(), z.boolean()).optional(),
+  notificationPreferences: z.object({ locationScope: z.string().max(30).optional() }).optional(),
+});
+
+// Informations du compte saisies à l'inscription (modifiables ensuite)
+const accountUpdateSchema = z.object({
+  pseudo:             step2Schema.shape.pseudo.optional(),
+  firstName:          step2Schema.shape.firstName.optional(),
+  lastName:           step2Schema.shape.lastName.optional(),
+  dateOfBirth:        z.string().max(30).optional().nullable()
+                        .refine(v => !v || !Number.isNaN(Date.parse(v)), 'Date de naissance invalide'),
+  phone:              z.string().max(20).trim().optional().nullable(),
+  countryOfResidence: z.string().max(100).trim().transform(stripHtml).optional().nullable(),
+  legalStatus:        z.enum(['INDIVIDUAL', 'AUTO_ENTREPRENEUR', 'COMPANY', 'INTERMITTENT']).optional().nullable(),
+  organizerType:      z.enum(['INDIVIDUAL', 'PROFESSIONAL']).optional().nullable(),
+  establishmentName:  z.string().max(200).trim().transform(stripHtml).optional().nullable(),
+  siret:              z.string().max(20).trim().optional().nullable(),
 });
 
 /* ─────────────────────────────────────────
@@ -209,11 +223,11 @@ const conversationCreateSchema = z.object({
 ───────────────────────────────────────── */
 
 const reviewCreateSchema = z.object({
-  targetId: z.number().int().positive('ID profil invalide'),
-  rating:   z.number().int().min(1, 'Note minimum 1').max(5, 'Note maximum 5'),
-  comment:  z.string().max(1000, 'Commentaire trop long').trim().transform(stripHtml).optional(),
-  eventId:  z.number().int().positive().optional().nullable(),
-});
+  bookingId: z.number().int().positive().optional(),
+  staffId:   z.number().int().positive().optional(),
+  rating:    z.number().int().min(1, 'Note minimum 1').max(5, 'Note maximum 5'),
+  comment:   z.string().max(1000, 'Commentaire trop long').trim().transform(stripHtml).optional(),
+}).refine(d => Boolean(d.bookingId) !== Boolean(d.staffId), { message: 'Prestation à évaluer manquante' });
 
 /* ─────────────────────────────────────────
    PASSWORD
@@ -285,6 +299,7 @@ module.exports = {
   deleteAccountSchema,
   // Profile
   profileUpdateSchema,
+  accountUpdateSchema,
   // Offers
   offerCreateSchema,
   offerUpdateSchema,

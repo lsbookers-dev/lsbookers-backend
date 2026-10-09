@@ -23,6 +23,7 @@ enum LegalStatus {
   INDIVIDUAL        // Particulier
   AUTO_ENTREPRENEUR // Auto-entrepreneur
   COMPANY           // Societe
+  INTERMITTENT      // Intermittent du spectacle
 }
 
 enum OrganizerType {
@@ -611,6 +612,7 @@ model BookingRequest {
   messages    Message[]
   logistics   BookingLogistic[]
   media       BookingMedia[]
+  reviews     Review[]
 
   @@index([requesterId])
   @@index([targetId])
@@ -663,6 +665,7 @@ model EventStaff {
   profile       Profile?       @relation(fields: [profileId], references: [id])
   contract      Contract?
   notifications Notification[]
+  reviews       Review[]
 
   @@index([eventId])
 }
@@ -780,13 +783,19 @@ model Review {
   authorId  Int      // Qui ecrit l'avis
   targetId  Int      // Qui est note
   eventId   Int?     // Lien vers l'evenement (optionnel)
+  bookingId Int?     // Prestation reellement effectuee qui autorise l'avis (booking…
+  staffId   Int?     // …ou poste staff d'un evenement)
   createdAt DateTime @default(now())
 
-  author    Profile  @relation("ReviewAuthor", fields: [authorId], references: [id])
-  target    Profile  @relation("ReviewTarget", fields: [targetId], references: [id])
-  event     Event?   @relation(fields: [eventId], references: [id])
+  author    Profile         @relation("ReviewAuthor", fields: [authorId], references: [id])
+  target    Profile         @relation("ReviewTarget", fields: [targetId], references: [id])
+  event     Event?          @relation(fields: [eventId], references: [id])
+  booking   BookingRequest? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  staff     EventStaff?     @relation(fields: [staffId], references: [id], onDelete: SetNull)
 
   @@unique([authorId, targetId, eventId])
+  @@unique([authorId, bookingId])
+  @@unique([authorId, staffId])
   @@index([targetId])
 }
 
