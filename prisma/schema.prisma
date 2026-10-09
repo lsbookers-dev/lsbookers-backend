@@ -207,7 +207,6 @@ model Profile {
   cvText                  String?   // CV / expérience (artistes)
   feeInfo                 String?   // Tarifs / info cachets (artistes)
   styles                  String[]                 // Styles artistiques (RNB, Electro, Jazz...)
-  availableForBooking     Boolean                  @default(true)   // Disponible pour booking
   showRealName            Boolean                  @default(false)  // Afficher nom/prénom au lieu du pseudo
 
   // Infos legales (non visibles sur le profil, usage interne)
@@ -523,6 +522,7 @@ model Event {
   expenses         EventExpense[]
   purchases        EventPurchase[]
   offers           Offer[]
+  notifications    Notification[]
 
   @@index([profileId])
   @@index([start])
@@ -605,6 +605,7 @@ model BookingRequest {
   updatedAt               DateTime      @updatedAt
 
   sharedNotes             String?       // Notes partagées organisateur ↔ artiste/prestataire
+  reviewInviteSentAt      DateTime?     // Notification « laissez votre avis » envoyée
 
   requester   Profile           @relation("BookingRequester", fields: [requesterId], references: [id])
   target      Profile           @relation("BookingTarget", fields: [targetId], references: [id])
@@ -660,6 +661,7 @@ model EventStaff {
   status     StaffStatus @default(NEEDED)
   profileId  Int?        // Personne assignee (null si pas encore pourvu)
   createdAt  DateTime    @default(now())
+  reviewInviteSentAt DateTime? // Notification « laissez votre avis » envoyee
 
   event         Event          @relation(fields: [eventId], references: [id], onDelete: Cascade)
   profile       Profile?       @relation(fields: [profileId], references: [id])
@@ -843,6 +845,8 @@ model Notification {
   publication   Publication? @relation(fields: [publicationId], references: [id], onDelete: SetNull)
   staffId       Int?
   staff         EventStaff?  @relation(fields: [staffId], references: [id], onDelete: SetNull)
+  eventId       Int?         // Evenement concerne (lien direct vers l'agenda)
+  event         Event?       @relation(fields: [eventId], references: [id], onDelete: SetNull)
 
   @@index([userId, type, deviceToken])
   @@index([staffId])

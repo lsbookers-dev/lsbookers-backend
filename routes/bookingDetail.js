@@ -6,6 +6,8 @@ const { requireAuth } = require('../middleware/auth')
 const { uploadBufferToR2, deleteR2Object } = require('../lib/r2')
 const { isFileContentValid, extensionFor } = require('../lib/fileCheck')
 const multer   = require('multer')
+const { createNotif } = require('../services/notifications')
+const { PERSON_SELECT, publicName, frenchDate } = require('../services/publicPerson')
 
 // Types acceptés : logistique = billets / réservations (PDF ou photo), médias promo = images / vidéos
 const LOGISTIC_MIME = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/webp'])
@@ -53,6 +55,26 @@ async function canAccessBooking(userId, bookingId) {
     console.error('❌ canAccessBooking error:', err)
     return null
   }
+}
+
+// ─── Prévenir l'autre partie qu'un élément a été ajouté au booking ──────────────
+// what : début de phrase, ex. « Un contrat a été ajouté »
+async function notifyBookingItem(access, actorUserId, what) {
+  const { booking, isOrganizer } = access
+  const recipientUserId = isOrganizer ? booking.target.user.id : booking.requester.user.id
+  const actor = await prisma.profile.findUnique({ where: { id: access.myProfileId }, select: PERSON_SELECT })
+  await createNotif({
+    userId: recipientUserId,
+    type: 'BOOKING_ITEM_ADDED',
+    content: `${what} à votre booking du ${frenchDate(booking.startDate)} par ${publicName(actor)}`,
+    actorId: actorUserId,
+    eventId: booking.eventId,
+  })
+}
+
+const LOGISTIC_LABEL = {
+  TRANSPORT: 'Un billet de transport a été ajouté',
+  HOTEL: 'Une réservation d’hébergement a été ajoutée',
 }
 
 // ─── Contrats propres à un booking (table Contract, liés à l'événement + aux 2 profils) ──
@@ -175,6 +197,7 @@ router.post('/:id/logistics', requireAuth, singleFile(LOGISTIC_MIME), async (req
       VALUES (${id}, ${type}::"LogisticType", ${title.trim().slice(0, 200)}, ${fileUrl}, ${fileName}, ${result.myProfileId}, NOW())
       RETURNING id, "bookingRequestId", type::text, title, "fileUrl", "fileName", "addedByProfileId", "createdAt"
     `
+    await notifyBookingItem(result, req.user.id, LOGISTIC_LABEL[type])
     res.status(201).json({ logistic })
   } catch (err) {
     console.error('❌ bookingDetail POST /:id/logistics', err)
@@ -228,6 +251,7 @@ router.post('/:id/media', requireAuth, singleFile(MEDIA_MIME), async (req, res) 
       VALUES (${id}, ${url}, ${mediaType}, ${name}, NOW())
       RETURNING id, "bookingRequestId", url, "mediaType", name, "createdAt"
     `
+    await notifyBookingItem(result, req.user.id, mediaType === 'VIDEO' ? 'Une vidéo a été ajoutée' : 'Une photo a été ajoutée')
     res.status(201).json({ media })
   } catch (err) {
     console.error('❌ bookingDetail POST /:id/media', err)
@@ -283,6 +307,7 @@ router.post('/:id/contracts', requireAuth, singleFile(CONTRACT_MIME), async (req
       },
       select: { id: true, title: true, fileUrl: true, senderId: true, createdAt: true },
     })
+    await notifyBookingItem(result, req.user.id, 'Un contrat a été ajouté')
     res.status(201).json({ contract })
   } catch (err) {
     console.error('❌ bookingDetail POST /:id/contracts', err)

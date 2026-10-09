@@ -60,7 +60,7 @@ router.get('/', requireAuth, async (req, res) => {
       offerId:        n.offerId || null,
       publicationId:  n.publicationId || null,
       staffId:        n.staffId || null,
-      eventId:        n.staff?.eventId || null,
+      eventId:        n.eventId || n.staff?.eventId || null,
       staffStatus:    n.staff?.status || null,
     }));
     res.json({ notifications: formatted });

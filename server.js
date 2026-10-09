@@ -6,7 +6,7 @@ const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 const cookieParser = require('cookie-parser');
 const { init: initSocket } = require('./socket');
-const { startOfferCleanup } = require('./services/offerCleanup');
+const { startScheduledJobs } = require('./services/scheduledJobs');
 require('dotenv').config();
 
 // ✅ Importation des routes
@@ -215,5 +215,5 @@ initSocket(httpServer);
 
 httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ Serveur lancé sur http://0.0.0.0:${PORT} (WebSocket activé)`);
-  if (process.env.NODE_ENV !== 'test') startOfferCleanup();
+  if (process.env.NODE_ENV !== 'test') startScheduledJobs();
 });

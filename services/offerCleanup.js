@@ -6,7 +6,6 @@
 const prisma = require('../prisma/client')
 
 const GRACE_MS = 24 * 60 * 60 * 1000 // 24 h après la date de l'offre
-const INTERVAL_MS = 60 * 60 * 1000   // vérification toutes les heures
 
 // Filtre Prisma : offres terminées depuis plus de 24 h
 function expiredOfferWhere(now = new Date()) {
@@ -27,10 +26,4 @@ async function deleteExpiredOffers(now = new Date()) {
   return ids.length
 }
 
-function startOfferCleanup() {
-  const run = () => deleteExpiredOffers().catch(err => console.error('❌ Nettoyage des offres :', err.message))
-  run()
-  setInterval(run, INTERVAL_MS).unref()
-}
-
-module.exports = { expiredOfferWhere, deleteExpiredOffers, startOfferCleanup }
+module.exports = { expiredOfferWhere, deleteExpiredOffers }

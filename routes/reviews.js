@@ -9,25 +9,10 @@ const { requireAuth } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const { reviewCreateSchema } = require('../schemas');
 const { createNotif } = require('../services/notifications');
+const { PERSON_SELECT, publicName } = require('../services/publicPerson');
 
 // Seuls les avis rattachés à une prestation sont affichés / comptés.
 const VERIFIED_REVIEW = { OR: [{ bookingId: { not: null } }, { staffId: { not: null } }] };
-
-const PERSON_SELECT = {
-  id: true,
-  avatar: true,
-  showRealName: true,
-  user: { select: { id: true, pseudo: true, firstName: true, lastName: true, role: true } },
-};
-
-// Nom public : respecte le choix « afficher mon nom et prénom » de la personne.
-function publicName(profile) {
-  const u = profile?.user;
-  if (!u) return 'Utilisateur LSBookers';
-  const realName = [u.firstName, u.lastName].filter(Boolean).join(' ');
-  if (profile.showRealName && realName) return realName;
-  return u.pseudo || 'Utilisateur LSBookers';
-}
 
 function publicPerson(profile) {
   return {
@@ -232,4 +217,3 @@ router.post('/', requireAuth, validate(reviewCreateSchema), async (req, res) => 
 
 module.exports = router;
 module.exports.finishedPrestations = finishedPrestations;
-module.exports.publicName = publicName;

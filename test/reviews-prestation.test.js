@@ -94,3 +94,25 @@ test('une offre est considérée passée 24 h après sa date', () => {
   const cutoff = expiredOfferWhere(now).OR[1].date.lt
   assert.equal(cutoff.toISOString(), '2026-10-09T12:00:00.000Z')
 })
+
+test('fin de prestation : chacun reçoit « laissez votre avis » une seule fois', async () => {
+  const { sendReviewInvites } = require('../services/reviewInvites')
+  const notifs = []
+  const marked = []
+  await withMocks({
+    bookingRequest: {
+      findMany: async () => [{ ...finishedBooking, eventId: 9, event: { status: 'PUBLISHED' } }],
+      update: async ({ where }) => { marked.push(`b${where.id}`) },
+    },
+    eventStaff: {
+      updateMany: async ({ where }) => { marked.push(`s-event${where.eventId}`) },
+      findMany: async () => [],
+    },
+    notification: { create: async ({ data }) => { notifs.push(data) } },
+  }, () => sendReviewInvites(new Date('2026-10-10T12:00:00Z')))
+  assert.equal(notifs.length, 2)
+  assert.deepEqual(notifs.map(n => n.userId).sort(), [10, 20])
+  assert.match(notifs.find(n => n.userId === 10).content, /^Dès maintenant, laissez votre avis à pseudo2 pour la prestation du /)
+  assert.ok(notifs.every(n => n.eventId === 9 && n.type === 'REVIEW_AVAILABLE'))
+  assert.deepEqual(marked, ['b5', 's-event9'])
+})
