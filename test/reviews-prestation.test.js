@@ -116,3 +116,11 @@ test('fin de prestation : chacun reçoit « laissez votre avis » une seule fois
   assert.ok(notifs.every(n => n.eventId === 9 && n.type === 'REVIEW_AVAILABLE'))
   assert.deepEqual(marked, ['b5', 's-event9'])
 })
+
+test('liste des offres : celles sans date de fin restent visibles (pas de NOT sur une date vide)', () => {
+  const { activeOfferWhere } = require('../services/offerCleanup')
+  const where = activeOfferWhere(new Date('2026-10-10T12:00:00Z'))
+  assert.ok(!('NOT' in where))
+  assert.deepEqual(where.OR[1].endDate, null)
+  assert.equal(where.OR[1].date.gte.toISOString(), '2026-10-09T12:00:00.000Z')
+})

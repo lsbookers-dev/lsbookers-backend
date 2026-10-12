@@ -2,7 +2,7 @@
 const express = require('express');
 const router = express.Router();
 const prisma = require('../prisma/client');
-const { expiredOfferWhere } = require('../services/offerCleanup');
+const { activeOfferWhere } = require('../services/offerCleanup');
 const { requireAuth } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const { offerCreateSchema, offerUpdateSchema } = require('../schemas');
@@ -138,7 +138,7 @@ router.get('/', async (req, res) => {
 
   try {
     // Offres passées exclues (elles sont supprimées le lendemain, cf. services/offerCleanup)
-    const where = { status: 'ACTIVE', NOT: expiredOfferWhere() };
+    const where = { status: 'ACTIVE', AND: [activeOfferWhere()] };
 
     if (type && ['ARTIST', 'PROVIDER', 'ALL'].includes(type)) where.type = type;
     if (specialty) where.specialty = { contains: specialty, mode: 'insensitive' };

@@ -13,6 +13,14 @@ function expiredOfferWhere(now = new Date()) {
   return { OR: [{ endDate: { lt: cutoff } }, { endDate: null, date: { lt: cutoff } }] }
 }
 
+// Filtre Prisma : offres encore en cours (l'inverse exact du précédent).
+// Écrit en positif : un NOT(OR(...)) écarterait aussi les offres sans date de fin,
+// car la base compare « date de fin vide < limite » à « inconnu », pas à « faux ».
+function activeOfferWhere(now = new Date()) {
+  const cutoff = new Date(now.getTime() - GRACE_MS)
+  return { OR: [{ endDate: { gte: cutoff } }, { endDate: null, date: { gte: cutoff } }] }
+}
+
 async function deleteExpiredOffers(now = new Date()) {
   const expired = await prisma.offer.findMany({ where: expiredOfferWhere(now), select: { id: true } })
   if (!expired.length) return 0
@@ -26,4 +34,4 @@ async function deleteExpiredOffers(now = new Date()) {
   return ids.length
 }
 
-module.exports = { expiredOfferWhere, deleteExpiredOffers }
+module.exports = { expiredOfferWhere, activeOfferWhere, deleteExpiredOffers }
