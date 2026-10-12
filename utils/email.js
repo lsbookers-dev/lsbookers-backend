@@ -100,7 +100,7 @@ async function sendNewDeviceEmail(to, { deviceName, date, trustLink, rejectLink 
   await deliverEmail({
     from: FROM,
     to,
-    subject: '🔐 Nouvelle connexion détectée — LSBookers',
+    subject: 'Nouvelle connexion détectée — LS Bookers',
     html: `
       <div style="font-family:Arial,sans-serif;background:#0f0f13;color:#e8e8f0;padding:40px;border-radius:12px;max-width:560px;margin:0 auto">
 
@@ -113,12 +113,9 @@ async function sendNewDeviceEmail(to, { deviceName, date, trustLink, rejectLink 
         <div style="background:#1a1a2e;border:1px solid #2a2a4a;border-radius:12px;padding:24px;margin-bottom:24px">
           <p style="color:#9090b0;margin:0 0 8px 0;font-size:13px;text-transform:uppercase;letter-spacing:1px">Nouvelle connexion détectée</p>
           <h2 style="color:#ffffff;margin:0 0 16px 0;font-size:20px">Un nouvel appareil s'est connecté à votre compte</h2>
-          <div style="display:flex;gap:12px;align-items:flex-start">
-            <div style="background:#7c3aed;border-radius:8px;padding:8px 12px;font-size:20px;line-height:1">🖥️</div>
-            <div>
-              <p style="color:#ffffff;margin:0;font-weight:600">${deviceName}</p>
-              <p style="color:#9090b0;margin:4px 0 0 0;font-size:13px">${date}</p>
-            </div>
+          <div style="border-left:3px solid #8b5cf6;padding-left:12px">
+            <p style="color:#ffffff;margin:0;font-weight:600">${deviceName}</p>
+            <p style="color:#9090b0;margin:4px 0 0 0;font-size:13px">${date}</p>
           </div>
         </div>
 
@@ -130,17 +127,17 @@ async function sendNewDeviceEmail(to, { deviceName, date, trustLink, rejectLink 
         <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:28px">
           <a href="${trustLink}"
              style="display:block;background:#7c3aed;color:#fff;padding:16px 28px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;text-align:center">
-            ✓ C'était moi — Confirmer l'appareil
+            C'était moi — Confirmer l'appareil
           </a>
           <a href="${rejectLink}"
              style="display:block;background:#1a1a2e;color:#f87171;padding:16px 28px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;text-align:center;border:1px solid #7f1d1d">
-            ✗ Ce n'était pas moi — Sécuriser mon compte
+            Ce n'était pas moi — Sécuriser mon compte
           </a>
         </div>
 
         <div style="background:#0f1a0f;border:1px solid #1a3a1a;border-radius:8px;padding:16px;margin-bottom:24px">
           <p style="color:#6ee7b7;margin:0;font-size:13px;line-height:1.5">
-            <strong>⚠️ Important :</strong> Ces liens expirent dans 24h.
+            <strong>Important :</strong> Ces liens expirent dans 24h.
             Si vous cliquez sur "Ce n'était pas moi", toutes vos sessions seront fermées
             et vous serez invité à changer votre mot de passe.
           </p>

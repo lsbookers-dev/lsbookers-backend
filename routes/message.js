@@ -182,21 +182,21 @@ router.get('/conversations', requireAuth, async (req, res) => {
             if (lastMessage.type === 'PROFILE_SHARE') {
               try {
                 const d = JSON.parse(lastMessage.content)
-                return `📋 Fiche partagée : ${d.name || 'Utilisateur'}`
-              } catch { return '📋 Fiche partagée' }
+                return `Fiche partagée : ${d.name || 'Utilisateur'}`
+              } catch { return 'Fiche partagée' }
             }
             if (lastMessage.type === 'OFFER_SHARE') {
               try {
                 const d = JSON.parse(lastMessage.content)
-                return `🎯 Offre partagée : ${d.title || 'Offre'}`
-              } catch { return '🎯 Offre partagée' }
+                return `Offre partagée : ${d.title || 'Offre'}`
+              } catch { return 'Offre partagée' }
             }
-            if (lastMessage.type === 'BOOKING_REQUEST') return '📅 Proposition de booking'
-            if (lastMessage.type === 'CANCELLATION_REQUEST') return '❌ Demande d\'annulation'
+            if (lastMessage.type === 'BOOKING_REQUEST') return 'Proposition de booking'
+            if (lastMessage.type === 'CANCELLATION_REQUEST') return 'Demande d\'annulation'
             return lastMessage.content ||
-              (lastMessage.attachmentType === 'IMAGE' ? '📷 Image' : '') ||
-              (lastMessage.attachmentType === 'VIDEO' ? '🎬 Vidéo' : '') ||
-              (lastMessage.attachmentType === 'DOCUMENT' ? '📄 Document' : '') ||
+              (lastMessage.attachmentType === 'IMAGE' ? 'Photo' : '') ||
+              (lastMessage.attachmentType === 'VIDEO' ? 'Vidéo' : '') ||
+              (lastMessage.attachmentType === 'DOCUMENT' ? 'Document' : '') ||
               ''
           })(),
           lastMessageMeta: lastMessage

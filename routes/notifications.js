@@ -110,7 +110,7 @@ router.patch('/:id', requireAuth, async (req, res) => {
       where: { id: notificationId },
       data: { read: true },
     });
-    res.json({ message: 'Notification marquée comme lue ✅' });
+    res.json({ message: 'Notification marquée comme lue' });
   } catch (err) {
     console.error('❌ [PATCH /notifications/:id] Error:', err);
     res.status(500).json({ error: 'Erreur serveur' });
