@@ -699,6 +699,7 @@ router.delete('/:id/tags/:tagId', requireAuth, async (req, res) => {
 })
 
 // GET /api/publications/tagged/:profileId — publications où un profil est identifié (ACCEPTED, public)
+// GET /api/publications/tagged/:profileId?page=1&limit=20
 router.get('/tagged/:profileId', optionalAuth, async (req, res) => {
   const profileId = parseInt(req.params.profileId, 10)
   if (!profileId) return res.status(400).json({ error: 'profileId invalide' })
@@ -712,13 +713,19 @@ router.get('/tagged/:profileId', optionalAuth, async (req, res) => {
       return res.json({ publications: [] })
     }
 
+    const page  = Math.max(1, parseInt(req.query.page) || 1)
+    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 20))
+    const where = {
+      taggedUserId: profile.userId,
+      status: 'ACCEPTED',
+      ...(blockedProfileIds.length ? { publication: { profileId: { notIn: blockedProfileIds } } } : {}),
+    }
+    const total = await prisma.publicationTag.count({ where })
     const tags = await prisma.publicationTag.findMany({
-      where: {
-        taggedUserId: profile.userId,
-        status: 'ACCEPTED',
-        ...(blockedProfileIds.length ? { publication: { profileId: { notIn: blockedProfileIds } } } : {}),
-      },
+      where,
       orderBy: { createdAt: 'desc' },
+      skip: (page - 1) * limit,
+      take: limit,
       include: {
         publication: {
           include: {
@@ -729,7 +736,7 @@ router.get('/tagged/:profileId', optionalAuth, async (req, res) => {
         },
       },
     })
-    return res.json({ publications: tags.map(t => t.publication).filter(Boolean) })
+    return res.json({ publications: tags.map(t => t.publication).filter(Boolean), total, page, limit, hasMore: page * limit < total })
   } catch (err) {
     console.error('❌ GET tagged/:profileId :', err)
     return res.status(500).json({ error: 'Erreur serveur' })

@@ -7,23 +7,15 @@ const { requireAuth } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const { offerCreateSchema, offerUpdateSchema } = require('../schemas');
 const { createNotif, displayName } = require('../services/notifications');
+const { PERSON_SELECT, publicName } = require('../services/publicPerson');
 
 /* ── Helpers ─────────────────────────────────────────────── */
 
-function getName(user) {
-  return user?.pseudo ||
-    [user?.firstName, user?.lastName].filter(Boolean).join(' ') ||
-    'Organisateur';
-}
+// Auteur de l'offre : organisateur, ou prestataire qui cherche un partenaire
+const organizerSelect = { ...PERSON_SELECT, userId: true };
 
-const organizerSelect = {
-  id:     true,
-  avatar: true,
-  userId: true,
-  user: {
-    select: { id: true, pseudo: true, firstName: true, lastName: true },
-  },
-};
+// Seuls ces rôles publient des offres
+const canPublishOffers = (role) => role === 'ORGANIZER' || role === 'PROVIDER';
 
 // Include réutilisable — on inclut event { id } pour récupérer eventId
 // même si le client Prisma ne connaît pas encore le champ scalaire eventId
@@ -55,18 +47,19 @@ function formatOffer(o) {
       id:     o.organizer.id,
       userId: o.organizer.userId,
       avatar: o.organizer.avatar || null,
-      name:   getName(o.organizer.user),
+      name:   publicName(o.organizer),
+      role:   o.organizer.user?.role ?? null,
     },
   };
 }
 
-/* ── POST /api/offers — créer une offre (ORGANIZER) ─────── */
+/* ── POST /api/offers — créer une offre (organisateur ou prestataire) ─────── */
 router.post('/', requireAuth, validate(offerCreateSchema), async (req, res) => {
   const { title, description, type, specialty, date, endDate, location, country, radiusKm, fee, eventId } = req.body;
 
   try {
-    if (req.user.role !== 'ORGANIZER') {
-      return res.status(403).json({ error: 'ACCÈS_REFUSÉ' });
+    if (!canPublishOffers(req.user.role)) {
+      return res.status(403).json({ error: 'Seuls les organisateurs et les prestataires peuvent publier une offre.' });
     }
 
     const profile = await prisma.profile.findUnique({ where: { userId: req.user.id } });
@@ -190,7 +183,7 @@ router.get('/:id', async (req, res) => {
 /* ── PUT /api/offers/:id — modifier une offre ───────────── */
 router.put('/:id', requireAuth, validate(offerUpdateSchema), async (req, res) => {
   try {
-    if (req.user.role !== 'ORGANIZER') return res.status(403).json({ error: 'ACCÈS_REFUSÉ' });
+    if (!canPublishOffers(req.user.role)) return res.status(403).json({ error: 'ACCÈS_REFUSÉ' });
 
     const profile = await prisma.profile.findUnique({ where: { userId: req.user.id } });
     if (!profile) return res.status(404).json({ error: 'PROFILE_INTROUVABLE' });
@@ -323,7 +316,7 @@ router.post('/:id/apply', requireAuth, async (req, res) => {
 /* ── DELETE /api/offers/:id — supprimer ─────────────────── */
 router.delete('/:id', requireAuth, async (req, res) => {
   try {
-    if (req.user.role !== 'ORGANIZER') return res.status(403).json({ error: 'ACCÈS_REFUSÉ' });
+    if (!canPublishOffers(req.user.role)) return res.status(403).json({ error: 'ACCÈS_REFUSÉ' });
 
     const profile = await prisma.profile.findUnique({ where: { userId: req.user.id } });
     if (!profile) return res.status(404).json({ error: 'PROFILE_INTROUVABLE' });

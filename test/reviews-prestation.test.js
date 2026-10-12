@@ -82,7 +82,7 @@ test('la liste publique ne montre que les avis vérifiés et respecte le pseudo'
       findMany: async (args) => { where = args.where; return [{ id: 1, rating: 4, comment: null, createdAt: PAST, author: DJ }] },
       aggregate: async () => ({ _avg: { rating: 4 }, _count: { rating: 1 } }),
     },
-  }, () => routeHandler(reviewsRouter, 'get', '/profile/:profileId')({ params: { profileId: '1' } }, res))
+  }, () => routeHandler(reviewsRouter, 'get', '/profile/:profileId')({ params: { profileId: '1' }, query: {} }, res))
   assert.ok(where.OR, 'filtre « avis vérifiés » attendu')
   assert.equal(res.body.reviews[0].author.name, 'pseudo2')
   assert.ok(!JSON.stringify(res.body).includes('Secret'), 'le vrai nom ne doit pas fuiter')

@@ -92,7 +92,7 @@ async function finishedPrestations(profileId, now = new Date()) {
 
 /**
  * GET /api/reviews/profile/:profileId
- * Public : avis vérifiés reçus par un profil + moyenne.
+ * Public : avis vérifiés reçus par un profil + moyenne (?page=1&limit=20).
  */
 router.get('/profile/:profileId', async (req, res) => {
   const profileId = Number.parseInt(req.params.profileId, 10);
@@ -101,12 +101,15 @@ router.get('/profile/:profileId', async (req, res) => {
   }
 
   try {
+    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(50, Math.max(1, Number.parseInt(req.query.limit, 10) || 20));
     const where = { targetId: profileId, ...VERIFIED_REVIEW };
     const [reviews, stats] = await Promise.all([
       prisma.review.findMany({
         where,
         orderBy: { createdAt: 'desc' },
-        take: 20,
+        skip: (page - 1) * limit,
+        take: limit,
         select: {
           id: true, rating: true, comment: true, createdAt: true,
           author: { select: PERSON_SELECT },
@@ -122,6 +125,7 @@ router.get('/profile/:profileId', async (req, res) => {
       })),
       average: stats._avg.rating ?? null,
       count: stats._count.rating ?? 0,
+      hasMore: page * limit < (stats._count.rating ?? 0),
     });
   } catch (error) {
     console.error('❌ Erreur récupération avis :', error);

@@ -22,6 +22,7 @@ router.get('/profile/:profileId', async (req, res) => {
         isPrivate: false,
       },
       orderBy: { createdAt: 'desc' },
+      take: 60,
       include: {
         _count: { select: { items: true } },
         items: {
