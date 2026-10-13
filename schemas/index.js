@@ -120,6 +120,7 @@ const profileUpdateSchema = z.object({
   showStyles:              z.boolean().optional(),
   showYoutubeUrl:          z.boolean().optional(),
   showRealName:            z.boolean().optional(),
+  weeklyRecap:             z.boolean().optional(),
   notificationPreferences: z.object({ locationScope: z.string().max(30).optional() }).optional(),
 });
 
@@ -222,6 +223,35 @@ const conversationCreateSchema = z.object({
    REVIEWS
 ───────────────────────────────────────── */
 
+const invoiceItemSchema = z.object({
+  label:     z.string().trim().min(1, 'Intitulé de ligne requis').max(200).transform(stripHtml),
+  quantity:  z.number().min(0).max(10000),
+  unitPrice: z.number().min(0, 'Prix invalide').max(1000000),
+});
+
+const invoiceSchema = z.object({
+  kind:            z.enum(['QUOTE', 'INVOICE'], { message: 'Type de document invalide' }),
+  clientProfileId: z.number().int().positive().optional().nullable(),
+  clientName:      z.string().trim().min(1, 'Nom du client requis').max(200).transform(stripHtml),
+  clientAddress:   z.string().trim().max(300).transform(stripHtml).optional().nullable(),
+  bookingId:       z.number().int().positive().optional().nullable(),
+  title:           z.string().trim().max(200).transform(stripHtml).optional().nullable(),
+  serviceDate:     z.string().max(40).optional().nullable(),
+  issueDate:       z.string().max(40).optional().nullable(),
+  dueDate:         z.string().max(40).optional().nullable(),
+  items:           z.array(invoiceItemSchema).min(1, 'Ajoutez au moins une ligne').max(30),
+  vatRate:         z.number().min(0).max(30).optional(),
+  notes:           z.string().trim().max(2000).transform(stripHtml).optional().nullable(),
+});
+
+const invoiceStatusSchema = z.object({
+  status: z.enum(['DRAFT', 'SENT', 'ACCEPTED', 'PAID', 'CANCELLED'], { message: 'Statut invalide' }),
+});
+
+const reviewReplySchema = z.object({
+  reply: z.string().trim().min(1, 'Réponse vide').max(1000, 'Réponse trop longue (1000 caractères maximum)').transform(stripHtml),
+});
+
 const reviewCreateSchema = z.object({
   bookingId: z.number().int().positive().optional(),
   staffId:   z.number().int().positive().optional(),
@@ -314,6 +344,9 @@ module.exports = {
   conversationCreateSchema,
   // Reviews
   reviewCreateSchema,
+  reviewReplySchema,
+  invoiceSchema,
+  invoiceStatusSchema,
   // Password
   forgotPasswordSchema,
   resetPasswordSchema,

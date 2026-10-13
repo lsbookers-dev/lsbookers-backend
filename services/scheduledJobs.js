@@ -2,12 +2,16 @@
 
 const { deleteExpiredOffers } = require('./offerCleanup')
 const { sendReviewInvites } = require('./reviewInvites')
+const { sendChecklistReminders } = require('./checklistReminders')
+const { sendWeeklyRecaps } = require('./weeklyRecap')
 
 const INTERVAL_MS = 60 * 60 * 1000
 
 const JOBS = [
   ['Nettoyage des offres passées', deleteExpiredOffers],
   ['Invitations à laisser un avis', sendReviewInvites],
+  ['Rappels de checklist', sendChecklistReminders],
+  ['Récap e-mail du lundi', sendWeeklyRecaps],
 ]
 
 function startScheduledJobs() {

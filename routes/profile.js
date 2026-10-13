@@ -2,7 +2,7 @@
 const express = require('express');
 const router = express.Router();
 const prisma = require('../prisma/client');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, optionalAuth } = require('../middleware/auth');
 const { isOwnMediaUrl } = require('../lib/mediaUrl');
 const { validate } = require('../middleware/validate');
 const { profileUpdateSchema, accountUpdateSchema } = require('../schemas');
@@ -128,7 +128,7 @@ router.get('/me', requireAuth, async (req, res) => {
  * Public : récupérer un profil par userId
  * 👉 Invisibilité ADMIN : si le profil appartient à un ADMIN, on renvoie 404
  */
-router.get('/user/:userId', async (req, res) => {
+router.get('/user/:userId', optionalAuth, async (req, res) => {
   const raw = req.params.userId;
   const userId = Number.parseInt(raw, 10);
 
@@ -186,6 +186,16 @@ router.get('/user/:userId', async (req, res) => {
 
     if (!profile || isAdminRole(profile?.user?.role)) {
       return res.status(404).json({ error: 'Profil introuvable' });
+    }
+
+    // Vue comptée pour « Mon espace » : visiteur connecté, autre que le propriétaire, une fois par jour
+    if (req.user?.id && req.user.id !== profile.userId) {
+      const day = new Date(); day.setUTCHours(0, 0, 0, 0);
+      prisma.profileView.upsert({
+        where: { profileId_viewerUserId_day: { profileId: profile.id, viewerUserId: req.user.id, day } },
+        update: {},
+        create: { profileId: profile.id, viewerUserId: req.user.id, day },
+      }).catch(err => console.error('❌ Vue de profil non enregistrée :', err.message));
     }
 
     return res.json({
@@ -368,6 +378,7 @@ router.put('/:id', requireAuth, validate(profileUpdateSchema), async (req, res) 
     feeInfo,
     styles,
     showRealName,
+    weeklyRecap,
     notificationPreferences,
   } = req.body;
 
@@ -521,6 +532,10 @@ router.put('/:id', requireAuth, validate(profileUpdateSchema), async (req, res) 
 
     if (showRealName !== undefined) {
       dataToUpdate.showRealName = Boolean(showRealName);
+    }
+
+    if (weeklyRecap !== undefined) {
+      dataToUpdate.weeklyRecap = Boolean(weeklyRecap);
     }
 
     // ✅ Médias (nouveaux champs prioritaires)

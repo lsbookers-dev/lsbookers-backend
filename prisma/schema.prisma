@@ -208,6 +208,8 @@ model Profile {
   feeInfo                 String?   // Tarifs / info cachets (artistes)
   styles                  String[]                 // Styles artistiques (RNB, Electro, Jazz...)
   showRealName            Boolean                  @default(false)  // Afficher nom/prénom au lieu du pseudo
+  weeklyRecap             Boolean                  @default(false)  // Recevoir le récap e-mail du lundi
+  lastWeeklyRecapAt       DateTime?
 
   // Infos legales (non visibles sur le profil, usage interne)
   legalStatus             LegalStatus?             // Particulier / Auto-entrepreneur / Societe
@@ -253,6 +255,12 @@ model Profile {
   availability            Availability[]
   bookingRequestsSent     BookingRequest[] @relation("BookingRequester")
   bookingRequestsReceived BookingRequest[] @relation("BookingTarget")
+
+  // Mon espace
+  profileViews            ProfileView[]
+  checklists              EventChecklist[]
+  invoicesIssued          Invoice[]        @relation("InvoiceIssuer")
+  invoicesReceived        Invoice[]        @relation("InvoiceClient")
 }
 
 // ─────────────────────────────────────────────
@@ -523,6 +531,7 @@ model Event {
   purchases        EventPurchase[]
   offers           Offer[]
   notifications    Notification[]
+  checklists       EventChecklist[]
 
   @@index([profileId])
   @@index([start])
@@ -614,6 +623,7 @@ model BookingRequest {
   logistics   BookingLogistic[]
   media       BookingMedia[]
   reviews     Review[]
+  invoices    Invoice[]
 
   @@index([requesterId])
   @@index([targetId])
@@ -786,6 +796,8 @@ model Review {
   targetId  Int      // Qui est note
   eventId   Int?     // Lien vers l'evenement (optionnel)
   bookingId Int?     // Prestation reellement effectuee qui autorise l'avis (booking…
+  reply     String?  // Reponse unique de la personne notee
+  repliedAt DateTime?
   staffId   Int?     // …ou poste staff d'un evenement)
   createdAt DateTime @default(now())
 
@@ -993,4 +1005,97 @@ model AdminPost {
   pinned    Boolean    @default(false)
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
+}
+
+
+// ─────────────────────────────────────────────
+// Mon espace : vues du profil, checklists, devis / factures
+// ─────────────────────────────────────────────
+
+// Une vue par visiteur connecté, par profil et par jour (le propriétaire n'est pas compté)
+model ProfileView {
+  id           Int      @id @default(autoincrement())
+  profileId    Int
+  viewerUserId Int
+  day          DateTime @db.Date
+  createdAt    DateTime @default(now())
+
+  profile      Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, viewerUserId, day])
+  @@index([profileId, createdAt])
+}
+
+// Checklist facultative d'un événement, propre à chaque personne (organisateur ou personne bookée)
+model EventChecklist {
+  id          Int                  @id @default(autoincrement())
+  eventId     Int
+  profileId   Int
+  reminded7At DateTime?            // Rappel J-7 envoyé
+  reminded1At DateTime?            // Rappel J-1 envoyé
+  createdAt   DateTime             @default(now())
+
+  event       Event                @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  profile     Profile              @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  items       EventChecklistItem[]
+
+  @@unique([eventId, profileId])
+  @@index([profileId])
+}
+
+model EventChecklistItem {
+  id          Int            @id @default(autoincrement())
+  checklistId Int
+  label       String
+  done        Boolean        @default(false)
+  position    Int            @default(0)
+  createdAt   DateTime       @default(now())
+
+  checklist   EventChecklist @relation(fields: [checklistId], references: [id], onDelete: Cascade)
+
+  @@index([checklistId])
+}
+
+enum InvoiceKind {
+  QUOTE   // Devis
+  INVOICE // Facture
+}
+
+enum InvoiceStatus {
+  DRAFT     // Brouillon
+  SENT      // Envoyé
+  ACCEPTED  // Devis accepté
+  PAID      // Facture payée
+  CANCELLED // Annulé
+}
+
+// Devis et factures émis par un profil (numérotation continue par année : D-2026-001, F-2026-001)
+model Invoice {
+  id              Int           @id @default(autoincrement())
+  kind            InvoiceKind
+  number          String
+  status          InvoiceStatus @default(DRAFT)
+  issuerId        Int
+  clientProfileId Int?          // Client inscrit sur LS Bookers (facultatif)
+  clientName      String
+  clientAddress   String?
+  bookingId       Int?
+  title           String?       // Objet (ex : « DJ set — Soirée de Noël »)
+  serviceDate     DateTime?     // Date de la prestation
+  items           Json          // [{ label, quantity, unitPrice }]
+  vatRate         Float         @default(0)
+  notes           String?
+  issueDate       DateTime      @default(now())
+  dueDate         DateTime?
+  sentAt          DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  issuer          Profile         @relation("InvoiceIssuer", fields: [issuerId], references: [id], onDelete: Cascade)
+  client          Profile?        @relation("InvoiceClient", fields: [clientProfileId], references: [id], onDelete: SetNull)
+  booking         BookingRequest? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+
+  @@unique([issuerId, number])
+  @@index([issuerId, kind])
+  @@index([clientProfileId])
 }

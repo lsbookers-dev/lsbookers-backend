@@ -34,6 +34,9 @@ const passwordRoutes = require('./routes/password'); // 🔐 forgot/reset passwo
 const reviewsRoutes = require('./routes/reviews'); // avis
 const homeRoutes = require('./routes/home'); // page d'accueil
 const contactRoutes = require('./routes/contact'); // messages de contact
+const spaceRoutes = require('./routes/space'); // Mon espace : tableau de bord, finances
+const checklistRoutes = require('./routes/checklists'); // checklists d'événement
+const invoiceRoutes = require('./routes/invoices'); // devis et factures
 
 const app = express();
 
@@ -174,6 +177,7 @@ app.use('/api/events', eventRoutes);
 app.use('/api/events', eventBookingRoutes);
 app.use('/api/events', eventStaffRoutes);
 app.use('/api/events', eventDocumentRoutes);
+app.use('/api/events', checklistRoutes);
 app.use('/api/bookings', bookingDetailRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/publications', publicationRoutes);
@@ -183,6 +187,8 @@ app.use('/api/notifications', notificationsRoutes);
 app.use('/api/reviews', reviewsRoutes);
 app.use('/api/home', homeRoutes);
 app.use('/api/contact', contactRoutes);
+app.use('/api/space', spaceRoutes);
+app.use('/api/invoices', invoiceRoutes);
 
 /* ===================== Gestion d’erreurs ===================== */
 // Route API inconnue → 404 JSON (et non la page HTML par défaut d'Express)

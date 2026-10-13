@@ -7,7 +7,7 @@ const router = express.Router();
 const prisma = require('../prisma/client');
 const { requireAuth } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
-const { reviewCreateSchema } = require('../schemas');
+const { reviewCreateSchema, reviewReplySchema } = require('../schemas');
 const { createNotif } = require('../services/notifications');
 const { PERSON_SELECT, publicName } = require('../services/publicPerson');
 
@@ -111,7 +111,7 @@ router.get('/profile/:profileId', async (req, res) => {
         skip: (page - 1) * limit,
         take: limit,
         select: {
-          id: true, rating: true, comment: true, createdAt: true,
+          id: true, rating: true, comment: true, createdAt: true, reply: true, repliedAt: true,
           author: { select: PERSON_SELECT },
         },
       }),
@@ -121,6 +121,7 @@ router.get('/profile/:profileId', async (req, res) => {
     return res.json({
       reviews: reviews.map(r => ({
         id: r.id, rating: r.rating, comment: r.comment, createdAt: r.createdAt,
+        reply: r.reply, repliedAt: r.repliedAt,
         author: publicPerson(r.author),
       })),
       average: stats._avg.rating ?? null,
@@ -215,6 +216,42 @@ router.post('/', requireAuth, validate(reviewCreateSchema), async (req, res) => 
       return res.status(409).json({ error: 'Vous avez déjà laissé un avis pour cette prestation.' });
     }
     console.error('❌ Erreur création avis :', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+/**
+ * POST /api/reviews/:id/reply
+ * Privé : la personne notée répond à un avis. Une seule réponse, non modifiable.
+ */
+router.post('/:id/reply', requireAuth, validate(reviewReplySchema), async (req, res) => {
+  const id = Number.parseInt(req.params.id, 10);
+  if (Number.isNaN(id)) return res.status(400).json({ error: 'Avis invalide' });
+  try {
+    const me = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: PERSON_SELECT });
+    const review = await prisma.review.findUnique({
+      where: { id },
+      select: { id: true, targetId: true, reply: true, author: { select: { user: { select: { id: true } } } } },
+    });
+    if (!me || !review || review.targetId !== me.id) return res.status(404).json({ error: 'Avis introuvable' });
+    if (review.reply) return res.status(409).json({ error: 'Vous avez déjà répondu à cet avis.' });
+
+    // updateMany + reply: null : empêche deux réponses envoyées en même temps
+    const { count } = await prisma.review.updateMany({
+      where: { id, reply: null },
+      data: { reply: req.body.reply, repliedAt: new Date() },
+    });
+    if (!count) return res.status(409).json({ error: 'Vous avez déjà répondu à cet avis.' });
+
+    await createNotif({
+      userId: review.author?.user?.id,
+      type: 'REVIEW_REPLY',
+      content: `${publicName(me)} a répondu à votre avis`,
+      actorId: req.user.id,
+    });
+    return res.json({ reply: req.body.reply });
+  } catch (error) {
+    console.error('❌ Erreur réponse à un avis :', error);
     return res.status(500).json({ error: 'Erreur serveur' });
   }
 });

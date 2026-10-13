@@ -153,4 +153,4 @@ async function sendNewDeviceEmail(to, { deviceName, date, trustLink, rejectLink 
   });
 }
 
-module.exports = { sendVerificationEmail, sendPasswordResetEmail, sendNewDeviceEmail };
+module.exports = { deliverEmail, FROM, APP_URL, sendVerificationEmail, sendPasswordResetEmail, sendNewDeviceEmail };
