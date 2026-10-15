@@ -140,3 +140,29 @@ test('profil public : l’adresse n’apparaît que si l’organisateur l’a ch
   const shown = await get(true)
   assert.equal(shown.address, '12 rue de la Paix')
 })
+
+test('Mon espace : opportunités filtrées par la base (rôle, spécialités) et limitées à 3', async () => {
+  const spaceRouter = require('../routes/space')
+  let args
+  const res = responseRecorder()
+  await withMocks({
+    profile: { findUnique: async () => ({ id: 2, specialties: ['DJ'], user: { role: 'ARTIST' } }) },
+    offer: {
+      count: async () => 7,
+      findMany: async (a) => { args = a; return [{ id: 1, title: 'Soirée', organizer: { id: 1, showRealName: false, user: { pseudo: 'Club' } } }] },
+    },
+  }, () => routeHandler(spaceRouter, 'get', '/opportunities')({ user: { id: 20 } }, res))
+  assert.equal(res.body.total, 7)
+  assert.equal(args.take, 3)
+  assert.deepEqual(args.where.type, { in: ['ARTIST', 'ALL'] })
+  assert.equal(res.body.offers[0].organizer.name, 'Club')
+})
+
+test('notifications : jamais toute la liste d’un coup', async () => {
+  const notificationsRouter = require('../routes/notifications')
+  let take
+  await withMocks({
+    notification: { findMany: async (a) => { take = a.take; return [] } },
+  }, () => routeHandler(notificationsRouter, 'get', '/')({ user: { id: 1 }, query: { limit: '5000' } }, responseRecorder()))
+  assert.equal(take, 200)
+})

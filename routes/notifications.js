@@ -15,9 +15,12 @@ router.get('/', requireAuth, async (req, res) => {
   try {
     const userId = Number(req.user?.id);
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    // Les plus récentes seulement (?limit=, 100 par défaut, 200 au plus)
+    const limit = Math.min(200, Math.max(1, Number.parseInt(req.query?.limit, 10) || 100));
     const notifications = await prisma.notification.findMany({
       where: { userId, ...NOT_MESSAGE },
       orderBy: { createdAt: 'desc' },
+      take: limit,
       include: {
         actor: {
           select: {

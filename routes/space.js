@@ -3,7 +3,8 @@ const express = require('express')
 const router = express.Router()
 const prisma = require('../prisma/client')
 const { requireAuth } = require('../middleware/auth')
-const { PERSON_SELECT } = require('../services/publicPerson')
+const { PERSON_SELECT, publicName } = require('../services/publicPerson')
+const { activeOfferWhere } = require('../services/offerCleanup')
 const { artistPrestations, organizerEvents, organizerTeam, person } = require('../services/prestations')
 
 const monthStart = (date, offset = 0) => new Date(date.getFullYear(), date.getMonth() + offset, 1)
@@ -184,6 +185,81 @@ router.get('/finances', requireAuth, async (req, res) => {
     return res.json({ role, period, year, month, items, months, insights })
   } catch (err) {
     console.error('❌ GET /space/finances :', err)
+    return res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
+/**
+ * GET /api/space/next-event — la prochaine date (événement à soi ou place confirmée), une seule.
+ */
+router.get('/next-event', requireAuth, async (req, res) => {
+  try {
+    const profile = await myProfile(req)
+    if (!profile) return res.status(404).json({ error: 'Profil introuvable' })
+    const now = new Date()
+    const event = await prisma.event.findFirst({
+      where: {
+        start: { gte: now },
+        status: { notIn: ['CANCELLED', 'COMPLETED'] },
+        OR: [{ profileId: profile.id }, { staff: { some: { profileId: profile.id, status: 'BOOKED' } } }],
+      },
+      orderBy: { start: 'asc' },
+      select: { id: true, title: true, start: true, end: true, lieu: true },
+    })
+    res.set('Cache-Control', 'private, no-store')
+    return res.json({ event })
+  } catch (err) {
+    console.error('❌ GET /space/next-event :', err)
+    return res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
+/**
+ * GET /api/space/opportunities — artistes / prestataires : offres en cours qui correspondent
+ * au rôle et aux spécialités (les 3 plus récentes + le nombre total), calculées par la base.
+ */
+router.get('/opportunities', requireAuth, async (req, res) => {
+  try {
+    const profile = await prisma.profile.findUnique({
+      where: { userId: req.user.id },
+      select: { id: true, specialties: true, user: { select: { role: true } } },
+    })
+    if (!profile) return res.status(404).json({ error: 'Profil introuvable' })
+    const role = profile.user.role === 'PROVIDER' ? 'PROVIDER' : 'ARTIST'
+    const specialties = (profile.specialties || []).slice(0, 20)
+    const where = {
+      status: 'ACTIVE',
+      type: { in: [role, 'ALL'] },
+      organizerId: { not: profile.id },
+      AND: [
+        activeOfferWhere(),
+        ...(specialties.length ? [{
+          OR: [
+            { specialty: null },
+            ...specialties.flatMap(s => [
+              { specialty: { equals: s, mode: 'insensitive' } },
+              { specialty: { contains: s, mode: 'insensitive' } },
+            ]),
+          ],
+        }] : []),
+      ],
+    }
+    const [total, offers] = await Promise.all([
+      prisma.offer.count({ where }),
+      prisma.offer.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        take: 3,
+        select: { id: true, title: true, type: true, specialty: true, date: true, location: true, fee: true, organizerId: true, organizer: { select: PERSON_SELECT } },
+      }),
+    ])
+    res.set('Cache-Control', 'private, no-store')
+    return res.json({
+      total,
+      offers: offers.map(({ organizer, ...o }) => ({ ...o, organizer: { name: publicName(organizer) } })),
+    })
+  } catch (err) {
+    console.error('❌ GET /space/opportunities :', err)
     return res.status(500).json({ error: 'Erreur serveur' })
   }
 })
