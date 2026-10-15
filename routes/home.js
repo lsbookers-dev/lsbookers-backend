@@ -376,55 +376,58 @@ router.get('/nearby', requireAuth, async (req, res) => {
   }
 })
 
-// ─── GET /api/home/trends?role=&criterion=&specialty=&city=&limit= ──
-// Classements « Tendances » sur les 30 derniers jours (90 pour les bookings, plus rares) :
-//   search   = profils ouverts depuis la page Recherche
-//   views    = visites du profil
-//   bookings = bookings acceptés ou terminés via le site
-//   likes    = J'aime reçus sur ses publications
+// ─── GET /api/home/trends?role=&specialty=&city=&limit= ────
+// Un seul classement par rôle, sur les 30 derniers jours, qui mélange tous les critères en points
+// (choix d'Antho, 16/10/2026) :
+//   booking accepté ou terminé via le site = 10 pts · profil ouvert depuis la Recherche = 3 pts
+//   visite du profil = 1 pt · J'aime reçu sur une publication = 1 pt
 // Un visiteur n'est compté qu'une fois par jour et par profil (recherches, visites).
-const TREND_CRITERIA = {
-  search:   { days: 30 },
-  views:    { days: 30 },
-  bookings: { days: 90 },
-  likes:    { days: 30 },
-}
+// Plus tard : les avis reçus deviendront un critère de plus.
+const TREND_DAYS = 30
+const TREND_POINTS = { bookings: 10, search: 3, views: 1, likes: 1 }
 
-async function trendCounts(criterion, since) {
-  if (criterion === 'search' || criterion === 'views') {
-    const model = criterion === 'search' ? prisma.profileSearchHit : prisma.profileView
-    const rows = await model.groupBy({ by: ['profileId'], where: { createdAt: { gte: since } }, _count: { _all: true } })
-    return new Map(rows.map(r => [r.profileId, r._count._all]))
-  }
-  if (criterion === 'bookings') {
-    const rows = await prisma.bookingRequest.groupBy({
+const countMap = (rows, key) => new Map(rows.map(r => [Number(r[key]), Number(r._count?._all ?? r.count)]))
+
+async function trendScores(since) {
+  const [search, views, bookings, likes] = await Promise.all([
+    prisma.profileSearchHit.groupBy({ by: ['profileId'], where: { createdAt: { gte: since } }, _count: { _all: true } }),
+    prisma.profileView.groupBy({ by: ['profileId'], where: { createdAt: { gte: since } }, _count: { _all: true } }),
+    prisma.bookingRequest.groupBy({
       by: ['targetId'],
       where: { status: { in: ['ACCEPTED', 'COMPLETED'] }, createdAt: { gte: since } },
       _count: { _all: true },
-    })
-    return new Map(rows.map(r => [r.targetId, r._count._all]))
+    }),
+    prisma.$queryRaw`
+      SELECT p."profileId" AS "profileId", COUNT(*)::int AS "count"
+      FROM "PublicationLike" l JOIN "Publication" p ON p."id" = l."publicationId"
+      WHERE l."createdAt" >= ${since}
+      GROUP BY p."profileId"`,
+  ])
+  const parts = {
+    search: countMap(search, 'profileId'),
+    views: countMap(views, 'profileId'),
+    bookings: countMap(bookings, 'targetId'),
+    likes: countMap(likes, 'profileId'),
   }
-  const rows = await prisma.$queryRaw`
-    SELECT p."profileId" AS "profileId", COUNT(*)::int AS "count"
-    FROM "PublicationLike" l JOIN "Publication" p ON p."id" = l."publicationId"
-    WHERE l."createdAt" >= ${since}
-    GROUP BY p."profileId"`
-  return new Map(rows.map(r => [Number(r.profileId), Number(r.count)]))
+  const scores = new Map()
+  for (const [criterion, map] of Object.entries(parts)) {
+    for (const [profileId, count] of map) {
+      scores.set(profileId, (scores.get(profileId) || 0) + count * TREND_POINTS[criterion])
+    }
+  }
+  return scores
 }
 
 router.get('/trends', optionalAuth, async (req, res) => {
   const role      = req.query.role === 'PROVIDER' ? 'PROVIDER' : 'ARTIST'
-  const criterion = TREND_CRITERIA[req.query.criterion] ? req.query.criterion : 'views'
   const specialty = String(req.query.specialty || '').trim()
   const city      = String(req.query.city || '').trim()
   const limit     = Math.min(50, Math.max(1, Number.parseInt(req.query.limit, 10) || 5))
-  const { days }  = TREND_CRITERIA[criterion]
 
   try {
-    const since  = new Date(Date.now() - days * 24 * 3_600_000)
-    const counts = await trendCounts(criterion, since)
+    const scores = await trendScores(new Date(Date.now() - TREND_DAYS * 24 * 3_600_000))
     const blockedProfileIds = req.user ? await getBlockedProfileIds(req.user.id) : []
-    const ids = [...counts.keys()].filter(id => !blockedProfileIds.includes(id))
+    const ids = [...scores.keys()].filter(id => !blockedProfileIds.includes(id))
 
     const profiles = ids.length
       ? await prisma.profile.findMany({
@@ -437,7 +440,7 @@ router.get('/trends', optionalAuth, async (req, res) => {
         })
       : []
 
-    // Spécialités présentes dans ce classement (pour les filtres de la fenêtre « Voir plus »), les plus fréquentes d'abord
+    // Spécialités présentes dans le classement (filtres de la fenêtre « Voir plus »), les plus fréquentes d'abord
     const specialtyCount = new Map()
     for (const p of profiles) for (const s of p.specialties || []) specialtyCount.set(s, (specialtyCount.get(s) || 0) + 1)
     const specialties = [...specialtyCount.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'fr')).map(([s]) => s)
@@ -451,13 +454,13 @@ router.get('/trends', optionalAuth, async (req, res) => {
         avatar: p.avatar || null,
         profession: p.profession || p.specialties?.[0] || null,
         location: p.location || p.city || null,
-        count: counts.get(p.id) || 0,
+        score: scores.get(p.id) || 0,
         profileUrl: profileUrl(p.user),
       }))
-      .sort((a, b) => b.count - a.count || a.profileId - b.profileId)
+      .sort((a, b) => b.score - a.score || a.profileId - b.profileId)
       .slice(0, limit)
 
-    res.json({ criterion, role, periodDays: days, items, specialties })
+    res.json({ role, periodDays: TREND_DAYS, points: TREND_POINTS, items, specialties })
   } catch (err) {
     console.error('❌ Home /trends :', err)
     res.status(500).json({ error: 'Erreur serveur' })

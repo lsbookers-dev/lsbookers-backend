@@ -161,31 +161,44 @@ const trendProfile = (id, specialties) => ({
   user: { id: 100 + id, pseudo: `p${id}`, role: 'ARTIST' },
 })
 
-test('tendances : classement par nombre de visites, filtre par spécialité', async () => {
+test('tendances : un seul classement, tous les critères mélangés en points', async () => {
   const res = responseRecorder()
   await withMocks({
-    profileView: { groupBy: async () => [
-      { profileId: 1, _count: { _all: 3 } },
-      { profileId: 2, _count: { _all: 9 } },
-      { profileId: 3, _count: { _all: 5 } },
-    ] },
+    // Profil 1 : 1 booking (10) + 1 recherche (3) = 13 ; profil 2 : 9 visites + 2 J'aime = 11 ; profil 3 (DJ) : 4 recherches = 12
+    profileSearchHit: { groupBy: async () => [{ profileId: 1, _count: { _all: 1 } }, { profileId: 3, _count: { _all: 4 } }] },
+    profileView: { groupBy: async () => [{ profileId: 2, _count: { _all: 9 } }] },
+    bookingRequest: { groupBy: async (a) => {
+      assert.deepEqual(a.where.status, { in: ['ACCEPTED', 'COMPLETED'] })
+      return [{ targetId: 1, _count: { _all: 1 } }]
+    } },
     profile: { findMany: async () => [trendProfile(1, ['DJ']), trendProfile(2, ['Chanteur']), trendProfile(3, ['DJ'])] },
-  }, () => routeHandler(homeRouter, 'get', '/trends')({ query: { criterion: 'views', specialty: 'DJ' } }, res))
-  assert.deepEqual(res.body.items.map(i => [i.profileId, i.count]), [[3, 5], [1, 3]])
+  }, async () => {
+    const original = prisma.$queryRaw
+    prisma.$queryRaw = async () => [{ profileId: 2, count: 2 }]
+    try {
+      await routeHandler(homeRouter, 'get', '/trends')({ query: {} }, res)
+    } finally { prisma.$queryRaw = original }
+  })
+  assert.deepEqual(res.body.items.map(i => [i.profileId, i.score]), [[1, 13], [3, 12], [2, 11]])
   assert.deepEqual(res.body.specialties, ['DJ', 'Chanteur'])
   assert.equal(res.body.periodDays, 30)
 })
 
-test('tendances : bookings comptés sur 90 jours (acceptés ou terminés)', async () => {
-  let where
+test('tendances : filtre par spécialité (fenêtre « Voir plus »)', async () => {
   const res = responseRecorder()
   await withMocks({
-    bookingRequest: { groupBy: async (a) => { where = a.where; return [{ targetId: 2, _count: { _all: 4 } }] } },
-    profile: { findMany: async () => [trendProfile(2, [])] },
-  }, () => routeHandler(homeRouter, 'get', '/trends')({ query: { criterion: 'bookings' } }, res))
-  assert.deepEqual(where.status, { in: ['ACCEPTED', 'COMPLETED'] })
-  assert.equal(res.body.periodDays, 90)
-  assert.equal(res.body.items[0].count, 4)
+    profileSearchHit: { groupBy: async () => [] },
+    profileView: { groupBy: async () => [{ profileId: 1, _count: { _all: 3 } }, { profileId: 2, _count: { _all: 9 } }] },
+    bookingRequest: { groupBy: async () => [] },
+    profile: { findMany: async () => [trendProfile(1, ['DJ']), trendProfile(2, ['Chanteur'])] },
+  }, async () => {
+    const original = prisma.$queryRaw
+    prisma.$queryRaw = async () => []
+    try {
+      await routeHandler(homeRouter, 'get', '/trends')({ query: { specialty: 'DJ' } }, res)
+    } finally { prisma.$queryRaw = original }
+  })
+  assert.deepEqual(res.body.items.map(i => i.profileId), [1])
 })
 
 // ── Recherche ───────────────────────────────────────────────
