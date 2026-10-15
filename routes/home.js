@@ -235,9 +235,11 @@ router.get('/feed', requireAuth, async (req, res) => {
     else if (followingCount <= 49) { followedRatio = 0.60; suggestionRatio = 0.00 }
     else                            { followedRatio = 0.70; suggestionRatio = 0.10 }
 
-    const followedSlots   = Math.max(4, Math.round(FEED_PAGE * followedRatio))
-    const suggestionSlots = Math.round(FEED_PAGE * suggestionRatio)
-    const trendingSlots   = Math.max(0, FEED_PAGE - followedSlots - suggestionSlots)
+    // Même répartition qu'à l'origine : au moins 4 publications suivies, les tendances complètent
+    const rawFollowedSlots = Math.round(FEED_PAGE * followedRatio)
+    const followedSlots    = Math.max(rawFollowedSlots, 4)
+    const suggestionSlots  = Math.round(FEED_PAGE * suggestionRatio)
+    const trendingSlots    = FEED_PAGE - rawFollowedSlots - suggestionSlots
 
     // ── Profils suivis (hors blocages) + le sien ──────────────
     const followedProfiles = followedUserIds.length > 0
