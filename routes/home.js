@@ -460,7 +460,8 @@ router.get('/trends', optionalAuth, async (req, res) => {
       .sort((a, b) => b.score - a.score || a.profileId - b.profileId)
       .slice(0, limit)
 
-    res.json({ role, periodDays: TREND_DAYS, points: TREND_POINTS, items, specialties })
+    // Le barème reste côté serveur : les membres ne le voient pas (choix d'Antho)
+    res.json({ role, periodDays: TREND_DAYS, items, specialties })
   } catch (err) {
     console.error('❌ Home /trends :', err)
     res.status(500).json({ error: 'Erreur serveur' })
