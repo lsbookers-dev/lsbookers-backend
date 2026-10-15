@@ -209,6 +209,7 @@ model Profile {
   styles                  String[]                 // Styles artistiques (RNB, Electro, Jazz...)
   showRealName            Boolean                  @default(false)  // Afficher nom/prénom au lieu du pseudo
   weeklyRecap             Boolean                  @default(false)  // Recevoir le récap e-mail du lundi
+  showAddress             Boolean                  @default(false)  // Organisateur : afficher l'adresse exacte (carte placée dessus)
   lastWeeklyRecapAt       DateTime?
 
   // Infos legales (non visibles sur le profil, usage interne)

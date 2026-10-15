@@ -119,3 +119,24 @@ test('récap : lundi 8 h à Paris reconnu malgré le décalage horaire', () => {
   assert.equal(clock.weekday, 'Mon')
   assert.equal(clock.hour, 8)
 })
+
+test('profil public : l’adresse n’apparaît que si l’organisateur l’a choisi', async () => {
+  const profileRouter = require('../routes/profile')
+  const base = {
+    id: 3, userId: 30, address: '12 rue de la Paix', postalCode: '69001', city: 'Lyon', showRealName: false,
+    user: { id: 30, pseudo: 'Club', firstName: 'A', lastName: 'B', role: 'ORGANIZER', _count: { followers: 0, following: 0 } },
+  }
+  const get = async (showAddress) => {
+    const res = responseRecorder()
+    await withMocks({
+      profile: { findUnique: async () => ({ ...base, showAddress }) },
+      review: { aggregate: async () => ({ _avg: { rating: null }, _count: { rating: 0 } }) },
+    }, () => routeHandler(profileRouter, 'get', '/user/:userId')({ params: { userId: '30' }, user: null }, res))
+    return res.body.profile
+  }
+  const hidden = await get(false)
+  assert.equal(hidden.address, undefined)
+  assert.equal(hidden.postalCode, undefined)
+  const shown = await get(true)
+  assert.equal(shown.address, '12 rue de la Paix')
+})

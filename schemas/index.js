@@ -121,6 +121,7 @@ const profileUpdateSchema = z.object({
   showYoutubeUrl:          z.boolean().optional(),
   showRealName:            z.boolean().optional(),
   weeklyRecap:             z.boolean().optional(),
+  showAddress:             z.boolean().optional(),
   notificationPreferences: z.object({ locationScope: z.string().max(30).optional() }).optional(),
 });
 

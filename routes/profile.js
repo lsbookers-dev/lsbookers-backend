@@ -167,9 +167,13 @@ router.get('/user/:userId', optionalAuth, async (req, res) => {
         feeInfo: true,
         radiusKm: true,
         typeEtablissement: true,
-        // Coordonnées de la ville (géocodée), pas de l'adresse postale
+        // Coordonnées de la ville, ou de l'adresse si l'organisateur choisit de l'afficher
         latitude: true,
         longitude: true,
+        showAddress: true,
+        address: true,
+        postalCode: true,
+        city: true,
         user: {
           select: {
             id: true,
@@ -198,9 +202,12 @@ router.get('/user/:userId', optionalAuth, async (req, res) => {
       }).catch(err => console.error('❌ Vue de profil non enregistrée :', err.message));
     }
 
+    // L'adresse postale reste privée sauf choix explicite de l'afficher
+    const { address, postalCode, city, ...rest } = toPublicProfile(profile);
     return res.json({
       profile: {
-        ...toPublicProfile(profile),
+        ...rest,
+        ...(profile.showAddress ? { address, postalCode, city } : {}),
         ...(await reviewStats(profile.id)),
       },
     });
@@ -379,6 +386,7 @@ router.put('/:id', requireAuth, validate(profileUpdateSchema), async (req, res) 
     styles,
     showRealName,
     weeklyRecap,
+    showAddress,
     notificationPreferences,
   } = req.body;
 
@@ -536,6 +544,30 @@ router.put('/:id', requireAuth, validate(profileUpdateSchema), async (req, res) 
 
     if (weeklyRecap !== undefined) {
       dataToUpdate.weeklyRecap = Boolean(weeklyRecap);
+    }
+
+    // Adresse exacte affichée (organisateurs) : la carte se place sur l'adresse plutôt que sur la ville
+    const nextShowAddress = showAddress !== undefined ? Boolean(showAddress) : profile.showAddress;
+    if (showAddress !== undefined) dataToUpdate.showAddress = nextShowAddress;
+    const nextAddress = dataToUpdate.address !== undefined ? dataToUpdate.address : profile.address;
+    if (nextShowAddress && nextAddress) {
+      const nextPostal = dataToUpdate.postalCode !== undefined ? dataToUpdate.postalCode : profile.postalCode;
+      const nextCity = (dataToUpdate.city !== undefined ? dataToUpdate.city : profile.city) || dataToUpdate.location || profile.location;
+      const query = [nextAddress, [nextPostal, nextCity].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+      try {
+        const geoRes = await fetchWithTimeout(
+          `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(query)}`,
+          { headers: NOMINATIM_HEADERS },
+          5000
+        );
+        const geoData = await geoRes.json();
+        if (Array.isArray(geoData) && geoData.length > 0) {
+          dataToUpdate.latitude = parseFloat(geoData[0].lat);
+          dataToUpdate.longitude = parseFloat(geoData[0].lon);
+        }
+      } catch (geoError) {
+        console.warn('⚠️ Géocodage de l’adresse impossible :', geoError.message);
+      }
     }
 
     // ✅ Médias (nouveaux champs prioritaires)
