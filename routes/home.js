@@ -3,7 +3,9 @@ const express = require('express')
 const router = express.Router()
 const prisma = require('../prisma/client')
 const { getBlockedProfileIds } = require('../lib/blocks')
-const { requireAuth } = require('../middleware/auth')
+const { requireAuth, optionalAuth } = require('../middleware/auth')
+
+const MEMBER_ROLES = ['ARTIST', 'ORGANIZER', 'PROVIDER']
 
 // ─── Helper : nom d'affichage ───────────────────────────────
 function getDisplayName(user, profile) {
@@ -21,74 +23,203 @@ function profileUrl(user) {
   return `/provider/${user.id}`
 }
 
+// ─── Helper : curseur opaque (base64 d'un petit objet JSON) ─
+function encodeCursor(value) {
+  return Buffer.from(JSON.stringify(value)).toString('base64url')
+}
+function decodeCursor(raw) {
+  try { return JSON.parse(Buffer.from(String(raw), 'base64url').toString('utf8')) } catch { return null }
+}
+
+// Publications strictement plus anciennes que { d: date ISO, id } (ordre date puis id décroissants)
+function olderThan(mark) {
+  if (!mark?.d || !mark?.id) return {}
+  const date = new Date(mark.d)
+  if (Number.isNaN(date.getTime())) return {}
+  return { OR: [{ createdAt: { lt: date } }, { createdAt: date, id: { lt: Number(mark.id) } }] }
+}
+
+// ─── Distance en km entre deux points (formule de haversine) ─
+function distanceKm(a, b) {
+  const rad = (deg) => (deg * Math.PI) / 180
+  const dLat = rad(b.latitude - a.latitude)
+  const dLon = rad(b.longitude - a.longitude)
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.latitude)) * Math.cos(rad(b.latitude)) * Math.sin(dLon / 2) ** 2
+  return 2 * 6371 * Math.asin(Math.sqrt(h))
+}
+
+const sameText = (a, b) => !!a && !!b && a.trim().toLowerCase() === b.trim().toLowerCase()
+
+// ─── Include et format communs des publications du fil ─────
+const PUB_INCLUDE = {
+  profile: {
+    include: {
+      user: { select: { id: true, pseudo: true, firstName: true, lastName: true, role: true } },
+    },
+  },
+  _count:          { select: { likes: true, comments: true } },
+  additionalMedia: { orderBy: { order: 'asc' }, select: { id: true, url: true, mediaType: true, order: true } },
+  tags: {
+    where:  { status: 'ACCEPTED' },
+    select: {
+      id: true, status: true,
+      taggedUser: {
+        select: {
+          id: true, pseudo: true, firstName: true, lastName: true,
+          profile: { select: { id: true, avatar: true } },
+        },
+      },
+    },
+  },
+}
+
+async function likedPublicationIds(viewerProfileId, publications) {
+  const ids = publications.map(p => p.id)
+  if (!ids.length) return new Set()
+  const likes = await prisma.publicationLike.findMany({
+    where: { profileId: viewerProfileId, publicationId: { in: ids } },
+    select: { publicationId: true },
+  })
+  return new Set(likes.map(l => l.publicationId))
+}
+
+function formatPost(p, likedIds) {
+  return {
+    id:              p.id,
+    media:           p.media,
+    mediaType:       p.mediaType,
+    caption:         p.caption,
+    title:           p.title,
+    createdAt:       p.createdAt,
+    likesCount:      p._count?.likes ?? 0,
+    commentsCount:   p._count?.comments ?? 0,
+    likedByMe:       likedIds.has(p.id),
+    isFromFollow:    p.feedType === 'followed',
+    feedType:        p.feedType ?? null,
+    additionalMedia: p.additionalMedia ?? [],
+    author: {
+      profileId:  p.profileId,
+      userId:     p.profile?.user?.id ?? null,
+      name:       p.profile?.user ? getDisplayName(p.profile.user, p.profile) : 'Utilisateur',
+      avatar:     p.profile?.avatar || null,
+      role:       p.profile?.user?.role || null,
+      profession: p.profile?.profession || p.profile?.specialties?.[0] || null,
+      profileUrl: profileUrl(p.profile?.user ?? null),
+    },
+  }
+}
+
 // ─── GET /api/home/carousel ─────────────────────────────────
-// Profils mis en avant (abonnés premium) complétés par les plus suivis
+// Profils mis en avant à la main depuis l'admin (Admin › Carrousel).
+// Tant qu'aucun profil n'est choisi, on montre les profils les plus suivis.
 router.get('/carousel', async (req, res) => {
   try {
-    // 1. Abonnés actifs avec avatar
-    const premiumUsers = await prisma.user.findMany({
-      where: {
-        subscription: { status: 'ACTIVE' },
-        profile: { avatar: { not: null } },
-        role: { in: ['ARTIST', 'ORGANIZER', 'PROVIDER'] },
-      },
-      include: { profile: true },
-      take: 8,
+    const now = new Date()
+    const selected = await prisma.homeFeatured.findMany({
+      where: { OR: [{ endsAt: null }, { endsAt: { gt: now } }], profile: { user: { role: { in: MEMBER_ROLES } } } },
+      orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
+      include: { profile: { include: { user: true } } },
+      take: 12,
     })
 
-    // 2. Compléter avec les plus suivis si besoin
-    let featured = premiumUsers
-    if (featured.length < 4) {
-      const excludeIds = featured.map(u => u.id)
-      const more = await prisma.user.findMany({
-        where: {
-          id: { notIn: excludeIds },
-          role: { in: ['ARTIST', 'ORGANIZER', 'PROVIDER'] },
-          profile: { avatar: { not: null } },
-        },
-        include: {
-          profile: true,
-          _count: { select: { followers: true } },
-        },
+    let featured = selected.map(f => ({ user: f.profile.user, profile: f.profile, isFeatured: true }))
+
+    if (featured.length === 0) {
+      const popular = await prisma.user.findMany({
+        where: { role: { in: MEMBER_ROLES }, profile: { avatar: { not: null } } },
+        include: { profile: true, _count: { select: { followers: true } } },
         take: 30,
       })
-      // Trier par followers côté JS
-      more.sort((a, b) => (b._count?.followers ?? 0) - (a._count?.followers ?? 0))
-      featured = [...featured, ...more].slice(0, 8)
+      popular.sort((a, b) => (b._count?.followers ?? 0) - (a._count?.followers ?? 0))
+      featured = popular.slice(0, 8).map(u => ({ user: u, profile: u.profile, isFeatured: false }))
     }
 
-    const result = featured.map(u => ({
-      id: u.id,
-      name: getDisplayName(u, u.profile),
-      avatar: u.profile?.avatar || null,
-      banner: u.profile?.banner || null,
-      profession: u.profile?.profession || u.profile?.specialties?.[0] || null,
-      location: u.profile?.location || u.profile?.city || null,
-      role: u.role,
-      isPremium: !!u.subscription,
-      profileUrl: profileUrl(u),
-    }))
-
-    res.json({ featured: result })
+    res.json({
+      featured: featured.map(({ user, profile, isFeatured }) => ({
+        id: user.id,
+        name: getDisplayName(user, profile),
+        avatar: profile?.avatar || null,
+        banner: profile?.banner || null,
+        profession: profile?.profession || profile?.specialties?.[0] || null,
+        location: profile?.location || profile?.city || null,
+        role: user.role,
+        isFeatured,
+        profileUrl: profileUrl(user),
+      })),
+    })
   } catch (err) {
     console.error('❌ Home /carousel :', err)
     res.status(500).json({ error: 'Erreur serveur' })
   }
 })
 
-// ─── GET /api/home/feed ─────────────────────────────────────
-// Algorithme de feed progressif à 3 buckets
-// Tier basé sur followingCount → ratios followed/trending/suggestion
+// ─── GET /api/home/feed?cursor= ─────────────────────────────
+// « Pour vous » : 3 sources mélangées selon le nombre d'abonnements
+//   1. publications des comptes suivis (+ les siennes), de la plus récente à la plus ancienne
+//   2. tendances : les publications des 90 derniers jours les mieux notées (récence + engagement)
+//   3. suggestions (50 abonnements et plus) : les amis de vos amis
+// Le curseur retient où en est chaque source : aucune publication sautée ni répétée d'une page à l'autre.
+const FEED_PAGE = 20
+const TRENDING_WINDOW_DAYS = 90
+
+// Score = récence (7 j) + engagement
+function feedScore(pub) {
+  const ageH    = (Date.now() - new Date(pub.createdAt).getTime()) / 3_600_000
+  const recency = Math.max(0, 168 - ageH)
+  return recency + (pub._count?.likes ?? 0) * 2 + (pub._count?.comments ?? 0) * 3
+}
+
+// Classe toutes les publications qui répondent à `where` et en renvoie un morceau (skip/take)
+async function rankedPublications(where, skip, take, feedType) {
+  if (take <= 0) return { items: [], total: 0 }
+  const rows = await prisma.publication.findMany({
+    where,
+    select: { id: true, createdAt: true, _count: { select: { likes: true, comments: true } } },
+  })
+  const ids = rows
+    .map(r => ({ id: r.id, score: feedScore(r) }))
+    .sort((a, b) => b.score - a.score || b.id - a.id)
+    .slice(skip, skip + take)
+    .map(r => r.id)
+  if (!ids.length) return { items: [], total: rows.length }
+  const full = await prisma.publication.findMany({ where: { id: { in: ids } }, include: PUB_INCLUDE })
+  const byId = new Map(full.map(p => [p.id, p]))
+  return {
+    items: ids.map(id => byId.get(id)).filter(Boolean).map(p => ({ ...p, feedType })),
+    total: rows.length,
+  }
+}
+
+// Mélange : un « secondaire » tous les n « principaux », un « tertiaire » tous les m
+function interleave(primary, secondary, tertiary) {
+  if (!primary.length) return [...secondary, ...tertiary]
+  const result  = []
+  const secStep = secondary.length > 0 ? Math.max(1, Math.ceil(primary.length / secondary.length)) : Infinity
+  const terStep = tertiary.length > 0
+    ? Math.max(1, Math.ceil((primary.length + secondary.length) / Math.max(1, tertiary.length)))
+    : Infinity
+  let si = 0, ti = 0
+  for (let i = 0; i < primary.length; i++) {
+    result.push(primary[i])
+    if (si < secondary.length && (i + 1) % secStep === 0) result.push(secondary[si++])
+    if (ti < tertiary.length  && (i + 1) % terStep  === 0) result.push(tertiary[ti++])
+  }
+  while (si < secondary.length) result.push(secondary[si++])
+  while (ti < tertiary.length)  result.push(tertiary[ti++])
+  return result
+}
+
 router.get('/feed', requireAuth, async (req, res) => {
-  const userId    = req.user.id
-  const PAGE_SIZE = 20
-  // Pagination par curseur : `after` = ISO date du dernier post vu (plus stable que skip)
-  const afterParam = req.query.after ? new Date(req.query.after) : null
+  const userId = req.user.id
+  const cursor = req.query.cursor ? decodeCursor(req.query.cursor) : { f: null, t: 0, s: 0 }
+  if (!cursor) return res.status(400).json({ error: 'Curseur invalide' })
+  const isFirstPage = !req.query.cursor
 
   try {
-    const [profile, follows] = await Promise.all([
+    const [profile, follows, blockedProfileIds] = await Promise.all([
       prisma.profile.findUnique({ where: { userId } }),
       prisma.follow.findMany({ where: { followerId: userId }, select: { followingId: true } }),
+      getBlockedProfileIds(userId),
     ])
     if (!profile) return res.status(404).json({ error: 'Profil introuvable' })
 
@@ -96,217 +227,85 @@ router.get('/feed', requireAuth, async (req, res) => {
     const followingCount  = followedUserIds.length
 
     // ── Ratios progressifs selon le niveau d'engagement ──────
-    let followedRatio, trendingRatio, suggestionRatio
-    if      (followingCount === 0) { followedRatio = 0.10; trendingRatio = 0.90; suggestionRatio = 0.00 }
-    else if (followingCount <= 3)  { followedRatio = 0.20; trendingRatio = 0.80; suggestionRatio = 0.00 }
-    else if (followingCount <= 9)  { followedRatio = 0.30; trendingRatio = 0.70; suggestionRatio = 0.00 }
-    else if (followingCount <= 19) { followedRatio = 0.50; trendingRatio = 0.50; suggestionRatio = 0.00 }
-    else if (followingCount <= 49) { followedRatio = 0.60; trendingRatio = 0.40; suggestionRatio = 0.00 }
-    else                            { followedRatio = 0.70; trendingRatio = 0.20; suggestionRatio = 0.10 }
+    let followedRatio, suggestionRatio
+    if      (followingCount === 0) { followedRatio = 0.10; suggestionRatio = 0.00 }
+    else if (followingCount <= 3)  { followedRatio = 0.20; suggestionRatio = 0.00 }
+    else if (followingCount <= 9)  { followedRatio = 0.30; suggestionRatio = 0.00 }
+    else if (followingCount <= 19) { followedRatio = 0.50; suggestionRatio = 0.00 }
+    else if (followingCount <= 49) { followedRatio = 0.60; suggestionRatio = 0.00 }
+    else                            { followedRatio = 0.70; suggestionRatio = 0.10 }
 
-    const followedSlots   = Math.round(PAGE_SIZE * followedRatio)
-    const suggestionSlots = Math.round(PAGE_SIZE * suggestionRatio)
-    const trendingSlots   = PAGE_SIZE - followedSlots - suggestionSlots
+    const followedSlots   = Math.max(4, Math.round(FEED_PAGE * followedRatio))
+    const suggestionSlots = Math.round(FEED_PAGE * suggestionRatio)
+    const trendingSlots   = Math.max(0, FEED_PAGE - followedSlots - suggestionSlots)
 
-    // ── Include commun — likes remplacés par _count pour la perf ─
-    const PUB_INCLUDE = {
-      profile: {
-        include: {
-          user: { select: { id: true, pseudo: true, firstName: true, lastName: true, role: true } },
-        },
-      },
-      _count:          { select: { likes: true, comments: true } },
-      additionalMedia: { orderBy: { order: 'asc' }, select: { id: true, url: true, mediaType: true, order: true } },
-      tags: {
-        where:  { status: 'ACCEPTED' },
-        select: {
-          id: true, status: true,
-          taggedUser: {
-            select: {
-              id: true, pseudo: true, firstName: true, lastName: true,
-              profile: { select: { id: true, avatar: true } },
-            },
-          },
-        },
-      },
-    }
-
-    // ── Score = récence (7j) + engagement ────────────────────
-    function score(pub) {
-      const ageH    = (Date.now() - new Date(pub.createdAt).getTime()) / 3_600_000
-      const recency = Math.max(0, 168 - ageH)
-      return recency + (pub._count?.likes ?? 0) * 2 + (pub._count?.comments ?? 0) * 3
-    }
-
-    // ── Filtre curseur (stable, évite le décalage de skip) ───
-    const cursorFilter = afterParam ? { createdAt: { lt: afterParam } } : {}
-
-    // ── Profils des follows ───────────────────────────────────
+    // ── Profils suivis (hors blocages) + le sien ──────────────
     const followedProfiles = followedUserIds.length > 0
-      ? await prisma.profile.findMany({
-          where: { userId: { in: followedUserIds } },
-          select: { id: true },
-        })
+      ? await prisma.profile.findMany({ where: { userId: { in: followedUserIds } }, select: { id: true } })
       : []
-    const blockedProfileIds        = await getBlockedProfileIds(userId)
     const followedProfileIds       = followedProfiles.map(p => p.id).filter(id => !blockedProfileIds.includes(id))
     const ownAndFollowedProfileIds = [...new Set([profile.id, ...followedProfileIds])]
 
-    // ── BUCKET 1 — Follows + propres publications ─────────────
-    const rawFollowed = await prisma.publication.findMany({
-      where:   { profileId: { in: ownAndFollowedProfileIds }, ...cursorFilter },
-      include: PUB_INCLUDE,
-      orderBy: { createdAt: 'desc' },
-      take:    Math.max(followedSlots, 4) * 3,
-    })
-    const followedBucket = rawFollowed
-      .map(p => ({ ...p, feedType: 'followed', _score: score(p) }))
-      .sort((a, b) => b._score - a._score)
-      .slice(0, Math.max(followedSlots, 4))
+    // ── SOURCE 1 — Comptes suivis + ses publications (chronologique) ─
+    let followedBucket = []
+    let nextFollowed   = 'end'
+    if (cursor.f !== 'end') {
+      const rows = await prisma.publication.findMany({
+        where:   { profileId: { in: ownAndFollowedProfileIds }, ...olderThan(cursor.f) },
+        include: PUB_INCLUDE,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take:    followedSlots + 1,
+      })
+      followedBucket = rows.slice(0, followedSlots).map(p => ({ ...p, feedType: 'followed' }))
+      const last = followedBucket.at(-1)
+      if (rows.length > followedSlots && last) nextFollowed = { d: last.createdAt.toISOString(), id: last.id }
+    }
 
-    // ── BUCKET 2 — Trending (exclu : follows + propres) ──────
-    const seenIds        = followedBucket.map(p => p.id)
-    // Profils bloqués (dans un sens ou l'autre) exclus des tendances et suggestions
-    const seenProfileIds = [...ownAndFollowedProfileIds, ...blockedProfileIds]
-
-    const rawTrending = await prisma.publication.findMany({
-      where: {
-        id:        { notIn: seenIds },
-        profileId: { notIn: seenProfileIds },
-        createdAt: { gte: new Date(Date.now() - 90 * 24 * 3_600_000), ...(afterParam ? { lt: afterParam } : {}) },
-      },
-      include: PUB_INCLUDE,
-      take:    trendingSlots * 4,
-    })
-    const trendingBucket = rawTrending
-      .map(p => ({ ...p, feedType: 'trending', _score: score(p) }))
-      .sort((a, b) => b._score - a._score)
-      .slice(0, trendingSlots)
-
-    // ── BUCKET 3 — Suggestions (amis des amis, tier 50+) ─────
-    let suggestionBucket = []
-    if (suggestionSlots > 0 && followedUserIds.length > 0) {
-      const allSeenIds        = [...seenIds, ...trendingBucket.map(p => p.id)]
-      const allSeenProfileIds = [...seenProfileIds, ...trendingBucket.map(p => p.profileId)]
-
+    // ── SOURCE 3 — Suggestions : amis des amis (50 abonnements et plus) ─
+    let fofProfileIds = []
+    if (suggestionSlots > 0) {
       const fof = await prisma.follow.findMany({
-        where: {
-          followerId:  { in: followedUserIds },
-          followingId: { notIn: [userId, ...followedUserIds] },
-        },
+        where:  { followerId: { in: followedUserIds }, followingId: { notIn: [userId, ...followedUserIds] } },
         select: { followingId: true },
         take:   150,
       })
       const fofUserIds = [...new Set(fof.map(f => f.followingId))]
-
-      if (fofUserIds.length > 0) {
-        const fofProfiles   = await prisma.profile.findMany({
-          where: { userId: { in: fofUserIds } },
-          select: { id: true },
-        })
-        const fofProfileIds = fofProfiles
-          .map(p => p.id)
-          .filter(id => !allSeenProfileIds.includes(id))
-
-        if (fofProfileIds.length > 0) {
-          const rawSugg = await prisma.publication.findMany({
-            where:   { id: { notIn: allSeenIds }, profileId: { in: fofProfileIds }, ...cursorFilter },
-            include: PUB_INCLUDE,
-            take:    suggestionSlots * 3,
-          })
-          suggestionBucket = rawSugg
-            .map(p => ({ ...p, feedType: 'suggestion', _score: score(p) }))
-            .sort((a, b) => b._score - a._score)
-            .slice(0, suggestionSlots)
-        }
-      }
-
-      // Fallback trending si pas assez de suggestions
-      if (suggestionBucket.length < suggestionSlots) {
-        const missing     = suggestionSlots - suggestionBucket.length
-        const allSeen2    = [...allSeenIds, ...suggestionBucket.map(p => p.id)]
-        const fallback    = await prisma.publication.findMany({
-          where:   { id: { notIn: allSeen2 }, profileId: { notIn: allSeenProfileIds }, ...cursorFilter },
-          include: PUB_INCLUDE,
-          take:    missing * 3,
-        })
-        const extra = fallback
-          .map(p => ({ ...p, feedType: 'suggestion', _score: score(p) }))
-          .sort((a, b) => b._score - a._score)
-          .slice(0, missing)
-        suggestionBucket = [...suggestionBucket, ...extra]
+      if (fofUserIds.length) {
+        const rows = await prisma.profile.findMany({ where: { userId: { in: fofUserIds } }, select: { id: true } })
+        fofProfileIds = rows.map(p => p.id).filter(id => !blockedProfileIds.includes(id))
       }
     }
+    const suggestions = fofProfileIds.length
+      ? await rankedPublications({ profileId: { in: fofProfileIds } }, Number(cursor.s) || 0, suggestionSlots, 'suggestion')
+      : { items: [], total: 0 }
 
-    // ── Interleaver les 3 buckets ─────────────────────────────
-    // Ex. ratio 70/20/10 → un trending tous les ~3,5 followed, un suggestion tous les ~7
-    function interleave(primary, secondary, tertiary) {
-      if (!primary.length) return [...secondary, ...tertiary]
-      const result  = []
-      const secStep = secondary.length > 0
-        ? Math.max(1, Math.ceil(primary.length / secondary.length))
-        : Infinity
-      const terStep = tertiary.length > 0
-        ? Math.max(1, Math.ceil((primary.length + secondary.length) / Math.max(1, tertiary.length)))
-        : Infinity
-      let si = 0, ti = 0
-      for (let i = 0; i < primary.length; i++) {
-        result.push(primary[i])
-        if (si < secondary.length && (i + 1) % secStep === 0) result.push(secondary[si++])
-        if (ti < tertiary.length  && (i + 1) % terStep  === 0) result.push(tertiary[ti++])
-      }
-      while (si < secondary.length) result.push(secondary[si++])
-      while (ti < tertiary.length)  result.push(tertiary[ti++])
-      return result
-    }
+    // ── SOURCE 2 — Tendances (reçoit aussi les places laissées libres) ─
+    const freeSlots = (followedSlots - followedBucket.length) + (suggestionSlots - suggestions.items.length)
+    const trending = await rankedPublications({
+      profileId: { notIn: [...ownAndFollowedProfileIds, ...blockedProfileIds, ...fofProfileIds] },
+      createdAt: { gte: new Date(Date.now() - TRENDING_WINDOW_DAYS * 24 * 3_600_000) },
+    }, Number(cursor.t) || 0, trendingSlots + freeSlots, 'trending')
 
-    const merged = interleave(followedBucket, trendingBucket, suggestionBucket)
+    // Dans une page, les publications suivies sont présentées des plus intéressantes aux moins intéressantes
+    followedBucket.sort((a, b) => feedScore(b) - feedScore(a))
+    const merged   = interleave(followedBucket, trending.items, suggestions.items)
+    const likedIds = await likedPublicationIds(profile.id, merged)
 
-    // ── Requête unique pour savoir quels posts sont likés par le viewer ──
-    const mergedIds = merged.map(p => p.id)
-    const myLikes = mergedIds.length > 0
-      ? await prisma.publicationLike.findMany({
-          where: { profileId: profile.id, publicationId: { in: mergedIds } },
-          select: { publicationId: true },
-        })
-      : []
-    const likedIds = new Set(myLikes.map(l => l.publicationId))
+    const nextT = (Number(cursor.t) || 0) + trending.items.length
+    const nextS = (Number(cursor.s) || 0) + suggestions.items.length
+    const hasMore = nextFollowed !== 'end' || nextT < trending.total || nextS < suggestions.total
 
-    // ── Formatter la réponse ──────────────────────────────────
-    const posts = merged.map(p => ({
-      id:              p.id,
-      media:           p.media,
-      mediaType:       p.mediaType,
-      caption:         p.caption,
-      title:           p.title,
-      createdAt:       p.createdAt,
-      likesCount:      p._count?.likes ?? 0,
-      commentsCount:   p._count?.comments ?? 0,
-      likedByMe:       likedIds.has(p.id),
-      isFromFollow:    p.feedType === 'followed',
-      feedType:        p.feedType,
-      additionalMedia: p.additionalMedia ?? [],
-      author: {
-        profileId:  p.profileId,
-        userId:     p.profile?.user?.id ?? null,
-        name:       p.profile?.user ? getDisplayName(p.profile.user, p.profile) : 'Utilisateur',
-        avatar:     p.profile?.avatar || null,
-        role:       p.profile?.user?.role || null,
-        profession: p.profile?.profession || p.profile?.specialties?.[0] || null,
-        profileUrl: profileUrl(p.profile?.user ?? null),
-      },
-    }))
-
-    // ── Publications admin (prioritaires — première page seulement) ─
-    const adminPosts = !afterParam
+    // ── Publications admin (première page seulement) ──────────
+    const adminPosts = isFirstPage
       ? await prisma.adminPost.findMany({ where: { active: true }, orderBy: { createdAt: 'desc' } })
       : []
 
     res.json({
-      posts,
+      posts: merged.map(p => formatPost(p, likedIds)),
       followCount: followingCount,
       adminPosts,
-      hasMore: posts.length >= PAGE_SIZE,
+      hasMore,
+      nextCursor: hasMore ? encodeCursor({ f: nextFollowed, t: nextT, s: nextS }) : null,
     })
   } catch (err) {
     console.error('❌ Home /feed :', err)
@@ -314,111 +313,151 @@ router.get('/feed', requireAuth, async (req, res) => {
   }
 })
 
-// ─── GET /api/home/top ──────────────────────────────────────
-// Top artistes ou prestataires (followers + moyenne avis)
-router.get('/top', async (req, res) => {
-  const { role = 'ARTIST', country = '', city = '' } = req.query
-  const prismaRole = role === 'ARTIST' ? 'ARTIST' : 'PROVIDER'
+// ─── GET /api/home/nearby?cursor= ───────────────────────────
+// « À proximité » : publications des membres de votre région (100 km autour de votre ville),
+// de la plus récente à la plus ancienne. Sans coordonnées, on compare le nom de la ville.
+const NEARBY_RADIUS_KM = 100
+const NEARBY_PAGE = 20
 
+router.get('/nearby', requireAuth, async (req, res) => {
+  const mark = req.query.cursor ? decodeCursor(req.query.cursor) : null
   try {
-    const profileWhere = {}
-    if (country) profileWhere.country = { contains: country, mode: 'insensitive' }
-    if (city)    profileWhere.city    = { contains: city,    mode: 'insensitive' }
+    const [viewer, blockedProfileIds] = await Promise.all([
+      prisma.profile.findUnique({
+        where: { userId: req.user.id },
+        select: { id: true, latitude: true, longitude: true, city: true, location: true },
+      }),
+      getBlockedProfileIds(req.user.id),
+    ])
+    if (!viewer) return res.status(404).json({ error: 'Profil introuvable' })
 
-    const users = await prisma.user.findMany({
-      where: {
-        role: prismaRole,
-        profile: Object.keys(profileWhere).length > 0 ? profileWhere : undefined,
-      },
-      include: {
-        profile: {
-          include: { reviewsReceived: { select: { rating: true } } },
-        },
-        _count: { select: { followers: true } },
-      },
-      take: 50,
+    const region    = viewer.location || viewer.city || null
+    const hasCoords = viewer.latitude != null && viewer.longitude != null
+    if (!hasCoords && !region) {
+      return res.json({ posts: [], hasMore: false, nextCursor: null, needsLocation: true, region: null, radiusKm: NEARBY_RADIUS_KM })
+    }
+
+    const candidates = await prisma.profile.findMany({
+      where:  { id: { notIn: [viewer.id, ...blockedProfileIds] }, user: { role: { in: MEMBER_ROLES } } },
+      select: { id: true, latitude: true, longitude: true, city: true, location: true },
     })
+    const nearbyIds = candidates
+      .filter(p => (hasCoords && p.latitude != null && p.longitude != null)
+        ? distanceKm(viewer, p) <= NEARBY_RADIUS_KM
+        : [viewer.city, viewer.location].some(v => sameText(v, p.city) || sameText(v, p.location)))
+      .map(p => p.id)
 
-    const scored = users
-      .filter(u => u.profile)
-      .map(u => {
-        const ratings = u.profile.reviewsReceived.map(r => r.rating)
-        const avgRating = ratings.length
-          ? ratings.reduce((a, b) => a + b, 0) / ratings.length
-          : 0
-        return {
-          id: u.id,
-          name: getDisplayName(u, u.profile),
-          avatar: u.profile.avatar,
-          profession: u.profile.profession || u.profile.specialties?.[0] || null,
-          location: u.profile.location || u.profile.city || null,
-          followersCount: u._count.followers,
-          avgRating: Math.round(avgRating * 10) / 10,
-          reviewsCount: ratings.length,
-          profileUrl: profileUrl(u),
-          score: u._count.followers * 2 + avgRating * 10,
-        }
-      })
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 5)
+    const rows = nearbyIds.length
+      ? await prisma.publication.findMany({
+          where:   { profileId: { in: nearbyIds }, ...olderThan(mark) },
+          include: PUB_INCLUDE,
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          take:    NEARBY_PAGE + 1,
+        })
+      : []
+    const page     = rows.slice(0, NEARBY_PAGE)
+    const hasMore  = rows.length > NEARBY_PAGE
+    const likedIds = await likedPublicationIds(viewer.id, page)
+    const last     = page.at(-1)
 
-    res.json({ top: scored })
+    res.json({
+      posts: page.map(p => formatPost(p, likedIds)),
+      hasMore,
+      nextCursor: hasMore && last ? encodeCursor({ d: last.createdAt.toISOString(), id: last.id }) : null,
+      needsLocation: false,
+      region,
+      radiusKm: NEARBY_RADIUS_KM,
+    })
   } catch (err) {
-    console.error('❌ Home /top :', err)
+    console.error('❌ Home /nearby :', err)
     res.status(500).json({ error: 'Erreur serveur' })
   }
 })
 
-// ─── GET /api/home/suggested ────────────────────────────────
-// Suggestions de profils à suivre (même pays, pas encore suivis)
-router.get('/suggested', requireAuth, async (req, res) => {
-  const userId = req.user.id
+// ─── GET /api/home/trends?role=&criterion=&specialty=&city=&limit= ──
+// Classements « Tendances » sur les 30 derniers jours (90 pour les bookings, plus rares) :
+//   search   = profils ouverts depuis la page Recherche
+//   views    = visites du profil
+//   bookings = bookings acceptés ou terminés via le site
+//   likes    = J'aime reçus sur ses publications
+// Un visiteur n'est compté qu'une fois par jour et par profil (recherches, visites).
+const TREND_CRITERIA = {
+  search:   { days: 30 },
+  views:    { days: 30 },
+  bookings: { days: 90 },
+  likes:    { days: 30 },
+}
+
+async function trendCounts(criterion, since) {
+  if (criterion === 'search' || criterion === 'views') {
+    const model = criterion === 'search' ? prisma.profileSearchHit : prisma.profileView
+    const rows = await model.groupBy({ by: ['profileId'], where: { createdAt: { gte: since } }, _count: { _all: true } })
+    return new Map(rows.map(r => [r.profileId, r._count._all]))
+  }
+  if (criterion === 'bookings') {
+    const rows = await prisma.bookingRequest.groupBy({
+      by: ['targetId'],
+      where: { status: { in: ['ACCEPTED', 'COMPLETED'] }, createdAt: { gte: since } },
+      _count: { _all: true },
+    })
+    return new Map(rows.map(r => [r.targetId, r._count._all]))
+  }
+  const rows = await prisma.$queryRaw`
+    SELECT p."profileId" AS "profileId", COUNT(*)::int AS "count"
+    FROM "PublicationLike" l JOIN "Publication" p ON p."id" = l."publicationId"
+    WHERE l."createdAt" >= ${since}
+    GROUP BY p."profileId"`
+  return new Map(rows.map(r => [Number(r.profileId), Number(r.count)]))
+}
+
+router.get('/trends', optionalAuth, async (req, res) => {
+  const role      = req.query.role === 'PROVIDER' ? 'PROVIDER' : 'ARTIST'
+  const criterion = TREND_CRITERIA[req.query.criterion] ? req.query.criterion : 'views'
+  const specialty = String(req.query.specialty || '').trim()
+  const city      = String(req.query.city || '').trim()
+  const limit     = Math.min(50, Math.max(1, Number.parseInt(req.query.limit, 10) || 5))
+  const { days }  = TREND_CRITERIA[criterion]
+
   try {
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      include: { profile: true },
-    })
+    const since  = new Date(Date.now() - days * 24 * 3_600_000)
+    const counts = await trendCounts(criterion, since)
+    const blockedProfileIds = req.user ? await getBlockedProfileIds(req.user.id) : []
+    const ids = [...counts.keys()].filter(id => !blockedProfileIds.includes(id))
 
-    const alreadyFollowing = await prisma.follow.findMany({
-      where: { followerId: userId },
-      select: { followingId: true },
-    })
-    const excludeIds = [userId, ...alreadyFollowing.map(f => f.followingId)]
+    const profiles = ids.length
+      ? await prisma.profile.findMany({
+          where: {
+            id: { in: ids },
+            user: { role },
+            ...(city ? { OR: [{ city: { contains: city, mode: 'insensitive' } }, { location: { contains: city, mode: 'insensitive' } }] } : {}),
+          },
+          include: { user: { select: { id: true, pseudo: true, firstName: true, lastName: true, role: true } } },
+        })
+      : []
 
-    const profileWhere = { avatar: { not: null } }
-    if (user?.profile?.country) {
-      profileWhere.country = user.profile.country
-    }
+    // Spécialités présentes dans ce classement (pour les filtres de la fenêtre « Voir plus »), les plus fréquentes d'abord
+    const specialtyCount = new Map()
+    for (const p of profiles) for (const s of p.specialties || []) specialtyCount.set(s, (specialtyCount.get(s) || 0) + 1)
+    const specialties = [...specialtyCount.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'fr')).map(([s]) => s)
 
-    const candidates = await prisma.user.findMany({
-      where: {
-        id: { notIn: excludeIds },
-        role: { in: ['ARTIST', 'ORGANIZER', 'PROVIDER'] },
-        profile: profileWhere,
-      },
-      include: {
-        profile: true,
-        _count: { select: { followers: true } },
-      },
-      take: 30,
-    })
+    const items = profiles
+      .filter(p => !specialty || (p.specialties || []).includes(specialty))
+      .map(p => ({
+        id: p.user.id,
+        profileId: p.id,
+        name: getDisplayName(p.user, p),
+        avatar: p.avatar || null,
+        profession: p.profession || p.specialties?.[0] || null,
+        location: p.location || p.city || null,
+        count: counts.get(p.id) || 0,
+        profileUrl: profileUrl(p.user),
+      }))
+      .sort((a, b) => b.count - a.count || a.profileId - b.profileId)
+      .slice(0, limit)
 
-    candidates.sort((a, b) => (b._count?.followers ?? 0) - (a._count?.followers ?? 0))
-
-    const result = candidates.slice(0, 5).map(u => ({
-      id: u.id,
-      name: getDisplayName(u, u.profile),
-      avatar: u.profile?.avatar || null,
-      profession: u.profile?.profession || u.profile?.specialties?.[0] || null,
-      location: u.profile?.location || u.profile?.city || null,
-      followersCount: u._count.followers,
-      role: u.role,
-      profileUrl: profileUrl(u),
-    }))
-
-    res.json({ suggested: result })
+    res.json({ criterion, role, periodDays: days, items, specialties })
   } catch (err) {
-    console.error('❌ Home /suggested :', err)
+    console.error('❌ Home /trends :', err)
     res.status(500).json({ error: 'Erreur serveur' })
   }
 })

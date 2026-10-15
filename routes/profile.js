@@ -128,6 +128,28 @@ router.get('/me', requireAuth, async (req, res) => {
  * Public : récupérer un profil par userId
  * 👉 Invisibilité ADMIN : si le profil appartient à un ADMIN, on renvoie 404
  */
+// POST /api/profile/user/:userId/search-hit — profil ouvert depuis la page Recherche (classement « les plus recherchés »)
+// Une fois par visiteur, par profil et par jour ; son propre profil n'est pas compté.
+router.post('/user/:userId/search-hit', requireAuth, async (req, res) => {
+  const userId = parseIntegerOrNull(req.params.userId);
+  if (!userId) return res.status(400).json({ error: 'ID invalide' });
+  if (userId === req.user.id) return res.status(204).end();
+  try {
+    const profile = await prisma.profile.findUnique({ where: { userId }, select: { id: true } });
+    if (!profile) return res.status(404).json({ error: 'Profil introuvable' });
+    const day = new Date(); day.setUTCHours(0, 0, 0, 0);
+    await prisma.profileSearchHit.upsert({
+      where: { profileId_viewerUserId_day: { profileId: profile.id, viewerUserId: req.user.id, day } },
+      update: {},
+      create: { profileId: profile.id, viewerUserId: req.user.id, day },
+    });
+    return res.status(204).end();
+  } catch (error) {
+    console.error('❌ Recherche de profil non enregistrée :', error.message);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
 router.get('/user/:userId', optionalAuth, async (req, res) => {
   const raw = req.params.userId;
   const userId = Number.parseInt(raw, 10);

@@ -259,6 +259,8 @@ model Profile {
 
   // Mon espace
   profileViews            ProfileView[]
+  searchHits              ProfileSearchHit[]
+  homeFeatured            HomeFeatured?
   checklists              EventChecklist[]
   invoicesIssued          Invoice[]        @relation("InvoiceIssuer")
   invoicesReceived        Invoice[]        @relation("InvoiceClient")
@@ -317,6 +319,7 @@ model PublicationLike {
   profile       Profile     @relation(fields: [profileId], references: [id])
 
   @@unique([publicationId, profileId]) // Un seul like par personne par publication
+  @@index([createdAt])
 }
 
 model PublicationComment {
@@ -1028,6 +1031,33 @@ model ProfileView {
 
   @@unique([profileId, viewerUserId, day])
   @@index([profileId, createdAt])
+  @@index([createdAt])
+}
+
+// Profil ouvert depuis la page Recherche : une fois par visiteur, par profil et par jour (tendances)
+model ProfileSearchHit {
+  id           Int      @id @default(autoincrement())
+  profileId    Int
+  viewerUserId Int
+  day          DateTime @db.Date
+  createdAt    DateTime @default(now())
+
+  profile      Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, viewerUserId, day])
+  @@index([createdAt])
+}
+
+// Carrousel de l'accueil : profils mis en avant à la main par l'admin (à terme : mise en avant payante)
+model HomeFeatured {
+  id        Int       @id @default(autoincrement())
+  profileId Int       @unique
+  position  Int       @default(0)
+  endsAt    DateTime? // Fin de la mise en avant (vide = sans limite)
+  note      String?   // Note interne (paiement, contact…)
+  createdAt DateTime  @default(now())
+
+  profile   Profile   @relation(fields: [profileId], references: [id], onDelete: Cascade)
 }
 
 // Checklist facultative d'un événement, propre à chaque personne (organisateur ou personne bookée)
