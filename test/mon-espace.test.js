@@ -164,5 +164,5 @@ test('notifications : jamais toute la liste d’un coup', async () => {
   await withMocks({
     notification: { findMany: async (a) => { take = a.take; return [] } },
   }, () => routeHandler(notificationsRouter, 'get', '/')({ user: { id: 1 }, query: { limit: '5000' } }, responseRecorder()))
-  assert.equal(take, 200)
+  assert.equal(take, 201) // 200 au plus + 1 pour savoir s'il en reste
 })

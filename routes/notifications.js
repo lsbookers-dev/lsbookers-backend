@@ -15,12 +15,20 @@ router.get('/', requireAuth, async (req, res) => {
   try {
     const userId = Number(req.user?.id);
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
-    // Les plus récentes seulement (?limit=, 100 par défaut, 200 au plus)
+    // Les plus récentes d'abord, par paquets (?limit=, 100 par défaut, 200 au plus).
+    // ?before=<id> = id de la dernière notification déjà affichée (« Voir plus »).
     const limit = Math.min(200, Math.max(1, Number.parseInt(req.query?.limit, 10) || 100));
-    const notifications = await prisma.notification.findMany({
-      where: { userId, ...NOT_MESSAGE },
-      orderBy: { createdAt: 'desc' },
-      take: limit,
+    const before = Number.parseInt(req.query?.before, 10) || 0;
+    let olderThan = {};
+    if (before) {
+      const ref = await prisma.notification.findFirst({ where: { id: before, userId }, select: { createdAt: true } });
+      if (!ref) return res.json({ notifications: [], hasMore: false, nextCursor: null });
+      olderThan = { OR: [{ createdAt: { lt: ref.createdAt } }, { createdAt: ref.createdAt, id: { lt: before } }] };
+    }
+    const rows = await prisma.notification.findMany({
+      where: { userId, ...NOT_MESSAGE, ...olderThan },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
       include: {
         actor: {
           select: {
@@ -43,6 +51,8 @@ router.get('/', requireAuth, async (req, res) => {
         },
       },
     });
+    const hasMore = rows.length > limit;
+    const notifications = rows.slice(0, limit);
     // ⚡️ Normalisation du format
     const formatted = notifications.map((n) => ({
       id: n.id,
@@ -66,7 +76,7 @@ router.get('/', requireAuth, async (req, res) => {
       eventId:        n.eventId || n.staff?.eventId || null,
       staffStatus:    n.staff?.status || null,
     }));
-    res.json({ notifications: formatted });
+    res.json({ notifications: formatted, hasMore, nextCursor: hasMore ? notifications.at(-1).id : null });
   } catch (err) {
     console.error('❌ [GET /notifications] Error:', err);
     res.status(500).json({ error: 'Erreur serveur' });

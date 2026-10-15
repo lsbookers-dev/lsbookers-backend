@@ -256,52 +256,98 @@ const COMMENT_INCLUDE = {
   _count: { select: { likes: true, replies: true } },
 }
 
-// GET /api/publications/:id/comments — liste des commentaires (top-level + replies)
+// Pagination des commentaires : les plus anciens d'abord, par paquets (curseur = id du dernier vu)
+const COMMENTS_PAGE = 20
+const REPLIES_PREVIEW = 3
+
+const pageParams = (query, max = 50) => ({
+  after: Number.parseInt(query.after, 10) || 0,
+  limit: Math.min(max, Math.max(1, Number.parseInt(query.limit, 10) || COMMENTS_PAGE)),
+})
+
+const viewerLikes = (viewerProfileId) => (viewerProfileId
+  ? { likes: { where: { profileId: viewerProfileId }, select: { id: true } } }
+  : {})
+
+const formatComment = (viewerProfileId) => (c) => ({
+  ...c,
+  likedByMe: viewerProfileId ? (c.likes?.length > 0) : false,
+  likes: undefined,
+})
+
+// GET /api/publications/:id/comments?after=&limit= — commentaires (top-level) + 3 premières réponses de chacun
 router.get('/:id/comments', optionalAuth, async (req, res) => {
   const id = parseInt(req.params.id, 10)
   if (isNaN(id)) return res.status(400).json({ error: 'ID invalide' })
 
   // profileId optionnel pour savoir si le viewer a liké
   const viewerProfileId = req.query.profileId ? parseInt(req.query.profileId, 10) : null
+  const { after, limit } = pageParams(req.query)
 
   try {
     // Commentaires des utilisateurs bloqués (dans un sens ou l'autre) masqués
     const blockedProfileIds = req.user ? await getBlockedProfileIds(req.user.id) : []
     const notBlocked = blockedProfileIds.length ? { profileId: { notIn: blockedProfileIds } } : {}
 
-    const comments = await prisma.publicationComment.findMany({
-      where: { publicationId: id, parentId: null, ...notBlocked }, // top-level seulement
-      orderBy: { createdAt: 'asc' },
+    const rows = await prisma.publicationComment.findMany({
+      where: { publicationId: id, parentId: null, ...notBlocked, ...(after ? { id: { gt: after } } : {}) }, // top-level seulement
+      orderBy: { id: 'asc' },
+      take: limit + 1,
       include: {
         ...COMMENT_INCLUDE,
         replies: {
           where: notBlocked,
-          orderBy: { createdAt: 'asc' },
-          include: {
-            ...COMMENT_INCLUDE,
-            ...(viewerProfileId ? {
-              likes: { where: { profileId: viewerProfileId }, select: { id: true } }
-            } : {}),
-          },
+          orderBy: { id: 'asc' },
+          take: REPLIES_PREVIEW,
+          include: { ...COMMENT_INCLUDE, ...viewerLikes(viewerProfileId) },
         },
-        ...(viewerProfileId ? {
-          likes: { where: { profileId: viewerProfileId }, select: { id: true } }
-        } : {}),
+        ...viewerLikes(viewerProfileId),
       },
     })
 
-    const format = (c) => ({
-      ...c,
-      likedByMe: viewerProfileId ? (c.likes?.length > 0) : false,
-      likes: undefined,
-    })
+    const hasMore = rows.length > limit
+    const comments = rows.slice(0, limit)
+    const format = formatComment(viewerProfileId)
 
-    return res.json({ comments: comments.map(c => ({
-      ...format(c),
-      replies: c.replies.map(format),
-    })) })
+    return res.json({
+      comments: comments.map(c => ({ ...format(c), replies: c.replies.map(format) })),
+      hasMore,
+      nextCursor: hasMore ? comments.at(-1).id : null,
+    })
   } catch (err) {
     console.error('❌ Erreur récupération commentaires :', err)
+    return res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
+// GET /api/publications/comments/:id/replies?after=&limit= — suite des réponses d'un commentaire
+router.get('/comments/:id/replies', optionalAuth, async (req, res) => {
+  const id = parseInt(req.params.id, 10)
+  if (isNaN(id)) return res.status(400).json({ error: 'ID invalide' })
+
+  const viewerProfileId = req.query.profileId ? parseInt(req.query.profileId, 10) : null
+  const { after, limit } = pageParams(req.query)
+
+  try {
+    const blockedProfileIds = req.user ? await getBlockedProfileIds(req.user.id) : []
+    const notBlocked = blockedProfileIds.length ? { profileId: { notIn: blockedProfileIds } } : {}
+
+    const rows = await prisma.publicationComment.findMany({
+      where: { parentId: id, ...notBlocked, ...(after ? { id: { gt: after } } : {}) },
+      orderBy: { id: 'asc' },
+      take: limit + 1,
+      include: { ...COMMENT_INCLUDE, ...viewerLikes(viewerProfileId) },
+    })
+
+    const hasMore = rows.length > limit
+    const replies = rows.slice(0, limit)
+    return res.json({
+      replies: replies.map(formatComment(viewerProfileId)),
+      hasMore,
+      nextCursor: hasMore ? replies.at(-1).id : null,
+    })
+  } catch (err) {
+    console.error('❌ Erreur récupération réponses :', err)
     return res.status(500).json({ error: 'Erreur serveur' })
   }
 })

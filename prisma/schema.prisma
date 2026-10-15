@@ -286,6 +286,7 @@ model Publication {
   tags            PublicationTag[]
 
   @@index([profileId, createdAt])
+  @@index([createdAt])
 }
 
 model PublicationTag {
@@ -862,6 +863,8 @@ model Notification {
   event         Event?       @relation(fields: [eventId], references: [id], onDelete: SetNull)
 
   @@index([userId, type, deviceToken])
+  @@index([userId, createdAt])
+  @@index([userId, read])
   @@index([staffId])
 }
 
