@@ -308,6 +308,7 @@ const adminSettingsUpdateSchema = z.object({
     .refine(v => v === '' || /^\/(?!\/)/.test(v) || /^https:\/\//i.test(v), 'Lien invalide : commencez par / ou https://')
     .optional(),
   announcementActive: z.boolean().optional(),
+  announcementEndsAt: z.union([z.string().datetime({ offset: true }), z.literal(''), z.null()]).optional(),
 });
 
 /* ─────────────────────────────────────────

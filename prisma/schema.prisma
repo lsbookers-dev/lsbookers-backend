@@ -899,6 +899,7 @@ model AdminSettings {
   announcementText   String?
   announcementUrl    String?
   announcementActive Boolean  @default(false)
+  announcementEndsAt DateTime? // Fin d'affichage (vide = sans limite)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 }

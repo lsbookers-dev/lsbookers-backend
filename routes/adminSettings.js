@@ -9,6 +9,11 @@ const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const { adminSettingsUpdateSchema } = require('../schemas');
 
+/** L'annonce de l'en-tête est visible si elle est activée, a un texte et que sa date de fin n'est pas passée */
+function isAnnouncementVisible(s, now = new Date()) {
+  return !!s.announcementActive && !!s.announcementText && (!s.announcementEndsAt || s.announcementEndsAt > now);
+}
+
 /** Récupère (ou crée) la ligne de settings unique (id = 1) */
 async function getOrCreateSettings() {
   let settings = await prisma.adminSettings.findUnique({ where: { id: 1 } });
@@ -41,6 +46,9 @@ router.get('/', async (_req, res) => {
       announcementText:   settings.announcementText || '',
       announcementUrl:    settings.announcementUrl  || '',
       announcementActive: !!settings.announcementActive,
+      announcementEndsAt: settings.announcementEndsAt || null,
+      // Ce que voient les membres : annonce activée et date de fin pas encore passée
+      announcementVisible: isAnnouncementVisible(settings),
     });
   } catch (err) {
     console.error('❌ GET settings', err);
@@ -67,6 +75,9 @@ router.put('/', requireAuth, requireAdmin, validate(adminSettingsUpdateSchema), 
         data[field] = req.body[field];
       }
     }
+    if (req.body.announcementEndsAt !== undefined) {
+      data.announcementEndsAt = req.body.announcementEndsAt ? new Date(req.body.announcementEndsAt) : null;
+    }
 
     const updated = await prisma.adminSettings.upsert({
       where: { id: 1 },
@@ -88,6 +99,9 @@ router.put('/', requireAuth, requireAdmin, validate(adminSettingsUpdateSchema), 
       announcementText:   updated.announcementText || '',
       announcementUrl:    updated.announcementUrl  || '',
       announcementActive: !!updated.announcementActive,
+      announcementEndsAt: updated.announcementEndsAt || null,
+      // Ce que voient les membres : annonce activée et date de fin pas encore passée
+      announcementVisible: isAnnouncementVisible(updated),
     });
   } catch (err) {
     console.error('❌ PUT settings', err);

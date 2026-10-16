@@ -26,3 +26,27 @@ test('annonce de l\'en-tête : renvoyée avec les réglages publics', async () =
   assert.equal(res.body.announcementUrl, '/space')
   assert.equal(res.body.announcementActive, true)
 })
+
+async function publicSettings(row) {
+  const layer = settingsRouter.stack.find(l => l.route?.path === '/' && l.route.methods.get)
+  const res = { set() {}, status() { return this }, json(b) { this.body = b; return this } }
+  const original = prisma.adminSettings.findUnique
+  prisma.adminSettings.findUnique = async () => ({ id: 1, announcementText: 'Bêta ouverte', announcementActive: true, ...row })
+  try { await layer.route.stack.at(-1).handle({}, res) } finally { prisma.adminSettings.findUnique = original }
+  return res.body
+}
+
+test('annonce de l\'en-tête : masquée une fois la date de fin passée', async () => {
+  assert.equal((await publicSettings({ announcementEndsAt: null })).announcementVisible, true)
+  assert.equal((await publicSettings({ announcementEndsAt: new Date(Date.now() + 86400000) })).announcementVisible, true)
+  assert.equal((await publicSettings({ announcementEndsAt: new Date(Date.now() - 1000) })).announcementVisible, false)
+  assert.equal((await publicSettings({ announcementActive: false })).announcementVisible, false)
+})
+
+test('annonce de l\'en-tête : date de fin au format date ISO, ou vide', () => {
+  const ok = v => adminSettingsUpdateSchema.safeParse({ announcementEndsAt: v }).success
+  assert.equal(ok('2026-12-31T22:59:59.000Z'), true)
+  assert.equal(ok(''), true)
+  assert.equal(ok(null), true)
+  assert.equal(ok('demain'), false)
+})
