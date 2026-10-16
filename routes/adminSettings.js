@@ -38,6 +38,9 @@ router.get('/', async (_req, res) => {
       secondaryColor: settings.secondaryColor || '#000000',
       bannerUrl:      settings.bannerUrl      || '',
       logoUrl:        settings.logoUrl        || '',
+      announcementText:   settings.announcementText || '',
+      announcementUrl:    settings.announcementUrl  || '',
+      announcementActive: !!settings.announcementActive,
     });
   } catch (err) {
     console.error('❌ GET settings', err);
@@ -57,6 +60,7 @@ router.put('/', requireAuth, requireAdmin, validate(adminSettingsUpdateSchema), 
     const fields = [
       'welcomeText', 'landingBgUrl', 'loginBgUrl', 'registerBgUrl',
       'headerLogoUrl', 'landingLogoUrl', 'mainColor', 'secondaryColor', 'bannerUrl', 'logoUrl',
+      'announcementText', 'announcementUrl', 'announcementActive',
     ];
     for (const field of fields) {
       if (req.body[field] !== undefined) {
@@ -81,6 +85,9 @@ router.put('/', requireAuth, requireAdmin, validate(adminSettingsUpdateSchema), 
       secondaryColor: updated.secondaryColor || '#000000',
       bannerUrl:      updated.bannerUrl      || '',
       logoUrl:        updated.logoUrl        || '',
+      announcementText:   updated.announcementText || '',
+      announcementUrl:    updated.announcementUrl  || '',
+      announcementActive: !!updated.announcementActive,
     });
   } catch (err) {
     console.error('❌ PUT settings', err);

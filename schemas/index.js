@@ -302,6 +302,12 @@ const adminSettingsUpdateSchema = z.object({
   secondaryColor:  z.string().max(20).trim().optional(),
   bannerUrl:       z.string().max(2000).trim().optional(),
   logoUrl:         z.string().max(2000).trim().optional(),
+  // Annonce de l'en-tête : lien interne (/…) ou https://… uniquement
+  announcementText:   z.string().max(140).trim().transform(stripHtml).optional(),
+  announcementUrl:    z.string().max(500).trim()
+    .refine(v => v === '' || /^\/(?!\/)/.test(v) || /^https:\/\//i.test(v), 'Lien invalide : commencez par / ou https://')
+    .optional(),
+  announcementActive: z.boolean().optional(),
 });
 
 /* ─────────────────────────────────────────
