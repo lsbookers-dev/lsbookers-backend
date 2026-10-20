@@ -7,6 +7,8 @@ const { conversationCreateSchema } = require('../schemas')
 const multer = require('multer')
 const { uploadBufferToR2 } = require('../lib/r2')
 const { getIO } = require('../socket')
+const { notifyNewMessageByEmail } = require('../services/messageEmails')
+const { newConversationRefusal } = require('../lib/messagePolicy')
 const { isFileContentValid, extensionFor } = require('../lib/fileCheck')
 const { isBlockedBetween } = require('../lib/blocks')
 
@@ -434,6 +436,9 @@ router.post('/start', requireAuth, async (req, res) => {
     })
 
     if (!conversation) {
+      // Réglages › Confidentialité du destinataire : compte en pause, « qui peut m'écrire »
+      const refusal = await newConversationRefusal(senderId, recipientId)
+      if (refusal) return res.status(refusal.status).json({ error: refusal.error, code: refusal.code })
       conversation = await prisma.conversation.create({
         data: {
           participants: {
@@ -491,6 +496,9 @@ router.post('/send', requireAuth, validate(conversationCreateSchema), async (req
     })
 
     if (!conversation) {
+      // Réglages › Confidentialité du destinataire : compte en pause, « qui peut m'écrire »
+      const refusal = await newConversationRefusal(senderId, recipientId)
+      if (refusal) return res.status(refusal.status).json({ error: refusal.error, code: refusal.code })
       conversation = await prisma.conversation.create({
         data: {
           participants: {
@@ -513,6 +521,8 @@ router.post('/send', requireAuth, validate(conversationCreateSchema), async (req
       where: { id: conversation.id },
       data: { updatedAt: new Date() },
     })
+    // E-mail au destinataire s'il n'est pas sur le site (Réglages › Notifications et e-mails)
+    notifyNewMessageByEmail({ conversationId: conversation.id, senderId })
 
     // ── Temps réel : pousser le message via WebSocket ──
     try {
@@ -605,6 +615,8 @@ router.post('/send-file', requireAuth, (req, res) => {
       where: { id: Number(conversationId) },
       data: { updatedAt: new Date() },
     })
+    // E-mail au destinataire s'il n'est pas sur le site (Réglages › Notifications et e-mails)
+    notifyNewMessageByEmail({ conversationId: Number(conversationId), senderId })
 
     // ── Temps réel : pousser le message (avec pièce jointe) via WebSocket ──
     try {
@@ -770,6 +782,8 @@ router.post('/share-profile', requireAuth, async (req, res) => {
       where: { id: Number(conversationId) },
       data: { updatedAt: new Date() },
     })
+    // E-mail au destinataire s'il n'est pas sur le site (Réglages › Notifications et e-mails)
+    notifyNewMessageByEmail({ conversationId: Number(conversationId), senderId })
 
     // Temps réel
     try {
@@ -811,6 +825,9 @@ router.post('/share-offer', requireAuth, async (req, res) => {
       },
     })
     if (!conversation) {
+      // Réglages › Confidentialité du destinataire : compte en pause, « qui peut m'écrire »
+      const refusal = await newConversationRefusal(senderId, recipientId)
+      if (refusal) return res.status(refusal.status).json({ error: refusal.error, code: refusal.code })
       conversation = await prisma.conversation.create({
         data: {
           participants: {
@@ -875,6 +892,8 @@ router.post('/share-offer', requireAuth, async (req, res) => {
       where: { id: conversation.id },
       data: { updatedAt: new Date() },
     })
+    // E-mail au destinataire s'il n'est pas sur le site (Réglages › Notifications et e-mails)
+    notifyNewMessageByEmail({ conversationId: conversation.id, senderId })
 
     // Temps réel
     try {

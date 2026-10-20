@@ -3,6 +3,20 @@
 // Les erreurs sont silencieuses pour ne jamais bloquer le flux principal.
 
 const prisma = require('../prisma/client')
+const { resolvePrefs, wantsBell, wantsEmail } = require('../lib/notifPrefs')
+
+// Module e-mail chargé à la demande (il exige la clé Resend, absente des tests)
+const emails = () => require('../utils/email')
+
+/** Choix du destinataire (cloche / e-mail) ; en cas d'erreur, réglages par défaut */
+async function recipientPrefs(userId) {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: Number(userId) }, select: { email: true, notifPrefs: true } })
+    return { email: user?.email || null, prefs: resolvePrefs(user?.notifPrefs) }
+  } catch {
+    return { email: null, prefs: resolvePrefs(null) }
+  }
+}
 
 /**
  * Crée une notification de façon sécurisée.
@@ -23,6 +37,15 @@ async function createNotif({ userId, type, content, actorId, messageId, offerId,
     if (!userId || !type || !content) return
     // Pas d'auto-notification
     if (actorId && Number(actorId) === Number(userId)) return
+
+    // Choix du membre (Réglages › Notifications et e-mails)
+    const { email, prefs } = await recipientPrefs(userId)
+    if (email && wantsEmail(prefs, type)) {
+      // Sans attendre : l'e-mail ne doit jamais ralentir ni bloquer l'action
+      emails().sendNotificationEmail(email, { content })
+        .catch(err => console.error(`❌ [createNotif] e-mail type=${type} :`, err.message))
+    }
+    if (!wantsBell(prefs, type)) return
 
     await prisma.notification.create({
       data: {

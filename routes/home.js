@@ -116,7 +116,7 @@ router.get('/carousel', async (req, res) => {
   try {
     const now = new Date()
     const selected = await prisma.homeFeatured.findMany({
-      where: { OR: [{ endsAt: null }, { endsAt: { gt: now } }], profile: { user: { role: { in: MEMBER_ROLES } } } },
+      where: { OR: [{ endsAt: null }, { endsAt: { gt: now } }], profile: { user: { role: { in: MEMBER_ROLES }, pausedAt: null } } },
       orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
       include: { profile: { include: { user: true } } },
       take: 12,
@@ -126,7 +126,7 @@ router.get('/carousel', async (req, res) => {
 
     if (featured.length === 0) {
       const popular = await prisma.user.findMany({
-        where: { role: { in: MEMBER_ROLES }, profile: { avatar: { not: null } } },
+        where: { role: { in: MEMBER_ROLES }, pausedAt: null, profile: { avatar: { not: null }, hiddenFromSearch: false } },
         include: { profile: true, _count: { select: { followers: true } } },
         take: 30,
       })
@@ -170,10 +170,13 @@ function feedScore(pub) {
 }
 
 // Classe toutes les publications qui répondent à `where` et en renvoie un morceau (skip/take)
+// Publications des comptes en pause : invisibles des autres membres
+const NOT_PAUSED = { profile: { user: { pausedAt: null } } }
+
 async function rankedPublications(where, skip, take, feedType) {
   if (take <= 0) return { items: [], total: 0 }
   const rows = await prisma.publication.findMany({
-    where,
+    where: { ...where, ...NOT_PAUSED },
     select: { id: true, createdAt: true, _count: { select: { likes: true, comments: true } } },
   })
   const ids = rows
@@ -253,7 +256,7 @@ router.get('/feed', requireAuth, async (req, res) => {
     let nextFollowed   = 'end'
     if (cursor.f !== 'end') {
       const rows = await prisma.publication.findMany({
-        where:   { profileId: { in: ownAndFollowedProfileIds }, ...olderThan(cursor.f) },
+        where:   { profileId: { in: ownAndFollowedProfileIds }, AND: [olderThan(cursor.f), { OR: [{ profileId: profile.id }, NOT_PAUSED] }] },
         include: PUB_INCLUDE,
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         take:    followedSlots + 1,
@@ -340,7 +343,7 @@ router.get('/nearby', requireAuth, async (req, res) => {
     }
 
     const candidates = await prisma.profile.findMany({
-      where:  { id: { notIn: [viewer.id, ...blockedProfileIds] }, user: { role: { in: MEMBER_ROLES } } },
+      where:  { id: { notIn: [viewer.id, ...blockedProfileIds] }, user: { role: { in: MEMBER_ROLES }, pausedAt: null } },
       select: { id: true, latitude: true, longitude: true, city: true, location: true },
     })
     const nearbyIds = candidates
@@ -433,7 +436,9 @@ router.get('/trends', optionalAuth, async (req, res) => {
       ? await prisma.profile.findMany({
           where: {
             id: { in: ids },
-            user: { role },
+            // Réglages : comptes en pause et membres qui ne veulent pas apparaître dans les Tendances
+            user: { role, pausedAt: null },
+            hiddenFromSearch: false,
             ...(city ? { OR: [{ city: { contains: city, mode: 'insensitive' } }, { location: { contains: city, mode: 'insensitive' } }] } : {}),
           },
           include: { user: { select: { id: true, pseudo: true, firstName: true, lastName: true, role: true } } },

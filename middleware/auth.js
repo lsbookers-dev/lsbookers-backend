@@ -11,6 +11,7 @@
 
 const jwt = require('jsonwebtoken');
 const prisma = require('../prisma/client');
+const { touchSession } = require('../lib/sessions');
 
 /**
  * authenticate
@@ -52,9 +53,14 @@ async function authenticate(req) {
         registrationStep: true,
         emailVerified: true,
         tokenVersion: true,
+        pausedAt: true,
         profile: {
           select: { id: true, avatar: true, banner: true },
         },
+        // Session de l'appareil (jetons émis depuis le 21/10/2026) : refusée si retirée dans les Réglages
+        ...(typeof decoded.sid === 'string'
+          ? { sessions: { where: { sid: decoded.sid }, select: { id: true, revokedAt: true, lastUsedAt: true }, take: 1 } }
+          : {}),
       },
     });
 
@@ -72,7 +78,18 @@ async function authenticate(req) {
       return { status: 401, error: 'Session expirée, veuillez vous reconnecter' };
     }
 
-    return { user };
+    let sessionSid = null;
+    if (typeof decoded.sid === 'string') {
+      const session = user.sessions?.[0];
+      if (!session || session.revokedAt) {
+        return { status: 401, error: 'Session fermée, veuillez vous reconnecter' };
+      }
+      touchSession(session);
+      sessionSid = decoded.sid;
+    }
+    delete user.sessions;
+
+    return { user, sessionSid };
   } catch (err) {
     if (err.name === 'TokenExpiredError') {
       return { status: 401, error: 'Session expiree, veuillez vous reconnecter' };
@@ -92,6 +109,7 @@ const requireAuth = async (req, res, next) => {
     return res.status(result.status).json({ error: result.error });
   }
   req.user = result.user;
+  req.sessionSid = result.sessionSid || null;
   next();
 };
 

@@ -197,6 +197,8 @@ router.get('/', requireAuth, async (req, res) => {
       where: {
         role: { not: 'ADMIN' },
         emailVerified: true,
+        // Réglages : comptes en pause et membres qui ne veulent pas apparaître dans la Recherche
+        pausedAt: null,
         id: { not: req.user.id, notIn: blockedIds.length ? blockedIds : undefined },
 
         ...(name && buildPublicNameFilter(name)),
@@ -207,6 +209,7 @@ router.get('/', requireAuth, async (req, res) => {
           }),
 
         profile: {
+          hiddenFromSearch: false,
           ...(specialty && {
             specialties: { has: String(specialty) },
           }),
@@ -313,6 +316,7 @@ router.get('/users', requireAuth, async (req, res) => {
         id:       { not: req.user.id },
         isAdmin:  false,
         emailVerified: true,
+        pausedAt: null, // compte en pause : on ne peut pas l'identifier ni le choisir
         ...buildPublicNameFilter(q),
       },
       select: {

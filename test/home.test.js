@@ -51,6 +51,9 @@ const PUBS = Array.from({ length: 60 }, (_, i) => ({
 function matches(pub, where = {}) {
   for (const [key, cond] of Object.entries(where)) {
     if (key === 'OR') { if (!cond.some(c => matches(pub, c))) return false; continue }
+    if (key === 'AND') { if (!cond.every(c => matches(pub, c))) return false; continue }
+    // Filtre sur l'auteur (compte en pause) : aucun auteur en pause dans ces données
+    if (key === 'profile') continue
     const value = pub[key]
     if (cond && typeof cond === 'object' && !(cond instanceof Date)) {
       if (cond.in && !cond.in.includes(value)) return false

@@ -7,7 +7,7 @@
     "node": "22.x"
   },
   "scripts": {
-    "test": "node --test",
+    "test": "LSB_DISABLE_EMAILS=1 DATABASE_URL=postgresql://test@127.0.0.1:1/aucune-base node --test",
     "dev": "nodemon server.js",
     "force-dev": "killall -9 node || true && nodemon server.js",
     "build": "prisma generate",

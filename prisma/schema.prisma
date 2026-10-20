@@ -173,6 +173,18 @@ model User {
   deviceVerifications   DeviceVerification[]
   pendingTrustedDevice  PendingTrustedDevice?
   tokenVersion          Int                      @default(0)
+
+  // Réglages du compte (page Réglages, 21/10/2026)
+  sessions              UserSession[]
+  notifPrefs            Json?                    // Choix par type : { bookings: { bell, email }, … } (vide = réglages par défaut)
+  newsletterOptIn       Boolean                  @default(false) // E-mails « Actualités LS Bookers » (consentement)
+  newsletterOptInAt     DateTime?
+  loginAlerts           Boolean                  @default(true)  // E-mail + notif quand un nouvel appareil se connecte
+  pausedAt              DateTime?                // Compte en pause : invisible des autres membres
+  passwordChangedAt     DateTime?
+  pendingEmail          String?                  // Nouvelle adresse en attente de confirmation
+  pendingEmailTokenHash String?                  @unique
+  pendingEmailExpiresAt DateTime?
   tagsReceived          PublicationTag[]          @relation("TaggedUser")
   tagsGiven             PublicationTag[]          @relation("TaggedByUser")
 }
@@ -209,6 +221,8 @@ model Profile {
   styles                  String[]                 // Styles artistiques (RNB, Electro, Jazz...)
   showRealName            Boolean                  @default(false)  // Afficher nom/prénom au lieu du pseudo
   weeklyRecap             Boolean                  @default(false)  // Recevoir le récap e-mail du lundi
+  messagePolicy           String                   @default("EVERYONE") // Qui peut m'écrire : EVERYONE | FOLLOWED (membres que je suis)
+  hiddenFromSearch        Boolean                  @default(false)  // Ne pas apparaître dans la Recherche et les Tendances
   showAddress             Boolean                  @default(false)  // Organisateur : afficher l'adresse exacte (carte placée dessus)
   lastWeeklyRecapAt       DateTime?
 
@@ -471,6 +485,7 @@ model ConversationParticipant {
   userId         Int
   conversationId Int
   muted          Boolean      @default(false)
+  lastEmailedAt  DateTime?    // Dernier e-mail « nouveau message » envoyé pour cette conversation
 
   user           User         @relation(fields: [userId], references: [id])
   conversation   Conversation @relation(fields: [conversationId], references: [id])
@@ -1137,4 +1152,22 @@ model Invoice {
   @@unique([issuerId, number])
   @@index([issuerId, kind])
   @@index([clientProfileId])
+}
+
+// Session de connexion (un appareil) : listée dans Réglages › Connexion et sécurité, révocable une à une
+model UserSession {
+  id         Int       @id @default(autoincrement())
+  userId     Int
+  sid        String    @unique // Identifiant porté par le jeton de session
+  deviceId   String?   // Cookie « appareil » durable : reconnaît un appareil déjà utilisé
+  name       String    // Ex. « Safari sur iPhone »
+  userAgent  String?
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime  @default(now())
+  revokedAt  DateTime?
+
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([userId, deviceId])
 }

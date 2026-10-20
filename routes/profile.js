@@ -203,6 +203,7 @@ router.get('/user/:userId', optionalAuth, async (req, res) => {
             firstName: true,
             lastName: true,
             role: true,
+            pausedAt: true,
             // email intentionnellement exclu (donnée privée)
             _count: { select: { followers: true, following: true } },
           },
@@ -213,6 +214,12 @@ router.get('/user/:userId', optionalAuth, async (req, res) => {
     if (!profile || isAdminRole(profile?.user?.role)) {
       return res.status(404).json({ error: 'Profil introuvable' });
     }
+
+    // Compte en pause (Réglages › Mes données) : invisible, sauf pour son propriétaire
+    if (profile.user.pausedAt && req.user?.id !== profile.userId) {
+      return res.status(404).json({ error: 'Ce compte est en pause', code: 'ACCOUNT_PAUSED' });
+    }
+    delete profile.user.pausedAt;
 
     // Vue comptée pour « Mon espace » : visiteur connecté, autre que le propriétaire, une fois par jour
     if (req.user?.id && req.user.id !== profile.userId) {

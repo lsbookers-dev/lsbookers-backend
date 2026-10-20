@@ -47,13 +47,20 @@ function init(httpServer) {
       // Vérifier que l'utilisateur existe, est actif et que sa session est toujours valide
       const user = await prisma.user.findUnique({
         where: { id: userId },
-        select: { id: true, emailVerified: true, requiresPasswordReset: true, tokenVersion: true },
+        select: {
+          id: true, emailVerified: true, requiresPasswordReset: true, tokenVersion: true,
+          ...(typeof decoded.sid === 'string' ? { sessions: { where: { sid: decoded.sid }, select: { revokedAt: true }, take: 1 } } : {}),
+        },
       })
       if (!user) return next(new Error('Unauthorized: user not found'))
       if (!user.emailVerified) return next(new Error('Unauthorized: email not verified'))
       if (user.requiresPasswordReset) return next(new Error('Unauthorized: password reset required'))
       // Point 1 — tokenVersion : rejeter les anciens JWT révoqués (ex: après changement de mdp)
       if (!Number.isInteger(decoded.tokenVersion) || decoded.tokenVersion !== user.tokenVersion) {
+        return next(new Error('Unauthorized: session revoked'))
+      }
+      // Appareil retiré dans les Réglages
+      if (typeof decoded.sid === 'string' && (!user.sessions?.[0] || user.sessions[0].revokedAt)) {
         return next(new Error('Unauthorized: session revoked'))
       }
 

@@ -14,7 +14,10 @@ const {
   deleteAccountSchema,
 } = require('../schemas');
 const { deleteUserAccount } = require('../services/accountDeletion');
-const { sendVerificationEmail } = require('../utils/email');
+const emailUtils = require('../utils/email');
+const { sendVerificationEmail } = emailUtils;
+const { issueSession } = require('../lib/sessions');
+const { createNotif } = require('../services/notifications');
 const { setSessionCookie, clearSessionCookie, isSameSiteRequest } = require('../lib/session');
 
 // Rate limiting pour les routes publiques d'énumération
@@ -42,6 +45,7 @@ function toClientUser(user) {
     emailVerificationToken: _emailVerificationToken,
     tokenVersion: _tokenVersion,
     requiresPasswordReset: _requiresPasswordReset,
+    pendingEmailTokenHash: _pendingEmailTokenHash,
     ...safeUser
   } = user
   return safeUser
@@ -225,12 +229,13 @@ router.post('/login', validate(loginSchema), async (req, res) => {
       return res.status(403).json({ error: 'PASSWORD_RESET_REQUIRED' })
     }
 
-    const token = jwt.sign(
-      { id: user.id, email: user.email, role: user.role, isAdmin: user.isAdmin, tokenVersion: user.tokenVersion },
-      process.env.JWT_SECRET,
-      { expiresIn: '7d' }
-    )
-    setSessionCookie(req, res, token)
+    // Une session par appareil (listée et révocable dans Réglages › Connexion et sécurité)
+    const { token, isNewDevice, deviceName } = await issueSession(req, res, user)
+    if (isNewDevice && user.loginAlerts) {
+      const date = new Date().toLocaleString('fr-FR', { dateStyle: 'long', timeStyle: 'short', timeZone: 'Europe/Paris' })
+      createNotif({ userId: user.id, type: 'NEW_DEVICE_LOGIN', content: `Nouvelle connexion à votre compte : ${deviceName}, le ${date}.` })
+      emailUtils.sendLoginAlertEmail(user.email, { deviceName, date }).catch(err => console.error('❌ Alerte de connexion :', err.message))
+    }
     // Mode « cookie uniquement » (site et API sur le même site) : le jeton n'est jamais
     // renvoyé au JavaScript de la page. Sinon (API sur railway.app), transition : jeton renvoyé.
     const body = { message: 'Connexion reussie', user: toClientUser(user) }
@@ -255,6 +260,10 @@ router.post('/logout', async (req, res) => {
       const decoded = jwt.verify(rawToken, process.env.JWT_SECRET)
       if (decoded?.id) {
         await prisma.user.update({ where: { id: decoded.id }, data: { lastActiveAt: null } }).catch(() => {})
+      }
+      // Cet appareil disparaît de la liste des appareils connectés
+      if (typeof decoded?.sid === 'string') {
+        await prisma.userSession.updateMany({ where: { sid: decoded.sid, revokedAt: null }, data: { revokedAt: new Date() } }).catch(() => {})
       }
     }
   } catch {}

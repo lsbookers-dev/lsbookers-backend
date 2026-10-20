@@ -20,6 +20,7 @@ const searchRoutes = require('./routes/search');
 const adminRoutes = require('./routes/admin');
 const adminSettingsRoutes = require('./routes/adminSettings'); // paramètres du site
 const adminPostsRoutes = require('./routes/adminPosts'); // publications LSBookers
+const accountRoutes = require('./routes/account'); // Réglages du compte
 const adminFeaturedRoutes = require('./routes/adminFeatured'); // carrousel de l'accueil
 const eventRoutes         = require('./routes/events');
 const eventBookingRoutes  = require('./routes/event-bookings');
@@ -163,6 +164,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/auth', passwordRoutes);
 
 app.use('/api/profile', profileRoutes);
+app.use('/api/account', accountRoutes);
 app.use('/api/media', mediaRoutes);
 app.use('/api/messages', messagingLimiter, messageRoutes);
 app.use('/api/follow', followRoutes);

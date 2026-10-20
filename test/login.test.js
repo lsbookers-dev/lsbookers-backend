@@ -5,6 +5,9 @@ const bcrypt = require('bcrypt')
 process.env.JWT_SECRET = 'test-secret-for-login'
 
 const prisma = require('../prisma/client')
+// Aucun vrai e-mail pendant les tests
+const emailUtils = require('../utils/email')
+emailUtils.sendLoginAlertEmail = async () => {}
 const authRouter = require('../routes/auth')
 const notificationsRouter = require('../routes/notifications')
 
@@ -39,11 +42,22 @@ function verifiedUser(password) {
   }
 }
 
-async function login(user, password) {
-  const originals = { findUser: prisma.user.findUnique, transaction: prisma.$transaction }
+async function login(user, password, { knownDevice = false, previousSessions = 0 } = {}) {
+  const originals = {
+    findUser: prisma.user.findUnique, transaction: prisma.$transaction,
+    sessionFind: prisma.userSession.findFirst, sessionCount: prisma.userSession.count, sessionCreate: prisma.userSession.create,
+    notifCreate: prisma.notification.create,
+  }
   let transactionCalled = false
+  const sessionsCreated = []
+  const notifs = []
   prisma.user.findUnique = async () => user
   prisma.$transaction = async () => { transactionCalled = true }
+  // Sessions simulées : le test n'écrit jamais dans une vraie base
+  prisma.userSession.findFirst = async () => (knownDevice ? { id: 1 } : null)
+  prisma.userSession.count = async () => previousSessions
+  prisma.userSession.create = async ({ data }) => { sessionsCreated.push(data); return { id: 1, ...data } }
+  prisma.notification.create = async ({ data }) => { notifs.push(data); return data }
   const res = responseRecorder()
   try {
     await routeHandler(authRouter, '/login')({
@@ -51,21 +65,49 @@ async function login(user, password) {
       headers: { 'user-agent': 'Safari iPhone' },
       cookies: {},
     }, res)
+    // L'alerte de connexion est créée juste après la réponse
+    await new Promise(r => setTimeout(r, 20))
   } finally {
     prisma.user.findUnique = originals.findUser
     prisma.$transaction = originals.transaction
+    prisma.userSession.findFirst = originals.sessionFind
+    prisma.userSession.count = originals.sessionCount
+    prisma.userSession.create = originals.sessionCreate
+    prisma.notification.create = originals.notifCreate
   }
-  return { res, transactionCalled }
+  return { res, transactionCalled, sessionsCreated, notifs }
 }
 
-test('connexion réussie : cookie de session posé, aucune vérification d’appareil', async () => {
+test('connexion réussie : cookie de session + appareil, une session enregistrée', async () => {
   const password = await bcrypt.hash('Test1234', 4)
-  const { res, transactionCalled } = await login(verifiedUser(password), 'Test1234')
+  const { res, transactionCalled, sessionsCreated, notifs } = await login(verifiedUser(password), 'Test1234')
 
   assert.equal(res.statusCode, 200)
   assert.equal(res.body.user.id, 42)
-  assert.deepEqual(res.cookies.map(cookie => cookie.name), ['token'])
+  assert.deepEqual(res.cookies.map(cookie => cookie.name), ['lsb_device', 'token'])
   assert.equal(transactionCalled, false)
+  assert.equal(sessionsCreated.length, 1)
+  assert.equal(sessionsCreated[0].userId, 42)
+  // Première connexion du compte : pas d'alerte
+  assert.equal(notifs.length, 0)
+})
+
+test('connexion depuis un nouvel appareil : alerte dans la cloche', async () => {
+  const password = await bcrypt.hash('Test1234', 4)
+  const user = { ...verifiedUser(password), loginAlerts: true }
+  const { notifs } = await login(user, 'Test1234', { previousSessions: 2 })
+  await new Promise(r => setImmediate(r))
+  assert.equal(notifs.length, 1)
+  assert.equal(notifs[0].type, 'NEW_DEVICE_LOGIN')
+})
+
+test('appareil déjà connu, ou alertes désactivées : pas d’alerte', async () => {
+  const password = await bcrypt.hash('Test1234', 4)
+  const known = await login({ ...verifiedUser(password), loginAlerts: true }, 'Test1234', { knownDevice: true, previousSessions: 2 })
+  const off = await login({ ...verifiedUser(password), loginAlerts: false }, 'Test1234', { previousSessions: 2 })
+  await new Promise(r => setImmediate(r))
+  assert.equal(known.notifs.length, 0)
+  assert.equal(off.notifs.length, 0)
 })
 
 test('mauvais mot de passe : refus générique', async () => {

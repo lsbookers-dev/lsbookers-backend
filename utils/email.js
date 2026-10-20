@@ -10,6 +10,8 @@ const FROM = 'LSBookers <noreply@lsbookers.com>';
 const APP_URL = (process.env.APP_URL || 'https://lsbookers.com').replace(/\/+$/, '');
 
 async function deliverEmail(payload) {
+  // Tests automatiques : aucun e-mail réel n'est jamais envoyé (voir « test » dans package.json)
+  if (process.env.LSB_DISABLE_EMAILS === '1') return { data: { id: 'test' } }
   const result = await resend.emails.send(payload)
   if (result?.error) {
     throw new Error(result.error.message || 'Le fournisseur email a refusé l’envoi')
@@ -153,4 +155,117 @@ async function sendNewDeviceEmail(to, { deviceName, date, trustLink, rejectLink 
   });
 }
 
-module.exports = { deliverEmail, FROM, APP_URL, sendVerificationEmail, sendPasswordResetEmail, sendNewDeviceEmail };
+// ─────────────────────────────────────────────
+// Mise en page commune des e-mails des Réglages (couleurs Violet & or)
+// ─────────────────────────────────────────────
+const escapeHtml = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+
+function emailLayout({ title, paragraphs = [], ctaLabel, ctaUrl, footer }) {
+  const body = paragraphs.map(p => `<p style="color:#b8b2c8;line-height:1.6;margin:0 0 14px">${p}</p>`).join('')
+  const cta = ctaUrl
+    ? `<div style="text-align:center;margin:28px 0"><a href="${ctaUrl}" style="display:inline-block;background:#7c3aed;color:#fff;padding:14px 28px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px">${escapeHtml(ctaLabel)}</a></div>`
+    : ''
+  return `
+    <div style="font-family:Arial,sans-serif;background:#0b0a10;color:#f5f2fb;padding:40px;border-radius:12px;max-width:560px;margin:0 auto">
+      <div style="text-align:center;margin-bottom:28px">
+        <span style="display:inline-block;background:#7c3aed;border-radius:10px;padding:10px 18px;font-weight:900;font-size:16px;letter-spacing:2px;color:#fff">LS Bookers</span>
+      </div>
+      <h2 style="color:#ffffff;margin:0 0 16px;font-size:20px">${escapeHtml(title)}</h2>
+      ${body}${cta}
+      <hr style="border:none;border-top:1px solid #24212f;margin:24px 0"/>
+      <p style="color:#6b6680;font-size:11px;text-align:center;line-height:1.6">
+        ${footer || 'Vous recevez cet e-mail car vous avez un compte LS Bookers.'}<br/>
+        <a href="${APP_URL}/settings/notifications" style="color:#c4b5fd">Choisir mes e-mails</a> · © ${new Date().getFullYear()} LS Bookers
+      </p>
+    </div>`
+}
+
+/** Alerte : un nouvel appareil s'est connecté au compte */
+async function sendLoginAlertEmail(to, { deviceName, date }) {
+  await deliverEmail({
+    from: FROM, to,
+    subject: 'Nouvelle connexion à votre compte — LS Bookers',
+    html: emailLayout({
+      title: 'Nouvelle connexion à votre compte',
+      paragraphs: [
+        `Un appareil s'est connecté à votre compte : <strong style="color:#fff">${escapeHtml(deviceName)}</strong>, le ${escapeHtml(date)}.`,
+        `Si c'était vous, il n'y a rien à faire.`,
+        `Si ce n'était <strong style="color:#f87171">pas vous</strong>, retirez cet appareil et changez votre mot de passe depuis vos Réglages.`,
+      ],
+      ctaLabel: 'Voir mes appareils',
+      ctaUrl: `${APP_URL}/settings/security`,
+      footer: 'Alerte de sécurité : elle se désactive dans Réglages › Connexion et sécurité.',
+    }),
+  })
+}
+
+/** Confirmation d'une nouvelle adresse e-mail (envoyé à la nouvelle adresse) */
+async function sendEmailChangeConfirmation(to, token) {
+  await deliverEmail({
+    from: FROM, to,
+    subject: 'Confirmez votre nouvelle adresse e-mail — LS Bookers',
+    html: emailLayout({
+      title: 'Confirmez votre nouvelle adresse e-mail',
+      paragraphs: [
+        'Vous avez demandé à utiliser cette adresse pour votre compte LS Bookers.',
+        'Cliquez sur le bouton ci-dessous pour confirmer (lien valable 24 h). Tant que vous ne confirmez pas, votre ancienne adresse reste active.',
+        "Si vous n'êtes pas à l'origine de cette demande, ignorez cet e-mail.",
+      ],
+      ctaLabel: 'Confirmer cette adresse',
+      ctaUrl: `${APP_URL}/confirm-email-change?token=${encodeURIComponent(token)}`,
+      footer: 'E-mail de sécurité lié à votre compte.',
+    }),
+  })
+}
+
+/** Information envoyée à l'ancienne adresse une fois le changement confirmé */
+async function sendEmailChangedNotice(to, newEmail) {
+  await deliverEmail({
+    from: FROM, to,
+    subject: 'Votre adresse e-mail a été modifiée — LS Bookers',
+    html: emailLayout({
+      title: 'Votre adresse e-mail a été modifiée',
+      paragraphs: [
+        `Votre compte LS Bookers utilise désormais l'adresse <strong style="color:#fff">${escapeHtml(newEmail)}</strong>.`,
+        "Si vous n'êtes pas à l'origine de ce changement, contactez-nous immédiatement en répondant à cet e-mail ou depuis la page Contact.",
+      ],
+      ctaLabel: 'Nous contacter',
+      ctaUrl: `${APP_URL}/contact`,
+      footer: 'E-mail de sécurité lié à votre compte.',
+    }),
+  })
+}
+
+/** E-mail d'une notification (booking, offre, avis, événement…) choisie dans les Réglages */
+async function sendNotificationEmail(to, { content }) {
+  await deliverEmail({
+    from: FROM, to,
+    subject: `${String(content).slice(0, 90)} — LS Bookers`,
+    html: emailLayout({
+      title: 'Du nouveau sur LS Bookers',
+      paragraphs: [escapeHtml(content)],
+      ctaLabel: 'Voir sur LS Bookers',
+      ctaUrl: `${APP_URL}/notifications`,
+    }),
+  })
+}
+
+/** Nouveau message reçu pendant que le membre n'est pas sur le site */
+async function sendNewMessageEmail(to, { senderName, conversationId }) {
+  await deliverEmail({
+    from: FROM, to,
+    subject: `Nouveau message de ${String(senderName).slice(0, 60)} — LS Bookers`,
+    html: emailLayout({
+      title: `${escapeHtml(senderName)} vous a écrit`,
+      paragraphs: ['Vous avez un nouveau message sur LS Bookers.'],
+      ctaLabel: 'Lire le message',
+      ctaUrl: `${APP_URL}/messages?c=${Number(conversationId)}`,
+    }),
+  })
+}
+
+module.exports = {
+  deliverEmail, FROM, APP_URL, sendVerificationEmail, sendPasswordResetEmail, sendNewDeviceEmail,
+  emailLayout, sendLoginAlertEmail, sendEmailChangeConfirmation, sendEmailChangedNotice,
+  sendNotificationEmail, sendNewMessageEmail,
+};
