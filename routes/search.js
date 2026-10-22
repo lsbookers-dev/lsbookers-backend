@@ -115,7 +115,7 @@ async function geocodeLocation(query) {
       )}`,
       {
         headers: {
-          'User-Agent': 'LSBookers/1.0 (contact: support@lsbookers.com)',
+          'User-Agent': 'LSBookers/1.0 (contact@lsbookers.com)',
           'Accept-Language': 'fr,en',
         },
       }
