@@ -59,13 +59,22 @@ const router = express.Router()
 
 router.post('/', express.raw({ type: 'application/json', limit: '1mb' }), async (req, res) => {
   const stripe = getStripe()
-  const secret = process.env.STRIPE_WEBHOOK_SECRET
-  if (!stripe || !secret) return res.status(503).json({ error: 'Stripe non configuré' })
-  let event
-  try {
-    event = stripe.webhooks.constructEvent(req.body, req.headers['stripe-signature'], secret)
-  } catch (err) {
-    console.warn('Webhook Stripe : signature invalide', err.message)
+  // Deux destinations Stripe : « votre compte » (paiements, abonnements) et « comptes connectés »
+  // (comptes de paiement des artistes), chacune avec son propre secret
+  const secrets = [process.env.STRIPE_WEBHOOK_SECRET, process.env.STRIPE_WEBHOOK_SECRET_CONNECT].filter(Boolean)
+  if (!stripe || !secrets.length) return res.status(503).json({ error: 'Stripe non configuré' })
+  let event = null
+  let lastError = null
+  for (const secret of secrets) {
+    try {
+      event = stripe.webhooks.constructEvent(req.body, req.headers['stripe-signature'], secret)
+      break
+    } catch (err) {
+      lastError = err
+    }
+  }
+  if (!event) {
+    console.warn('Webhook Stripe : signature invalide', lastError?.message)
     return res.status(400).json({ error: 'Signature invalide' })
   }
   try {

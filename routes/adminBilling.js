@@ -44,7 +44,7 @@ function sanitizeSettings(input, base = DEFAULT_PLAN_SETTINGS, path = '') {
 
 router.get('/settings', async (_req, res) => {
   try {
-    res.json({ settings: await getPlanSettings(), defaults: DEFAULT_PLAN_SETTINGS, stripeConfigured: !!getStripe(), webhookConfigured: !!process.env.STRIPE_WEBHOOK_SECRET })
+    res.json({ settings: await getPlanSettings(), defaults: DEFAULT_PLAN_SETTINGS, stripeConfigured: !!getStripe(), webhookConfigured: !!process.env.STRIPE_WEBHOOK_SECRET, connectWebhookConfigured: !!process.env.STRIPE_WEBHOOK_SECRET_CONNECT, testMode: String(process.env.STRIPE_SECRET_KEY || '').startsWith('sk_test_') })
   } catch (err) { sendError(res, err, 'GET admin/billing/settings') }
 })
 
