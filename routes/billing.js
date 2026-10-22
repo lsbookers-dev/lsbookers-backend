@@ -56,6 +56,11 @@ router.get('/me', requireAuth, async (req, res) => {
       prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } }),
       prisma.user.findUnique({ where: { id: req.user.id }, select: { signupPlan: true } }),
     ])
+    // Code Fondateur réservé à ce membre et pas encore utilisé : activable en un clic
+    const founder = plan.isPro ? null : await prisma.promoCode.findFirst({
+      where: { kind: 'FOUNDER', active: true, reservedUserId: req.user.id, usedCount: 0, OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] },
+      select: { code: true },
+    })
     // Formule choisie à l'inscription, pas encore finalisée
     const [signupChoice, signupInterval, signupPromo] = String(account?.signupPlan || '').split('|')
     const sub = plan.subscription
@@ -76,6 +81,7 @@ router.get('/me', requireAuth, async (req, res) => {
       commission: settings.commission,
       limits: settings.limits,
       usage: await usage(profile?.id),
+      founderCode: founder?.code || null,
       signupPlan: account?.signupPlan && !plan.isPro
         ? { plan: signupChoice === 'PRO' ? 'PRO' : 'FREE', interval: signupInterval === 'MONTH' ? 'MONTH' : 'YEAR', promoCode: signupPromo || null }
         : null,

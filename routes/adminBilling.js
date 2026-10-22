@@ -106,7 +106,7 @@ router.post('/promo-codes', async (req, res) => {
       for (const u of users.filter(u => !skip.has(u.id))) {
         const code = await prisma.promoCode.create({ data: { code: randomCode('FONDATEUR'), kind, maxUses: 1, note: userName(u), reservedUserId: u.id, expiresAt } })
         created.push(code)
-        await createNotif({ userId: u.id, type: 'SUBSCRIPTION_UPDATE', content: `Merci d'être membre fondateur ! Votre code ${code.code} vous offre la version Pro à vie : saisissez-le dans « Code promo » sur la page Offres et abonnements.` })
+        await createNotif({ userId: u.id, type: 'SUBSCRIPTION_UPDATE', content: `Merci d'être membre fondateur ! LS Bookers vous offre la version Pro à vie : cliquez ici pour l'activer en un clic.` })
       }
       return res.status(201).json({ codes: created, skipped: users.filter(u => skip.has(u.id)).map(userName) })
     }
