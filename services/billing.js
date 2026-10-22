@@ -44,6 +44,7 @@ async function checkPromoCode(rawCode, userId, expectedKind) {
       ? 'Ce code Fondateur s’utilise avec le bouton « J’ai un code Fondateur ».'
       : 'Ce code ne peut pas être utilisé ici.')
   }
+  if (promo.reservedUserId && promo.reservedUserId !== userId) throw new BillingError('PROMO_RESERVED', 'Ce code est réservé à un autre membre.')
   if (promo.expiresAt && promo.expiresAt <= new Date()) throw new BillingError('PROMO_EXPIRED', 'Ce code promo a expiré.')
   if (promo.maxUses != null && promo.usedCount >= promo.maxUses) throw new BillingError('PROMO_USED', 'Ce code promo a déjà été utilisé.')
   const already = await prisma.promoRedemption.findUnique({ where: { codeId_userId: { codeId: promo.id, userId } } })

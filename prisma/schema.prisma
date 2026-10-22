@@ -178,6 +178,7 @@ model User {
   passwordResets       PasswordReset[]
   subscription         Subscription?
   promoRedemptions     PromoRedemption[]
+  reservedPromoCodes   PromoCode[]               @relation("PromoReservedUser")
   extraOrders          ExtraOrder[]
   loginEvents          LoginEvent[]
   trustedDevices       TrustedDevice[]
@@ -881,18 +882,20 @@ model Subscription {
 // Codes promo : FOUNDER (Pro offert à vie, un code par personne, usage unique)
 // et LAUNCH (mois offerts qui remplacent l'essai, carte demandée)
 model PromoCode {
-  id         Int       @id @default(autoincrement())
-  code       String    @unique
-  kind       String // FOUNDER | LAUNCH
-  freeMonths Int? // LAUNCH : nombre de mois offerts
-  maxUses    Int? // vide = illimité (chaque compte une seule fois)
-  usedCount  Int       @default(0)
-  active     Boolean   @default(true)
-  expiresAt  DateTime?
-  note       String? // À qui il est destiné
-  createdAt  DateTime  @default(now())
+  id             Int       @id @default(autoincrement())
+  code           String    @unique
+  kind           String // FOUNDER | LAUNCH
+  freeMonths     Int? // LAUNCH : nombre de mois offerts
+  maxUses        Int? // vide = illimité (chaque compte une seule fois)
+  usedCount      Int       @default(0)
+  active         Boolean   @default(true)
+  expiresAt      DateTime?
+  note           String? // À qui il est destiné
+  reservedUserId Int? // Code Fondateur réservé à ce membre (lui seul peut l'utiliser)
+  createdAt      DateTime  @default(now())
 
-  redemptions PromoRedemption[]
+  redemptions  PromoRedemption[]
+  reservedUser User?             @relation("PromoReservedUser", fields: [reservedUserId], references: [id], onDelete: SetNull)
 }
 
 model PromoRedemption {
