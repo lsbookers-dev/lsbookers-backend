@@ -242,6 +242,28 @@ router.patch('/booking-request/:id', requireAuth, async (req, res) => {
         actorId:   br.target.userId,
         messageId: linkedMsgId,
       });
+
+      // Offre encore en ligne pour ce besoin (même événement, ou offre à laquelle la personne a postulé) :
+      // on propose à l'organisateur de la clôturer
+      const openOffers = await prisma.offer.findMany({
+        where: {
+          organizerId: br.requesterId,
+          status: 'ACTIVE',
+          OR: [
+            ...(eventId ? [{ eventId }] : []),
+            { applications: { some: { applicantId: br.targetId } } },
+          ],
+        },
+        select: { id: true, title: true },
+      });
+      for (const o of openOffers) {
+        await createNotif({
+          userId:  br.requester.userId,
+          type:    'OFFER_TO_CLOSE',
+          content: `Booking confirmé avec ${targetName} : votre offre « ${o.title} » est toujours en ligne. Clôturez-la pour ne plus recevoir de candidatures.`,
+          offerId: o.id,
+        });
+      }
     }
 
     if (status === 'DECLINED') {

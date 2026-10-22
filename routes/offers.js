@@ -197,7 +197,7 @@ router.put('/:id', requireAuth, validate(offerUpdateSchema), async (req, res) =>
     if (!offer) return res.status(404).json({ error: 'OFFRE_INTROUVABLE' });
     if (offer.organizerId !== profile.id) return res.status(403).json({ error: 'ACCÈS_REFUSÉ' });
 
-    const { title, description, type, specialty, date, location, country, radiusKm, fee, status } = req.body;
+    const { title, description, type, specialty, date, endDate, location, country, radiusKm, fee, status } = req.body;
     const data = {};
     if (title)       data.title       = String(title).trim();
     if (description) data.description = String(description).trim();
@@ -324,6 +324,37 @@ router.post('/:id/apply', requireAuth, async (req, res) => {
     return res.json({ conversationId: conversation.id });
   } catch (err) {
     console.error('❌ POST /offers/:id/apply :', err);
+    return res.status(500).json({ error: 'ERREUR_SERVEUR' });
+  }
+});
+
+/* ── POST /api/offers/:id/close — clôturer (offre pourvue) ──
+   L'offre disparaît de la liste et ne reçoit plus de candidatures ; les candidats encore
+   en attente sont prévenus. */
+router.post('/:id/close', requireAuth, async (req, res) => {
+  try {
+    const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
+    const offer = await prisma.offer.findUnique({
+      where: { id: parseInt(req.params.id, 10) },
+      include: { applications: { where: { status: 'PENDING' }, select: { id: true, applicant: { select: { userId: true } } } } },
+    });
+    if (!offer) return res.status(404).json({ error: 'OFFRE_INTROUVABLE' });
+    if (!profile || offer.organizerId !== profile.id) return res.status(403).json({ error: 'ACCÈS_REFUSÉ' });
+    if (offer.status === 'CLOSED') return res.json({ ok: true });
+
+    await prisma.offer.update({ where: { id: offer.id }, data: { status: 'CLOSED' } });
+    for (const a of offer.applications) {
+      await createNotif({
+        userId: a.applicant.userId,
+        type: 'OFFER_CLOSED',
+        content: `L'offre « ${offer.title} » a été pourvue et n'est plus en ligne. Merci pour votre candidature !`,
+        actorId: req.user.id,
+        offerId: offer.id,
+      });
+    }
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('❌ POST /offers/:id/close :', err);
     return res.status(500).json({ error: 'ERREUR_SERVEUR' });
   }
 });
