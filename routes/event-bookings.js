@@ -259,11 +259,13 @@ router.patch('/booking-request/:id', requireAuth, async (req, res) => {
       if (br.offerId && br.closeOfferOnAccept) {
         const closed = await closeOffer(br.offerId, { actorUserId: br.requester.userId, keepProfileId: br.targetId });
         if (closed) {
+          // Confirmation pour l'organisateur : le clic ouvre le booking dans l'agenda
           await createNotif({
             userId:  br.requester.userId,
-            type:    'OFFER_CLOSED',
+            type:    'OFFER_FILLED',
             content: `Booking confirmé avec ${targetName} : votre offre « ${closed.title} » est clôturée, les autres candidats ont été prévenus.`,
             offerId: closed.id,
+            eventId: eventId || br.eventId || undefined,
           });
         }
       }
@@ -284,6 +286,7 @@ router.patch('/booking-request/:id', requireAuth, async (req, res) => {
       for (const o of openOffers) {
         await createNotif({
           userId:  br.requester.userId,
+          eventId: eventId || br.eventId || undefined,
           type:    'OFFER_TO_CLOSE',
           content: `Booking confirmé avec ${targetName} : votre offre « ${o.title} » est toujours en ligne. Clôturez-la pour ne plus recevoir de candidatures.`,
           offerId: o.id,
