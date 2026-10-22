@@ -2,6 +2,7 @@ const express = require('express')
 const router = express.Router()
 const prisma = require('../prisma/client')
 const { requireAuth } = require('../middleware/auth')
+const { boostPro, isProSubscription } = require('../lib/plan')
 
 // fetch compatible CommonJS
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args))
@@ -42,6 +43,8 @@ const publicSearchSelect = {
   lastName: true,
   role: true,
   createdAt: true,
+  // Badge Pro et coup de pouce dans les résultats
+  subscription: { select: { status: true, endDate: true, currentPeriodEnd: true } },
   profile: {
     select: {
       location: true,
@@ -69,6 +72,7 @@ function toPublicSearchUser(user) {
     lastName: showRealName ? user.lastName : null,
     role: user.role,
     createdAt: user.createdAt,
+    isPro: isProSubscription(user.subscription),
     profile: profile
       ? {
           location: profile.location,
@@ -199,6 +203,7 @@ router.get('/', requireAuth, async (req, res) => {
         emailVerified: true,
         // Réglages : comptes en pause et membres qui ne veulent pas apparaître dans la Recherche
         pausedAt: null,
+        bannedAt: null,
         id: { not: req.user.id, notIn: blockedIds.length ? blockedIds : undefined },
 
         ...(name && buildPublicNameFilter(name)),
@@ -242,11 +247,11 @@ router.get('/', requireAuth, async (req, res) => {
       orderBy: { createdAt: 'desc' },
     })
 
-    let finalUsers = users
+    let finalUsers = boostPro(users, u => isProSubscription(u.subscription))
 
     // Cas 1 : zone seule => recherche texte sur la ville / zone
     if (zoneText && !hasRadiusFilter) {
-      finalUsers = users.filter((user) => {
+      finalUsers = finalUsers.filter((user) => {
         const p = user.profile
         if (!p?.location) return false
         return normalizeText(p.location).includes(zoneText)
@@ -263,7 +268,7 @@ router.get('/', requireAuth, async (req, res) => {
 
       const results = []
 
-      for (const user of users) {
+      for (const user of finalUsers) {
         const p = user.profile
         if (!p) continue
 

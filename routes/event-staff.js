@@ -5,10 +5,11 @@ const express = require('express');
 const router = express.Router();
 const prisma = require('../prisma/client');
 const { requireAuth } = require('../middleware/auth');
+const { requirePro } = require('../lib/plan'); // budget, équipe et documents d'événement : version Pro
 const { createNotif, displayName } = require('../services/notifications');
 
 // POST /api/events/:id/staff — ajouter un membre du personnel
-router.post('/:id/staff', requireAuth, async (req, res) => {
+router.post('/:id/staff', requireAuth, requirePro, async (req, res) => {
   const { role, name, fee, notes, profileId: staffProfileId } = req.body;
   if (!role?.trim()) return res.status(400).json({ error: 'Rôle requis' });
   try {

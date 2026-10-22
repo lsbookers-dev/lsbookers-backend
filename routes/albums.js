@@ -2,6 +2,7 @@ const express = require('express')
 const router = express.Router()
 const prisma = require('../prisma/client')
 const { requireAuth } = require('../middleware/auth')
+const { checkLimit } = require('../lib/plan')
 const { isOwnMediaUrl } = require('../lib/mediaUrl')
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -148,6 +149,10 @@ router.post('/', requireAuth, async (req, res) => {
   try {
     const profile = await getProfileOfUser(req.user.id)
     if (!profile) return res.status(404).json({ error: 'Profil introuvable' })
+
+    // Compte gratuit : nombre d'albums limité
+    const limited = await checkLimit(req.user, 'albums', { profileId: profile.id })
+    if (limited) return res.status(403).json(limited)
 
     const album = await prisma.album.create({
       data: {

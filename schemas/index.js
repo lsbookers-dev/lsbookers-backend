@@ -199,6 +199,8 @@ const publicationCreateSchema = z.object({
     mediaType: z.preprocess(v => typeof v === 'string' ? v.toLowerCase() : v, z.enum(['image', 'video', 'audio'])).optional(),
     order:     z.number().int().min(0).optional(),
   })).max(9).optional(),
+  // Durée (en secondes) des vidéos envoyées, lue par le site avant l'envoi (limite du compte gratuit)
+  videoDurations: z.array(z.number().nonnegative().max(86400)).max(10).optional(),
 });
 
 const commentCreateSchema = z.object({

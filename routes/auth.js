@@ -229,6 +229,11 @@ router.post('/login', validate(loginSchema), async (req, res) => {
       return res.status(403).json({ error: 'PASSWORD_RESET_REQUIRED' })
     }
 
+    // Compte suspendu par l'admin (ex. annulations répétées à moins de 7 jours)
+    if (user.bannedAt) {
+      return res.status(403).json({ error: 'ACCOUNT_BANNED', message: 'Ce compte a été suspendu. Pour toute question : contact@lsbookers.com' })
+    }
+
     // Une session par appareil (listée et révocable dans Réglages › Connexion et sécurité)
     const { token, isNewDevice, deviceName } = await issueSession(req, res, user)
     if (isNewDevice && user.loginAlerts) {

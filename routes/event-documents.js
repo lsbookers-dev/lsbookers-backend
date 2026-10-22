@@ -5,6 +5,7 @@ const express = require('express');
 const router = express.Router();
 const prisma = require('../prisma/client');
 const { requireAuth } = require('../middleware/auth');
+const { requirePro } = require('../lib/plan'); // budget, équipe et documents d'événement : version Pro
 const { isOwnMediaUrl } = require('../lib/mediaUrl');
 
 // GET /api/events/:id/documents — lister les documents
@@ -23,7 +24,7 @@ router.get('/:id/documents', requireAuth, async (req, res) => {
 });
 
 // POST /api/events/:id/documents — ajouter un document
-router.post('/:id/documents', requireAuth, async (req, res) => {
+router.post('/:id/documents', requireAuth, requirePro, async (req, res) => {
   const { name, url, fileType } = req.body;
   if (!name?.trim() || !url?.trim()) return res.status(400).json({ error: 'Nom et URL requis' });
   if (!isOwnMediaUrl(url)) return res.status(400).json({ error: 'URL de document invalide' });

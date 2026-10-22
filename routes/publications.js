@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const prisma = require('../prisma/client');
 const { requireAuth, optionalAuth } = require('../middleware/auth');
+const { checkLimit, checkVideoDurations } = require('../lib/plan');
 const { isBlockedBetween, getBlockedUserIds, getBlockedProfileIds } = require('../lib/blocks');
 const { isOwnMediaUrl } = require('../lib/mediaUrl');
 const { validate } = require('../middleware/validate');
@@ -128,7 +129,7 @@ router.get('/profile/:profileId', optionalAuth, async (req, res) => {
 
 // POST /api/publications
 router.post('/', requireAuth, validate(publicationCreateSchema), async (req, res) => {
-  const { title, media, mediaType, caption, profileId, additionalMedia } = req.body;
+  const { title, media, mediaType, caption, profileId, additionalMedia, videoDurations } = req.body;
   const parsedProfileId = parseInt(profileId, 10);
 
   try {
@@ -148,6 +149,15 @@ router.post('/', requireAuth, validate(publicationCreateSchema), async (req, res
     // Vérifie que le profil appartient bien à l'utilisateur connecté
     if (profile.userId !== req.user.id) {
       return res.status(403).json({ error: 'Accès interdit' });
+    }
+
+    // Compte gratuit : nombre et durée des vidéos limités
+    const videoCount = [mediaType, ...(Array.isArray(additionalMedia) ? additionalMedia.map(m => m?.mediaType) : [])]
+      .filter(t => String(t || '').toLowerCase() === 'video').length;
+    if (videoCount > 0) {
+      const limited = await checkLimit(req.user, 'videos', { profileId: parsedProfileId, adding: videoCount })
+        || await checkVideoDurations(req.user, videoDurations);
+      if (limited) return res.status(403).json(limited);
     }
 
     // Validation URL média principal (doit provenir de notre bucket R2)

@@ -4,6 +4,9 @@ const router = express.Router()
 const prisma = require('../prisma/client')
 const { getBlockedProfileIds } = require('../lib/blocks')
 const { requireAuth, optionalAuth } = require('../middleware/auth')
+const { carouselFeatured } = require('../services/extras')
+const { ensureProfileRegion } = require('../lib/regions')
+const { isProSubscription } = require('../lib/plan')
 
 const MEMBER_ROLES = ['ARTIST', 'ORGANIZER', 'PROVIDER']
 
@@ -110,23 +113,20 @@ function formatPost(p, likedIds) {
 }
 
 // ─── GET /api/home/carousel ─────────────────────────────────
-// Profils mis en avant à la main depuis l'admin (Admin › Carrousel).
+// Profils mis en avant : offerts par l'admin (partout), payés en national (toute la France)
+// et payés en régional (seulement auprès des membres de la même région).
 // Tant qu'aucun profil n'est choisi, on montre les profils les plus suivis.
-router.get('/carousel', async (req, res) => {
+router.get('/carousel', optionalAuth, async (req, res) => {
   try {
-    const now = new Date()
-    const selected = await prisma.homeFeatured.findMany({
-      where: { OR: [{ endsAt: null }, { endsAt: { gt: now } }], profile: { user: { role: { in: MEMBER_ROLES }, pausedAt: null } } },
-      orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
-      include: { profile: { include: { user: true } } },
-      take: 12,
-    })
+    let viewerRegion = null
+    if (req.user?.profile?.id) viewerRegion = await ensureProfileRegion(req.user.profile.id).catch(() => null)
+    const selected = await carouselFeatured(viewerRegion)
 
     let featured = selected.map(f => ({ user: f.profile.user, profile: f.profile, isFeatured: true }))
 
     if (featured.length === 0) {
       const popular = await prisma.user.findMany({
-        where: { role: { in: MEMBER_ROLES }, pausedAt: null, profile: { avatar: { not: null }, hiddenFromSearch: false } },
+        where: { role: { in: MEMBER_ROLES }, pausedAt: null, bannedAt: null, profile: { avatar: { not: null }, hiddenFromSearch: false } },
         include: { profile: true, _count: { select: { followers: true } } },
         take: 30,
       })
@@ -437,11 +437,11 @@ router.get('/trends', optionalAuth, async (req, res) => {
           where: {
             id: { in: ids },
             // Réglages : comptes en pause et membres qui ne veulent pas apparaître dans les Tendances
-            user: { role, pausedAt: null },
+            user: { role, pausedAt: null, bannedAt: null },
             hiddenFromSearch: false,
             ...(city ? { OR: [{ city: { contains: city, mode: 'insensitive' } }, { location: { contains: city, mode: 'insensitive' } }] } : {}),
           },
-          include: { user: { select: { id: true, pseudo: true, firstName: true, lastName: true, role: true } } },
+          include: { user: { select: { id: true, pseudo: true, firstName: true, lastName: true, role: true, subscription: { select: { status: true, endDate: true, currentPeriodEnd: true } } } } },
         })
       : []
 
@@ -459,7 +459,9 @@ router.get('/trends', optionalAuth, async (req, res) => {
         avatar: p.avatar || null,
         profession: p.profession || p.specialties?.[0] || null,
         location: p.location || p.city || null,
-        score: scores.get(p.id) || 0,
+        // Léger coup de pouce aux comptes Pro (+10 % de points)
+        score: (scores.get(p.id) || 0) * (isProSubscription(p.user.subscription) ? 1.1 : 1),
+        isPro: isProSubscription(p.user.subscription),
         profileUrl: profileUrl(p.user),
       }))
       .sort((a, b) => b.score - a.score || a.profileId - b.profileId)

@@ -6,6 +6,8 @@ const router = express.Router();
 const prisma = require('../prisma/client');
 const { requireAuth } = require('../middleware/auth');
 const { createNotif, displayName } = require('../services/notifications');
+const { checkLimit } = require('../lib/plan');
+const { onBookingCancelled } = require('../services/bookingPayments');
 
 /**
  * Rattache un booking accepté à l'événement de l'organisateur :
@@ -67,6 +69,10 @@ router.post('/booking-request', requireAuth, async (req, res) => {
       select: { id: true, userId: true },
     });
     if (!targetProfile) return res.status(404).json({ error: 'Profil cible introuvable' });
+
+    // Compte gratuit : demandes de booking limitées par mois
+    const limited = await checkLimit(req.user, 'bookingRequestsPerMonth', { profileId: requesterProfile.id });
+    if (limited) return res.status(403).json(limited);
 
     // 1. Créer la BookingRequest
     const bookingRequest = await prisma.bookingRequest.create({
@@ -196,6 +202,11 @@ router.patch('/booking-request/:id', requireAuth, async (req, res) => {
 
     const updated = await prisma.bookingRequest.update({ where: { id: br.id }, data: { status } });
 
+    // Booking déjà accepté puis annulé : remboursement / annulation tardive selon les règles
+    if (status === 'CANCELLED' && br.status === 'ACCEPTED') {
+      await onBookingCancelled(br.id, profile.id).catch(err => console.error('onBookingCancelled:', err));
+    }
+
     const targetName    = br.target.user?.pseudo    || [br.target.user?.firstName,    br.target.user?.lastName].filter(Boolean).join(' ')    || 'Artiste';
     const requesterName = br.requester.user?.pseudo || [br.requester.user?.firstName, br.requester.user?.lastName].filter(Boolean).join(' ') || 'Organisateur';
     const dateLabel     = new Date(br.startDate).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
@@ -295,6 +306,34 @@ router.post('/booking-request/:id/cancel-request', requireAuth, async (req, res)
     if (br.requesterId !== profile?.id && br.targetId !== profile?.id) return res.status(403).json({ error: 'Non autorisé' });
     if (br.cancellationRequestedBy) return res.status(400).json({ error: "Une demande d'annulation est déjà en cours" });
 
+    // Booking payé en ligne : l'annulation est immédiate, les règles de remboursement s'appliquent
+    // d'elles-mêmes (LS Bookers n'arbitre pas, et l'autre partie ne peut pas bloquer l'annulation)
+    if (br.paymentMode === 'ONLINE') {
+      const cancelled = await prisma.bookingRequest.update({
+        where: { id: br.id },
+        data: { status: 'CANCELLED', cancellationRequestedBy: null, cancellationNote: null },
+      });
+      const result = await onBookingCancelled(br.id, profile.id);
+      const who = profile.id === br.requesterId ? br.requester.user : br.target.user;
+      const whoName = who?.pseudo || [who?.firstName, who?.lastName].filter(Boolean).join(' ') || 'Utilisateur';
+      const dateLabel = new Date(br.startDate).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+      const conv = await prisma.message.findFirst({ where: { bookingRequestId: br.id, type: 'BOOKING_REQUEST' }, select: { id: true, conversationId: true } });
+      if (conv) {
+        await prisma.message.create({
+          data: { content: `Booking du ${dateLabel} annulé par ${whoName}${note ? `\n"${note.trim()}"` : ''}`, senderId: req.user.id, conversationId: conv.conversationId, type: 'TEXT', bookingRequestId: br.id },
+        });
+        await prisma.conversation.update({ where: { id: conv.conversationId }, data: { updatedAt: new Date() } });
+      }
+      await createNotif({
+        userId: profile.id === br.requesterId ? br.target.userId : br.requester.userId,
+        type: 'BOOKING_CANCELLED',
+        content: `Le booking du ${dateLabel} a été annulé par ${whoName}.`,
+        actorId: req.user.id,
+        messageId: conv?.id,
+      });
+      return res.json({ request: cancelled, cancelled: true, late: result?.late ?? false });
+    }
+
     const updated = await prisma.bookingRequest.update({
       where: { id: br.id },
       data: { cancellationRequestedBy: profile.id, cancellationNote: note?.trim() || null },
@@ -367,6 +406,8 @@ router.post('/booking-request/:id/cancel-response', requireAuth, async (req, res
         where: { id: br.id },
         data: { status: 'CANCELLED', cancellationRequestedBy: null, cancellationNote: null },
       });
+      // Annulation tardive comptée pour celui qui l'a demandée ; remboursement si payé en ligne
+      await onBookingCancelled(br.id, br.cancellationRequestedBy).catch(err => console.error('onBookingCancelled:', err));
       await createNotif({
         userId:    cancelerUserId,
         type:      'CANCELLATION_ACCEPTED',

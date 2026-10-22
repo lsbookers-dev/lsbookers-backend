@@ -6,6 +6,7 @@ const router = express.Router();
 const prisma = require('../prisma/client');
 const { deleteR2Object } = require('../lib/r2');
 const { requireAuth } = require('../middleware/auth');
+const { checkLimit, requirePro } = require('../lib/plan'); // limites du compte gratuit ; budget, équipe et documents : version Pro
 const { validate } = require('../middleware/validate');
 const { eventCreateSchema, eventUpdateSchema } = require('../schemas');
 
@@ -78,6 +79,9 @@ router.post('/', requireAuth, validate(eventCreateSchema), async (req, res) => {
   try {
     const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
     if (!profile) return res.status(404).json({ error: 'Profil introuvable' });
+    // Compte gratuit : nombre d'événements en même temps limité (ceux où l'on est booké ne comptent pas)
+    const limited = await checkLimit(req.user, 'activeEvents', { profileId: profile.id });
+    if (limited) return res.status(403).json(limited);
     const event = await prisma.event.create({
       data: {
         title, description: description || null,
@@ -256,7 +260,7 @@ router.patch('/:id/notes', requireAuth, async (req, res) => {
 ══════════════════════════════════════════════ */
 
 // POST /api/events/:id/expenses
-router.post('/:id/expenses', requireAuth, async (req, res) => {
+router.post('/:id/expenses', requireAuth, requirePro, async (req, res) => {
   const { label, amount, category, paid } = req.body;
   if (!label?.trim()) return res.status(400).json({ error: 'Libellé requis' });
   try {
@@ -330,7 +334,7 @@ router.delete('/:id/expenses/:expenseId', requireAuth, async (req, res) => {
 ══════════════════════════════════════════════ */
 
 // POST /api/events/:id/purchases
-router.post('/:id/purchases', requireAuth, async (req, res) => {
+router.post('/:id/purchases', requireAuth, requirePro, async (req, res) => {
   const { item, quantity, price } = req.body;
   if (!item?.trim()) return res.status(400).json({ error: 'Article requis' });
   try {

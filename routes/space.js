@@ -3,6 +3,7 @@ const express = require('express')
 const router = express.Router()
 const prisma = require('../prisma/client')
 const { requireAuth } = require('../middleware/auth')
+const { requirePro } = require('../lib/plan')
 const { PERSON_SELECT, publicName } = require('../services/publicPerson')
 const { activeOfferWhere } = require('../services/offerCleanup')
 const { artistPrestations, organizerEvents, organizerTeam, person } = require('../services/prestations')
@@ -131,7 +132,7 @@ function topOf(values) {
  * Organisateurs : dépenses par événement (cachets + dépenses + achats).
  * Les montants sont ceux saisis dans les bookings et l'agenda (pas de paiement en ligne pour l'instant).
  */
-router.get('/finances', requireAuth, async (req, res) => {
+router.get('/finances', requireAuth, requirePro, async (req, res) => {
   try {
     const profile = await myProfile(req)
     if (!profile) return res.status(404).json({ error: 'Profil introuvable' })

@@ -6,6 +6,7 @@ const express = require('express')
 const router = express.Router()
 const prisma = require('../prisma/client')
 const { requireAuth } = require('../middleware/auth')
+const { requirePro } = require('../lib/plan')
 const { validate } = require('../middleware/validate')
 const { invoiceSchema, invoiceStatusSchema } = require('../schemas')
 const { PERSON_SELECT, publicName } = require('../services/publicPerson')
@@ -77,7 +78,7 @@ async function checkLinks(issuerId, { bookingId, clientProfileId }) {
 }
 
 // GET /api/invoices — mes devis et factures (?kind=QUOTE|INVOICE)
-router.get('/', requireAuth, async (req, res) => {
+router.get('/', requireAuth, requirePro, async (req, res) => {
   try {
     const me = await myProfile(req)
     if (!me) return res.status(404).json({ error: 'Profil introuvable' })
@@ -97,7 +98,7 @@ router.get('/', requireAuth, async (req, res) => {
 })
 
 // GET /api/invoices/:id — émetteur ou client
-router.get('/:id', requireAuth, async (req, res) => {
+router.get('/:id', requireAuth, requirePro, async (req, res) => {
   try {
     const me = await myProfile(req)
     const invoice = await prisma.invoice.findUnique({ where: { id: Number.parseInt(req.params.id, 10) || 0 }, include: INCLUDE })
@@ -113,7 +114,7 @@ router.get('/:id', requireAuth, async (req, res) => {
 })
 
 // POST /api/invoices — créer un brouillon (le numéro est attribué tout de suite)
-router.post('/', requireAuth, validate(invoiceSchema), async (req, res) => {
+router.post('/', requireAuth, requirePro, validate(invoiceSchema), async (req, res) => {
   try {
     const me = await myProfile(req)
     if (!me) return res.status(404).json({ error: 'Profil introuvable' })
@@ -156,7 +157,7 @@ router.post('/', requireAuth, validate(invoiceSchema), async (req, res) => {
 })
 
 // PUT /api/invoices/:id — modifier un brouillon
-router.put('/:id', requireAuth, validate(invoiceSchema), async (req, res) => {
+router.put('/:id', requireAuth, requirePro, validate(invoiceSchema), async (req, res) => {
   try {
     const me = await myProfile(req)
     const id = Number.parseInt(req.params.id, 10) || 0
@@ -190,7 +191,7 @@ router.put('/:id', requireAuth, validate(invoiceSchema), async (req, res) => {
 })
 
 // PATCH /api/invoices/:id/status — { status }
-router.patch('/:id/status', requireAuth, validate(invoiceStatusSchema), async (req, res) => {
+router.patch('/:id/status', requireAuth, requirePro, validate(invoiceStatusSchema), async (req, res) => {
   try {
     const me = await myProfile(req)
     const id = Number.parseInt(req.params.id, 10) || 0
@@ -212,7 +213,7 @@ router.patch('/:id/status', requireAuth, validate(invoiceStatusSchema), async (r
 })
 
 // POST /api/invoices/:id/convert — transformer un devis en facture (nouveau brouillon)
-router.post('/:id/convert', requireAuth, async (req, res) => {
+router.post('/:id/convert', requireAuth, requirePro, async (req, res) => {
   try {
     const me = await myProfile(req)
     const quote = await prisma.invoice.findUnique({ where: { id: Number.parseInt(req.params.id, 10) || 0 } })
@@ -245,7 +246,7 @@ router.post('/:id/convert', requireAuth, async (req, res) => {
 })
 
 // DELETE /api/invoices/:id — seulement un brouillon (sinon : annuler)
-router.delete('/:id', requireAuth, async (req, res) => {
+router.delete('/:id', requireAuth, requirePro, async (req, res) => {
   try {
     const me = await myProfile(req)
     const id = Number.parseInt(req.params.id, 10) || 0

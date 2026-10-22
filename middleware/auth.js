@@ -54,6 +54,7 @@ async function authenticate(req) {
         emailVerified: true,
         tokenVersion: true,
         pausedAt: true,
+        bannedAt: true,
         profile: {
           select: { id: true, avatar: true, banner: true },
         },
@@ -66,6 +67,11 @@ async function authenticate(req) {
 
     if (!user) {
       return { status: 401, error: 'Utilisateur introuvable' };
+    }
+
+    // Compte suspendu par l'admin
+    if (user.bannedAt) {
+      return { status: 403, error: 'ACCOUNT_BANNED' };
     }
 
     // Une session normale n'est valable qu'après vérification de l'adresse email.

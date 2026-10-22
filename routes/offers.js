@@ -4,6 +4,7 @@ const router = express.Router();
 const prisma = require('../prisma/client');
 const { activeOfferWhere } = require('../services/offerCleanup');
 const { requireAuth } = require('../middleware/auth');
+const { checkLimit } = require('../lib/plan');
 const { validate } = require('../middleware/validate');
 const { offerCreateSchema, offerUpdateSchema } = require('../schemas');
 const { createNotif, displayName } = require('../services/notifications');
@@ -64,6 +65,10 @@ router.post('/', requireAuth, validate(offerCreateSchema), async (req, res) => {
 
     const profile = await prisma.profile.findUnique({ where: { userId: req.user.id } });
     if (!profile) return res.status(404).json({ error: 'PROFILE_INTROUVABLE' });
+
+    // Compte gratuit : nombre d'offres publiées en même temps limité
+    const limited = await checkLimit(req.user, 'activeOffers', { profileId: profile.id });
+    if (limited) return res.status(403).json(limited);
 
     const offerDate = new Date(date);
     if (isNaN(offerDate.getTime())) {
@@ -245,6 +250,16 @@ router.post('/:id/apply', requireAuth, async (req, res) => {
     // Récupérer le profil du postulant
     const applicantProfile = await prisma.profile.findUnique({ where: { userId: applicantUserId } });
     if (!applicantProfile) return res.status(404).json({ error: 'PROFILE_INTROUVABLE' });
+
+    // Compte gratuit : candidatures limitées par mois (une candidature déjà envoyée ne compte pas deux fois)
+    const alreadyApplied = await prisma.application.findUnique({
+      where: { offerId_applicantId: { offerId, applicantId: applicantProfile.id } },
+      select: { id: true },
+    });
+    if (!alreadyApplied) {
+      const limited = await checkLimit(req.user, 'applicationsPerMonth', { profileId: applicantProfile.id });
+      if (limited) return res.status(403).json(limited);
+    }
 
     // Trouver ou créer la conversation
     let conversation = await prisma.conversation.findFirst({

@@ -4,6 +4,7 @@ const express = require('express')
 const router = express.Router()
 const prisma = require('../prisma/client')
 const { requireAuth, requireAdmin } = require('../middleware/auth')
+const { regionName } = require('../lib/regions')
 
 const MEMBER_ROLES = ['ARTIST', 'ORGANIZER', 'PROVIDER']
 
@@ -18,9 +19,14 @@ const format = (f) => ({
   id: f.id,
   position: f.position,
   endsAt: f.endsAt,
+  startsAt: f.startsAt,
+  scope: f.scope,            // ADMIN (offert) | REGIONAL | NATIONAL (payés)
+  regionCode: f.regionCode,
+  regionName: regionName(f.regionCode),
+  orderId: f.orderId,
   note: f.note,
   createdAt: f.createdAt,
-  active: !f.endsAt || f.endsAt > new Date(),
+  active: (!f.endsAt || f.endsAt > new Date()) && (!f.startsAt || f.startsAt <= new Date()),
   user: {
     id: f.profile.user.id,
     name: f.profile.user.pseudo || [f.profile.user.firstName, f.profile.user.lastName].filter(Boolean).join(' ') || 'Utilisateur',
@@ -51,7 +57,7 @@ router.post('/', requireAuth, requireAdmin, async (req, res) => {
   try {
     const profile = await prisma.profile.findUnique({ where: { userId }, include: { user: { select: { role: true } } } })
     if (!profile || !MEMBER_ROLES.includes(profile.user.role)) return res.status(404).json({ error: 'Profil introuvable' })
-    const exists = await prisma.homeFeatured.findUnique({ where: { profileId: profile.id } })
+    const exists = await prisma.homeFeatured.findFirst({ where: { profileId: profile.id, scope: 'ADMIN' } })
     if (exists) return res.status(409).json({ error: 'Ce profil est déjà dans le carrousel' })
     const last = await prisma.homeFeatured.findFirst({ orderBy: { position: 'desc' }, select: { position: true } })
     const row = await prisma.homeFeatured.create({
@@ -90,6 +96,8 @@ router.patch('/:id', requireAuth, requireAdmin, async (req, res) => {
   const data = {}
   const endsAt = parseDate(req.body?.endsAt)
   if (endsAt !== undefined) data.endsAt = endsAt
+  const startsAt = parseDate(req.body?.startsAt)
+  if (startsAt !== undefined) data.startsAt = startsAt
   if (req.body?.note !== undefined) data.note = req.body.note ? String(req.body.note).slice(0, 300) : null
   try {
     const row = await prisma.homeFeatured.update({ where: { id }, data, include: INCLUDE })

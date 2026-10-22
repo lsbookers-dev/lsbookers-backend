@@ -599,6 +599,11 @@ router.put('/:id', requireAuth, validate(profileUpdateSchema), async (req, res) 
       }
     }
 
+    // Ville changée : la région (carrousel régional) sera recalculée à la prochaine utilisation
+    if (['location', 'city', 'postalCode', 'latitude', 'longitude', 'country'].some(k => dataToUpdate[k] !== undefined && dataToUpdate[k] !== profile[k])) {
+      dataToUpdate.regionCode = null;
+    }
+
     // ✅ Médias (nouveaux champs prioritaires)
     if (sanitizedAvatar !== undefined) dataToUpdate.avatar = sanitizedAvatar;
     else if (sanitizedAvatarUrl !== undefined) dataToUpdate.avatar = sanitizedAvatarUrl;

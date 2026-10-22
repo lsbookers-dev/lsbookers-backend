@@ -40,6 +40,11 @@ const contactRoutes = require('./routes/contact'); // messages de contact
 const spaceRoutes = require('./routes/space'); // Mon espace : tableau de bord, finances
 const checklistRoutes = require('./routes/checklists'); // checklists d'événement
 const invoiceRoutes = require('./routes/invoices'); // devis et factures
+const billingRoutes = require('./routes/billing'); // Offres et abonnements (Pro, codes, formules)
+const adminBillingRoutes = require('./routes/adminBilling'); // admin : réglages, codes, commandes, annulations
+const payoutRoutes = require('./routes/payouts'); // Réglages › Paiements (compte Stripe Connect)
+const bookingPaymentRoutes = require('./routes/bookingPayments'); // paiement d'un booking (direct ou en ligne)
+const stripeWebhookRoutes = require('./routes/stripeWebhook'); // messages de Stripe
 
 const app = express();
 
@@ -130,6 +135,9 @@ function csrfGuard(req, res, next) {
 }
 app.use(csrfGuard);
 
+// Messages de Stripe : corps brut obligatoire pour vérifier la signature (avant express.json)
+app.use('/api/stripe/webhook', stripeWebhookRoutes);
+
 app.use(express.json({ limit: '10mb' }));
 
 // Logs (désactivés en production pour les performances)
@@ -176,6 +184,7 @@ app.use('/api/search', searchRoutes);
 app.use('/api/admin/settings', adminSettingsRoutes);
 app.use('/api/admin/posts', adminPostsRoutes);
 app.use('/api/admin/featured', adminFeaturedRoutes);
+app.use('/api/admin/billing', adminBillingRoutes);
 app.use('/api/admin', adminRoutes);
 
 app.use('/api/events', eventRoutes);
@@ -194,6 +203,9 @@ app.use('/api/home', homeRoutes);
 app.use('/api/contact', contactRoutes);
 app.use('/api/space', spaceRoutes);
 app.use('/api/invoices', invoiceRoutes);
+app.use('/api/billing', billingRoutes);
+app.use('/api/payouts', payoutRoutes);
+app.use('/api/booking-payments', bookingPaymentRoutes);
 
 /* ===================== Gestion d’erreurs ===================== */
 // Envoie les erreurs serveur à Sentry (si SENTRY_DSN est renseigné) avant la réponse générique

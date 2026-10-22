@@ -2,6 +2,8 @@
 // Avis : uniquement après une prestation réellement effectuée (booking accepté
 // ou poste staff confirmé, dont la date est passée), et seulement entre les
 // deux parties de cette prestation. Un avis par personne et par prestation.
+// Exception : la personne bookée qui annule à moins de 7 jours peut recevoir un avis
+// de celui qui l'avait booké (règle d'Antho, 21/10/2026).
 const express = require('express');
 const router = express.Router();
 const prisma = require('../prisma/client');
@@ -34,7 +36,7 @@ const staffEnd = (s) => s.event.end || s.event.start;
  * qu'une entrée par (événement, personne en face).
  */
 async function finishedPrestations(profileId, now = new Date()) {
-  const [bookings, staffs] = await Promise.all([
+  const [bookings, staffs, lateCancelled] = await Promise.all([
     prisma.bookingRequest.findMany({
       where: {
         status: { in: ['ACCEPTED', 'COMPLETED'] },
@@ -64,9 +66,23 @@ async function finishedPrestations(profileId, now = new Date()) {
       },
       orderBy: { createdAt: 'desc' },
     }),
+    // Bookings annulés à moins de 7 jours par la personne bookée (avis possible pour l'organisateur)
+    prisma.bookingRequest.findMany({
+      where: { requesterId: profileId, status: 'CANCELLED', lateCancellation: true },
+      include: { target: { select: PERSON_SELECT }, event: { select: { title: true } } },
+      orderBy: { startDate: 'desc' },
+    }),
   ]);
 
   const items = new Map();
+  for (const b of lateCancelled || []) {
+    if (b.status !== 'CANCELLED' || !b.lateCancellation || b.cancelledById !== b.targetId || b.requesterId !== profileId) continue;
+    items.set(`b${b.id}`, {
+      kind: 'booking', id: b.id, eventId: null, lateCancellation: true,
+      date: b.cancelledAt || b.startDate, title: b.event?.title ? `${b.event.title} (annulé)` : 'Booking annulé à moins de 7 jours',
+      counterpart: b.target,
+    });
+  }
   for (const b of bookings) {
     if (b.event?.status === 'CANCELLED') continue;
     const other = b.requesterId === profileId ? b.target : b.requester;

@@ -20,15 +20,15 @@ enum Role {
 }
 
 enum LegalStatus {
-  INDIVIDUAL        // Particulier
+  INDIVIDUAL // Particulier
   AUTO_ENTREPRENEUR // Auto-entrepreneur
-  COMPANY           // Societe
-  INTERMITTENT      // Intermittent du spectacle
+  COMPANY // Societe
+  INTERMITTENT // Intermittent du spectacle
 }
 
 enum OrganizerType {
-  INDIVIDUAL    // Particulier (soiree privee)
-  PROFESSIONAL  // Professionnel (club, festival, societe)
+  INDIVIDUAL // Particulier (soiree privee)
+  PROFESSIONAL // Professionnel (club, festival, societe)
 }
 
 enum MediaType {
@@ -54,65 +54,66 @@ enum OfferStatus {
 }
 
 enum ApplicationStatus {
-  PENDING   // En attente de reponse
-  ACCEPTED  // Acceptee par l'organisateur
-  REJECTED  // Refusee
+  PENDING // En attente de reponse
+  ACCEPTED // Acceptee par l'organisateur
+  REJECTED // Refusee
 }
 
 enum ContractStatus {
-  PENDING   // Envoye, en attente de signature
-  SIGNED    // Signe par les deux parties
-  REJECTED  // Refuse
+  PENDING // Envoye, en attente de signature
+  SIGNED // Signe par les deux parties
+  REJECTED // Refuse
   CANCELLED // Annule
 }
 
 enum PaymentStatus {
-  PENDING       // En attente
-  DEPOSIT_PAID  // Acompte paye
-  COMPLETED     // Paiement complet
-  REFUNDED      // Rembourse
-  FAILED        // Echec
+  PENDING // En attente
+  DEPOSIT_PAID // Acompte paye
+  COMPLETED // Paiement complet
+  REFUNDED // Rembourse
+  FAILED // Echec
 }
 
 enum SubscriptionStatus {
-  TRIAL     // Periode d'essai
-  ACTIVE    // Abonnement actif
+  TRIAL // Periode d'essai
+  ACTIVE // Abonnement actif
+  PAST_DUE // Prélèvement échoué, Stripe réessaie (Pro conservé pendant ce temps)
   CANCELLED // Annule
-  EXPIRED   // Expire
+  EXPIRED // Expire
 }
 
 enum EventStatus {
-  DRAFT      // Brouillon (non visible)
-  PUBLISHED  // Visible publiquement
-  CANCELLED  // Annule
-  COMPLETED  // Termine
+  DRAFT // Brouillon (non visible)
+  PUBLISHED // Visible publiquement
+  CANCELLED // Annule
+  COMPLETED // Termine
 }
 
 enum AvailabilityStatus {
-  AVAILABLE    // Disponible
-  UNAVAILABLE  // Indisponible
-  BOOKED       // Déjà booké
-  TENTATIVE    // En attente de confirmation
+  AVAILABLE // Disponible
+  UNAVAILABLE // Indisponible
+  BOOKED // Déjà booké
+  TENTATIVE // En attente de confirmation
 }
 
 enum TagStatus {
-  PENDING   // En attente d'acceptation
-  ACCEPTED  // Tag accepté
-  DECLINED  // Tag refusé
+  PENDING // En attente d'acceptation
+  ACCEPTED // Tag accepté
+  DECLINED // Tag refusé
 }
 
 enum BookingStatus {
-  PENDING    // En attente de réponse
-  ACCEPTED   // Acceptée
-  DECLINED   // Refusée
-  CANCELLED  // Annulée
-  COMPLETED  // Terminée
+  PENDING // En attente de réponse
+  ACCEPTED // Acceptée
+  DECLINED // Refusée
+  CANCELLED // Annulée
+  COMPLETED // Terminée
 }
 
 enum StaffStatus {
-  NEEDED    // Poste a pourvoir
-  PENDING   // Invitation envoyee, en attente de reponse
-  BOOKED    // Personne confirmee
+  NEEDED // Poste a pourvoir
+  PENDING // Invitation envoyee, en attente de reponse
+  BOOKED // Personne confirmee
   CANCELLED // Annule
 }
 
@@ -126,114 +127,124 @@ enum LogisticType {
 // ─────────────────────────────────────────────
 
 model User {
-  id                  Int                      @id @default(autoincrement())
+  id           Int       @id @default(autoincrement())
   // Identifiants
-  email               String                   @unique
-  password            String
-  role                Role
-  isAdmin             Boolean                  @default(false)
-  createdAt           DateTime                 @default(now())
-  lastActiveAt        DateTime?
+  email        String    @unique
+  password     String
+  role         Role
+  isAdmin      Boolean   @default(false)
+  createdAt    DateTime  @default(now())
+  lastActiveAt DateTime?
 
   // Identite (collectee a l'etape 2 de l'inscription)
-  pseudo              String?                  @unique
-  firstName           String?
-  lastName            String?
-  dateOfBirth         DateTime?
-  phone               String?
-  countryOfResidence  String?
+  pseudo             String?   @unique
+  firstName          String?
+  lastName           String?
+  dateOfBirth        DateTime?
+  phone              String?
+  countryOfResidence String?
 
   // Verification email
-  emailVerified           Boolean   @default(false)
-  emailVerificationToken  String?   @unique
-  requiresPasswordReset   Boolean   @default(false)
+  emailVerified          Boolean @default(false)
+  emailVerificationToken String? @unique
+  requiresPasswordReset  Boolean @default(false)
 
   // Paiements Stripe (actives uniquement lors de la premiere transaction)
-  stripeAccountId     String?                  // ID Stripe Connect
-  isIdentityVerified  Boolean                  @default(false)
-  isPaymentEnabled    Boolean                  @default(false)
+  stripeAccountId    String? // ID Stripe Connect
+  isIdentityVerified Boolean @default(false)
+  isPaymentEnabled   Boolean @default(false) // Compte Stripe Connect prêt à recevoir des virements
+  stripeCustomerId   String? @unique // Client Stripe (abonnement, paiements de bookings)
+  payoutMode         String? // Paiement des bookings : INVOICE (facture via une structure) | INTERMITTENT (cachet GUSO → paiement en direct)
+
+  // Annulations tardives (3 en 12 mois → alerte admin, bannissement validé par l'admin)
+  lateCancelWarnedAt DateTime?
+  bannedAt           DateTime?
+  banReason          String?
 
   // Etapes d'inscription completes
-  registrationStep    Int                      @default(1) // 1=compte, 2=identite, 3=profil, 4=paiement
+  registrationStep Int @default(1) // 1=compte, 2=identite, 3=profil, 4=paiement
 
-  profile             Profile?
-  media               Media[]
-  followers           Follow[]                 @relation("followers")
-  following           Follow[]                 @relation("following")
-  blocking            Block[]                  @relation("blocking")
-  blockedBy           Block[]                  @relation("blockedBy")
-  messages            Message[]                @relation("SentMessages")
-  conversations       ConversationParticipant[]
-  notifications       Notification[]
-  notificationsSent   Notification[]           @relation("NotificationActor")
-  passwordResets      PasswordReset[]
-  subscription        Subscription?
-  loginEvents           LoginEvent[]
-  trustedDevices        TrustedDevice[]
-  deviceVerifications   DeviceVerification[]
-  pendingTrustedDevice  PendingTrustedDevice?
-  tokenVersion          Int                      @default(0)
+  profile              Profile?
+  media                Media[]
+  followers            Follow[]                  @relation("followers")
+  following            Follow[]                  @relation("following")
+  blocking             Block[]                   @relation("blocking")
+  blockedBy            Block[]                   @relation("blockedBy")
+  messages             Message[]                 @relation("SentMessages")
+  conversations        ConversationParticipant[]
+  notifications        Notification[]
+  notificationsSent    Notification[]            @relation("NotificationActor")
+  passwordResets       PasswordReset[]
+  subscription         Subscription?
+  promoRedemptions     PromoRedemption[]
+  extraOrders          ExtraOrder[]
+  loginEvents          LoginEvent[]
+  trustedDevices       TrustedDevice[]
+  deviceVerifications  DeviceVerification[]
+  pendingTrustedDevice PendingTrustedDevice?
+  tokenVersion         Int                       @default(0)
 
   // Réglages du compte (page Réglages, 21/10/2026)
   sessions              UserSession[]
-  notifPrefs            Json?                    // Choix par type : { bookings: { bell, email }, … } (vide = réglages par défaut)
-  newsletterOptIn       Boolean                  @default(false) // E-mails « Actualités LS Bookers » (consentement)
+  notifPrefs            Json? // Choix par type : { bookings: { bell, email }, … } (vide = réglages par défaut)
+  newsletterOptIn       Boolean          @default(false) // E-mails « Actualités LS Bookers » (consentement)
   newsletterOptInAt     DateTime?
-  loginAlerts           Boolean                  @default(true)  // E-mail + notif quand un nouvel appareil se connecte
-  pausedAt              DateTime?                // Compte en pause : invisible des autres membres
+  loginAlerts           Boolean          @default(true) // E-mail + notif quand un nouvel appareil se connecte
+  pausedAt              DateTime? // Compte en pause : invisible des autres membres
   passwordChangedAt     DateTime?
-  pendingEmail          String?                  // Nouvelle adresse en attente de confirmation
-  pendingEmailTokenHash String?                  @unique
+  pendingEmail          String? // Nouvelle adresse en attente de confirmation
+  pendingEmailTokenHash String?          @unique
   pendingEmailExpiresAt DateTime?
-  tagsReceived          PublicationTag[]          @relation("TaggedUser")
-  tagsGiven             PublicationTag[]          @relation("TaggedByUser")
+  tagsReceived          PublicationTag[] @relation("TaggedUser")
+  tagsGiven             PublicationTag[] @relation("TaggedByUser")
 }
 
 model Profile {
-  id                      Int                      @id @default(autoincrement())
-  userId                  Int                      @unique
+  id     Int @id @default(autoincrement())
+  userId Int @unique
 
   // Infos publiques (visibles sur le profil)
-  bio                     String?
-  profession              String?
-  location                String?
-  country                 String?
-  latitude                Float?
-  longitude               Float?
-  radiusKm                Int?
-  specialties             String[]
-  typeEtablissement       String?
-  avatar                  String?
-  banner                  String?
-  soundcloudUrl           String?
-  showSoundcloud          Boolean                  @default(false)
-  showStyles              Boolean                  @default(true)
-  youtubeUrl              String?                  // Lien vidéo de prestation (YouTube/Vimeo)
-  showYoutubeUrl          Boolean                  @default(true)
-  instagramUrl            String?
-  facebookUrl             String?
-  tiktokUrl               String?
-  twitterUrl              String?
-  linkedinUrl             String?
-  websiteUrl              String?
-  cvText                  String?   // CV / expérience (artistes)
-  feeInfo                 String?   // Tarifs / info cachets (artistes)
-  styles                  String[]                 // Styles artistiques (RNB, Electro, Jazz...)
-  showRealName            Boolean                  @default(false)  // Afficher nom/prénom au lieu du pseudo
-  weeklyRecap             Boolean                  @default(false)  // Recevoir le récap e-mail du lundi
-  messagePolicy           String                   @default("EVERYONE") // Qui peut m'écrire : EVERYONE | FOLLOWED (membres que je suis)
-  hiddenFromSearch        Boolean                  @default(false)  // Ne pas apparaître dans la Recherche et les Tendances
-  showAddress             Boolean                  @default(false)  // Organisateur : afficher l'adresse exacte (carte placée dessus)
-  lastWeeklyRecapAt       DateTime?
+  bio               String?
+  profession        String?
+  location          String?
+  country           String?
+  latitude          Float?
+  longitude         Float?
+  radiusKm          Int?
+  specialties       String[]
+  typeEtablissement String?
+  avatar            String?
+  banner            String?
+  soundcloudUrl     String?
+  showSoundcloud    Boolean   @default(false)
+  showStyles        Boolean   @default(true)
+  youtubeUrl        String? // Lien vidéo de prestation (YouTube/Vimeo)
+  showYoutubeUrl    Boolean   @default(true)
+  instagramUrl      String?
+  facebookUrl       String?
+  tiktokUrl         String?
+  twitterUrl        String?
+  linkedinUrl       String?
+  websiteUrl        String?
+  cvText            String? // CV / expérience (artistes)
+  feeInfo           String? // Tarifs / info cachets (artistes)
+  styles            String[] // Styles artistiques (RNB, Electro, Jazz...)
+  showRealName      Boolean   @default(false) // Afficher nom/prénom au lieu du pseudo
+  weeklyRecap       Boolean   @default(false) // Recevoir le récap e-mail du lundi
+  messagePolicy     String    @default("EVERYONE") // Qui peut m'écrire : EVERYONE | FOLLOWED (membres que je suis)
+  hiddenFromSearch  Boolean   @default(false) // Ne pas apparaître dans la Recherche et les Tendances
+  showAddress       Boolean   @default(false) // Organisateur : afficher l'adresse exacte (carte placée dessus)
+  lastWeeklyRecapAt DateTime?
 
   // Infos legales (non visibles sur le profil, usage interne)
-  legalStatus             LegalStatus?             // Particulier / Auto-entrepreneur / Societe
-  siret                   String?                  // Numero SIRET ou KBIS
-  organizerType           OrganizerType?           // Pour les organisateurs : particulier ou professionnel
-  establishmentName       String?                  // Nom de l'etablissement (organisateurs pro)
-  address                 String?                  // Adresse postale complete
-  postalCode              String?
-  city                    String?
+  legalStatus       LegalStatus? // Particulier / Auto-entrepreneur / Societe
+  siret             String? // Numero SIRET ou KBIS
+  organizerType     OrganizerType? // Pour les organisateurs : particulier ou professionnel
+  establishmentName String? // Nom de l'etablissement (organisateurs pro)
+  address           String? // Adresse postale complete
+  postalCode        String?
+  city              String?
+  regionCode        String? // Région (code INSEE), déduite de la ville : carrousel régional
 
   user                    User                     @relation(fields: [userId], references: [id])
   notificationPreferences NotificationPreferences?
@@ -244,27 +255,27 @@ model Profile {
   albums                  Album[]
 
   // Candidatures soumises (artiste/prestataire qui postule)
-  applicationsSubmitted   Application[]            @relation("ApplicationApplicant")
+  applicationsSubmitted Application[] @relation("ApplicationApplicant")
 
   // Contrats
-  contractsSent           Contract[]               @relation("ContractSender")
-  contractsReceived       Contract[]               @relation("ContractRecipient")
+  contractsSent     Contract[] @relation("ContractSender")
+  contractsReceived Contract[] @relation("ContractRecipient")
 
   // Paiements
-  paymentsMade            Payment[]                @relation("PaymentPayer")
-  paymentsReceived        Payment[]                @relation("PaymentRecipient")
+  paymentsMade     Payment[] @relation("PaymentPayer")
+  paymentsReceived Payment[] @relation("PaymentRecipient")
 
   // Avis
-  reviewsGiven            Review[]                 @relation("ReviewAuthor")
-  reviewsReceived         Review[]                 @relation("ReviewTarget")
+  reviewsGiven    Review[] @relation("ReviewAuthor")
+  reviewsReceived Review[] @relation("ReviewTarget")
 
   // Staff d'evenements
-  eventStaffAssignments   EventStaff[]
+  eventStaffAssignments EventStaff[]
 
   // Likes & Commentaires
-  publicationLikes        PublicationLike[]
-  publicationComments     PublicationComment[]
-  commentLikes            PublicationCommentLike[]
+  publicationLikes    PublicationLike[]
+  publicationComments PublicationComment[]
+  commentLikes        PublicationCommentLike[]
 
   // Agenda
   availability            Availability[]
@@ -274,10 +285,13 @@ model Profile {
   // Mon espace
   profileViews            ProfileView[]
   searchHits              ProfileSearchHit[]
-  homeFeatured            HomeFeatured?
+  homeFeatured            HomeFeatured[]
+  extraOrders             ExtraOrder[]
+  bookingPaymentsMade     BookingPayment[]   @relation("BookingPaymentPayer")
+  bookingPaymentsReceived BookingPayment[]   @relation("BookingPaymentPayee")
   checklists              EventChecklist[]
-  invoicesIssued          Invoice[]        @relation("InvoiceIssuer")
-  invoicesReceived        Invoice[]        @relation("InvoiceClient")
+  invoicesIssued          Invoice[]          @relation("InvoiceIssuer")
+  invoicesReceived        Invoice[]          @relation("InvoiceClient")
 }
 
 // ─────────────────────────────────────────────
@@ -285,13 +299,13 @@ model Profile {
 // ─────────────────────────────────────────────
 
 model Publication {
-  id        Int                  @id @default(autoincrement())
+  id        Int      @id @default(autoincrement())
   title     String
   media     String
   mediaType String
   caption   String?
   profileId Int
-  createdAt DateTime             @default(now())
+  createdAt DateTime @default(now())
 
   profile         Profile              @relation(fields: [profileId], references: [id])
   likes           PublicationLike[]
@@ -306,17 +320,17 @@ model Publication {
 }
 
 model PublicationTag {
-  id            Int        @id @default(autoincrement())
-  publicationId Int
-  taggedUserId  Int        // Utilisateur tagué
-  taggedByUserId Int       // Auteur du tag (auteur de la publication)
-  status        TagStatus  @default(PENDING)
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
+  id             Int       @id @default(autoincrement())
+  publicationId  Int
+  taggedUserId   Int // Utilisateur tagué
+  taggedByUserId Int // Auteur du tag (auteur de la publication)
+  status         TagStatus @default(PENDING)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
-  publication   Publication @relation(fields: [publicationId], references: [id], onDelete: Cascade)
-  taggedUser    User        @relation("TaggedUser", fields: [taggedUserId], references: [id], onDelete: Cascade)
-  taggedByUser  User        @relation("TaggedByUser", fields: [taggedByUserId], references: [id], onDelete: Cascade)
+  publication  Publication @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+  taggedUser   User        @relation("TaggedUser", fields: [taggedUserId], references: [id], onDelete: Cascade)
+  taggedByUser User        @relation("TaggedByUser", fields: [taggedByUserId], references: [id], onDelete: Cascade)
 
   @@unique([publicationId, taggedUserId]) // Un seul tag par utilisateur par publication
   @@index([publicationId])
@@ -324,31 +338,31 @@ model PublicationTag {
 }
 
 model PublicationLike {
-  id            Int         @id @default(autoincrement())
+  id            Int      @id @default(autoincrement())
   publicationId Int
   profileId     Int
-  createdAt     DateTime    @default(now())
+  createdAt     DateTime @default(now())
 
-  publication   Publication @relation(fields: [publicationId], references: [id], onDelete: Cascade)
-  profile       Profile     @relation(fields: [profileId], references: [id])
+  publication Publication @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+  profile     Profile     @relation(fields: [profileId], references: [id])
 
   @@unique([publicationId, profileId]) // Un seul like par personne par publication
   @@index([createdAt])
 }
 
 model PublicationComment {
-  id            Int         @id @default(autoincrement())
+  id            Int      @id @default(autoincrement())
   content       String
   publicationId Int
   profileId     Int
-  createdAt     DateTime    @default(now())
+  createdAt     DateTime @default(now())
   parentId      Int?
 
-  publication   Publication          @relation(fields: [publicationId], references: [id], onDelete: Cascade)
-  profile       Profile              @relation(fields: [profileId], references: [id], onDelete: Cascade)
-  parent        PublicationComment?  @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
-  replies       PublicationComment[] @relation("CommentReplies")
-  likes         PublicationCommentLike[]
+  publication Publication              @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+  profile     Profile                  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  parent      PublicationComment?      @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies     PublicationComment[]     @relation("CommentReplies")
+  likes       PublicationCommentLike[]
 
   @@index([publicationId])
   @@index([profileId])
@@ -361,8 +375,8 @@ model PublicationCommentLike {
   profileId Int
   createdAt DateTime @default(now())
 
-  comment   PublicationComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
-  profile   Profile            @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  comment PublicationComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  profile Profile            @relation(fields: [profileId], references: [id], onDelete: Cascade)
 
   @@unique([commentId, profileId])
   @@index([commentId])
@@ -374,14 +388,14 @@ model PublicationCommentLike {
 // ─────────────────────────────────────────────
 
 model PublicationMedia {
-  id            Int         @id @default(autoincrement())
+  id            Int      @id @default(autoincrement())
   publicationId Int
   url           String
-  mediaType     String      @default("image") // image | video
-  order         Int         @default(0)
-  createdAt     DateTime    @default(now())
+  mediaType     String   @default("image") // image | video
+  order         Int      @default(0)
+  createdAt     DateTime @default(now())
 
-  publication   Publication @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+  publication Publication @relation(fields: [publicationId], references: [id], onDelete: Cascade)
 
   @@index([publicationId])
 }
@@ -391,33 +405,33 @@ model PublicationMedia {
 // ─────────────────────────────────────────────
 
 model Album {
-  id          Int         @id @default(autoincrement())
+  id          Int      @id @default(autoincrement())
   profileId   Int
   title       String
   description String?
-  coverUrl    String?     // URL de couverture personnalisée (null = 1ère image auto)
-  isPrivate   Boolean     @default(false)
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  coverUrl    String? // URL de couverture personnalisée (null = 1ère image auto)
+  isPrivate   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  profile     Profile     @relation(fields: [profileId], references: [id], onDelete: Cascade)
-  items       AlbumItem[]
+  profile Profile     @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  items   AlbumItem[]
 
   @@index([profileId])
 }
 
 model AlbumItem {
-  id            Int          @id @default(autoincrement())
+  id            Int      @id @default(autoincrement())
   albumId       Int
-  publicationId Int?         // Lien vers une publication existante (optionnel)
-  mediaUrl      String?      // Média direct (sans publication)
-  mediaType     String?      // image | video
+  publicationId Int? // Lien vers une publication existante (optionnel)
+  mediaUrl      String? // Média direct (sans publication)
+  mediaType     String? // image | video
   caption       String?
-  order         Int          @default(0)
-  createdAt     DateTime     @default(now())
+  order         Int      @default(0)
+  createdAt     DateTime @default(now())
 
-  album         Album        @relation(fields: [albumId], references: [id], onDelete: Cascade)
-  publication   Publication? @relation(fields: [publicationId], references: [id], onDelete: SetNull)
+  album       Album        @relation(fields: [albumId], references: [id], onDelete: Cascade)
+  publication Publication? @relation(fields: [publicationId], references: [id], onDelete: SetNull)
 
   @@index([albumId])
 }
@@ -435,8 +449,8 @@ model Media {
   userId    Int
   profileId Int
 
-  user      User      @relation(fields: [userId], references: [id])
-  profile   Profile   @relation(fields: [profileId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
+  profile Profile @relation(fields: [profileId], references: [id])
 }
 
 // ─────────────────────────────────────────────
@@ -449,8 +463,8 @@ model Follow {
   followingId Int
   createdAt   DateTime @default(now())
 
-  follower    User     @relation("followers", fields: [followerId], references: [id])
-  following   User     @relation("following", fields: [followingId], references: [id])
+  follower  User @relation("followers", fields: [followerId], references: [id])
+  following User @relation("following", fields: [followingId], references: [id])
 
   @@unique([followerId, followingId])
 }
@@ -461,8 +475,8 @@ model Block {
   blockedId Int
   createdAt DateTime @default(now())
 
-  blocker   User     @relation("blocking", fields: [blockerId], references: [id])
-  blocked   User     @relation("blockedBy", fields: [blockedId], references: [id])
+  blocker User @relation("blocking", fields: [blockerId], references: [id])
+  blocked User @relation("blockedBy", fields: [blockedId], references: [id])
 
   @@unique([blockerId, blockedId])
 }
@@ -472,23 +486,23 @@ model Block {
 // ─────────────────────────────────────────────
 
 model Conversation {
-  id           Int                      @id @default(autoincrement())
-  createdAt    DateTime                 @default(now())
-  updatedAt    DateTime                 @updatedAt
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   participants ConversationParticipant[]
   messages     Message[]
 }
 
 model ConversationParticipant {
-  id             Int          @id @default(autoincrement())
+  id             Int       @id @default(autoincrement())
   userId         Int
   conversationId Int
-  muted          Boolean      @default(false)
-  lastEmailedAt  DateTime?    // Dernier e-mail « nouveau message » envoyé pour cette conversation
+  muted          Boolean   @default(false)
+  lastEmailedAt  DateTime? // Dernier e-mail « nouveau message » envoyé pour cette conversation
 
-  user           User         @relation(fields: [userId], references: [id])
-  conversation   Conversation @relation(fields: [conversationId], references: [id])
+  user         User         @relation(fields: [userId], references: [id])
+  conversation Conversation @relation(fields: [conversationId], references: [id])
 
   @@unique([userId, conversationId])
 }
@@ -505,13 +519,13 @@ model Message {
   seen               Boolean          @default(false)
   seenAt             DateTime?
   createdAt          DateTime         @default(now())
-  type               String           @default("TEXT")  // TEXT | BOOKING_REQUEST
+  type               String           @default("TEXT") // TEXT | BOOKING_REQUEST
   bookingRequestId   Int?
 
-  sender             User             @relation("SentMessages", fields: [senderId], references: [id])
-  conversation       Conversation     @relation(fields: [conversationId], references: [id])
-  bookingRequest     BookingRequest?  @relation(fields: [bookingRequestId], references: [id], onDelete: SetNull)
-  notifications      Notification[]
+  sender         User            @relation("SentMessages", fields: [senderId], references: [id])
+  conversation   Conversation    @relation(fields: [conversationId], references: [id])
+  bookingRequest BookingRequest? @relation(fields: [bookingRequestId], references: [id], onDelete: SetNull)
+  notifications  Notification[]
 
   @@index([conversationId, createdAt])
   @@index([senderId])
@@ -523,35 +537,35 @@ model Message {
 // ─────────────────────────────────────────────
 
 model Event {
-  id           Int         @id @default(autoincrement())
-  title        String
-  description  String?
-  notes        String?                      // Notes privées de l'organisateur
-  start        DateTime
-  end          DateTime?
-  allDay       Boolean     @default(false)
-  lieu         String?
-  category     String?                      // Ex: "Club", "Mariage", "Corporate"
-  coverImage   String?                      // URL image de couverture (événement public)
-  isPrivate    Boolean     @default(false)  // Privé = visible seulement par l'organisateur
-  budget       Float?                       // Budget total
-  maxCapacity  Int?                         // Capacité max
-  status       EventStatus @default(DRAFT)
-  profileId    Int
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
+  id          Int         @id @default(autoincrement())
+  title       String
+  description String?
+  notes       String? // Notes privées de l'organisateur
+  start       DateTime
+  end         DateTime?
+  allDay      Boolean     @default(false)
+  lieu        String?
+  category    String? // Ex: "Club", "Mariage", "Corporate"
+  coverImage  String? // URL image de couverture (événement public)
+  isPrivate   Boolean     @default(false) // Privé = visible seulement par l'organisateur
+  budget      Float? // Budget total
+  maxCapacity Int? // Capacité max
+  status      EventStatus @default(DRAFT)
+  profileId   Int
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
 
-  profile          Profile          @relation(fields: [profileId], references: [id])
-  staff            EventStaff[]
-  contracts        Contract[]
-  reviews          Review[]
-  documents        EventDocument[]
-  bookingRequests  BookingRequest[]
-  expenses         EventExpense[]
-  purchases        EventPurchase[]
-  offers           Offer[]
-  notifications    Notification[]
-  checklists       EventChecklist[]
+  profile         Profile          @relation(fields: [profileId], references: [id])
+  staff           EventStaff[]
+  contracts       Contract[]
+  reviews         Review[]
+  documents       EventDocument[]
+  bookingRequests BookingRequest[]
+  expenses        EventExpense[]
+  purchases       EventPurchase[]
+  offers          Offer[]
+  notifications   Notification[]
+  checklists      EventChecklist[]
 
   @@index([profileId])
   @@index([start])
@@ -563,11 +577,11 @@ model EventExpense {
   eventId   Int
   label     String
   amount    Float?
-  category  String?  // "Technique", "Catering", "Décor", "Communication", "Autre"
+  category  String? // "Technique", "Catering", "Décor", "Communication", "Autre"
   paid      Boolean  @default(false)
   createdAt DateTime @default(now())
 
-  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
   @@index([eventId])
 }
@@ -582,7 +596,7 @@ model EventPurchase {
   done      Boolean  @default(false)
   createdAt DateTime @default(now())
 
-  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
   @@index([eventId])
 }
@@ -593,10 +607,10 @@ model EventDocument {
   eventId   Int
   name      String
   url       String
-  fileType  String?  // "contract", "invoice", "rider", "other"
+  fileType  String? // "contract", "invoice", "rider", "other"
   createdAt DateTime @default(now())
 
-  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
   @@index([eventId])
 }
@@ -605,12 +619,12 @@ model EventDocument {
 model Availability {
   id        Int                @id @default(autoincrement())
   profileId Int
-  date      DateTime           // Jour concerné (heure ignorée)
+  date      DateTime // Jour concerné (heure ignorée)
   status    AvailabilityStatus @default(AVAILABLE)
   note      String?
   createdAt DateTime           @default(now())
 
-  profile   Profile            @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  profile Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
 
   @@unique([profileId, date])
   @@index([profileId])
@@ -618,32 +632,37 @@ model Availability {
 
 // Demandes de réservation / booking
 model BookingRequest {
-  id          Int           @id @default(autoincrement())
-  requesterId Int           // Profil qui fait la demande (organisateur)
-  targetId    Int           // Profil ciblé (artiste/prestataire)
-  eventId     Int?          // Événement lié (optionnel)
-  startDate   DateTime
-  endDate     DateTime?
-  message     String?
-  fee                     Float?        // Cachet proposé
+  id                      Int           @id @default(autoincrement())
+  requesterId             Int // Profil qui fait la demande (organisateur)
+  targetId                Int // Profil ciblé (artiste/prestataire)
+  eventId                 Int? // Événement lié (optionnel)
+  startDate               DateTime
+  endDate                 DateTime?
+  message                 String?
+  fee                     Float? // Cachet proposé
   status                  BookingStatus @default(PENDING)
-  paymentStatus           String        @default("UNPAID")  // UNPAID | DEPOSIT | PAID
-  cancellationRequestedBy Int?          // Profile ID qui demande l'annulation
-  cancellationNote        String?       // Raison optionnelle
+  paymentStatus           String        @default("UNPAID") // Paiement en direct, suivi à la main : UNPAID | DEPOSIT | PAID
+  paymentMode             String        @default("DIRECT") // DIRECT (de la main à la main) | ONLINE (via LS Bookers / Stripe)
+  cancelledAt             DateTime?
+  cancelledById           Int? // Profil à l'origine de l'annulation
+  lateCancellation        Boolean       @default(false) // Annulé à moins de 7 jours de la date
+  cancellationRequestedBy Int? // Profile ID qui demande l'annulation
+  cancellationNote        String? // Raison optionnelle
   createdAt               DateTime      @default(now())
   updatedAt               DateTime      @updatedAt
 
-  sharedNotes             String?       // Notes partagées organisateur ↔ artiste/prestataire
-  reviewInviteSentAt      DateTime?     // Notification « laissez votre avis » envoyée
+  sharedNotes        String? // Notes partagées organisateur ↔ artiste/prestataire
+  reviewInviteSentAt DateTime? // Notification « laissez votre avis » envoyée
 
-  requester   Profile           @relation("BookingRequester", fields: [requesterId], references: [id])
-  target      Profile           @relation("BookingTarget", fields: [targetId], references: [id])
-  event       Event?            @relation(fields: [eventId], references: [id])
-  messages    Message[]
-  logistics   BookingLogistic[]
-  media       BookingMedia[]
-  reviews     Review[]
-  invoices    Invoice[]
+  requester Profile           @relation("BookingRequester", fields: [requesterId], references: [id])
+  target    Profile           @relation("BookingTarget", fields: [targetId], references: [id])
+  event     Event?            @relation(fields: [eventId], references: [id])
+  messages  Message[]
+  logistics BookingLogistic[]
+  media     BookingMedia[]
+  reviews   Review[]
+  invoices  Invoice[]
+  payment   BookingPayment?
 
   @@index([requesterId])
   @@index([targetId])
@@ -651,46 +670,46 @@ model BookingRequest {
 
 // Logistique par booking (logement / transport)
 model BookingLogistic {
-  id               Int             @id @default(autoincrement())
+  id               Int          @id @default(autoincrement())
   bookingRequestId Int
-  type             LogisticType    // HOTEL | TRANSPORT
+  type             LogisticType // HOTEL | TRANSPORT
   title            String
   fileUrl          String?
   fileName         String?
-  addedByProfileId Int?            // Qui l'a ajouté (organisateur ou artiste/prestataire) — null = ancien élément de l'organisateur
-  createdAt        DateTime        @default(now())
+  addedByProfileId Int? // Qui l'a ajouté (organisateur ou artiste/prestataire) — null = ancien élément de l'organisateur
+  createdAt        DateTime     @default(now())
 
-  bookingRequest   BookingRequest  @relation(fields: [bookingRequestId], references: [id], onDelete: Cascade)
+  bookingRequest BookingRequest @relation(fields: [bookingRequestId], references: [id], onDelete: Cascade)
 
   @@index([bookingRequestId])
 }
 
 // Médias promotionnels partagés par l'organisateur
 model BookingMedia {
-  id               Int             @id @default(autoincrement())
+  id               Int      @id @default(autoincrement())
   bookingRequestId Int
   url              String
-  mediaType        String          @default("IMAGE")  // IMAGE | VIDEO
+  mediaType        String   @default("IMAGE") // IMAGE | VIDEO
   name             String?
-  createdAt        DateTime        @default(now())
+  createdAt        DateTime @default(now())
 
-  bookingRequest   BookingRequest  @relation(fields: [bookingRequestId], references: [id], onDelete: Cascade)
+  bookingRequest BookingRequest @relation(fields: [bookingRequestId], references: [id], onDelete: Cascade)
 
   @@index([bookingRequestId])
 }
 
 // Postes requis dans un evenement prive
 model EventStaff {
-  id         Int         @id @default(autoincrement())
-  eventId    Int
-  role       String      // Ex: "DJ", "Traiteur", "Photographe"
-  name       String?     // Nom libre si pas de profil lié
-  count      Int         @default(1)
-  notes      String?
-  fee        Float?      // Cachet prevu pour ce poste
-  status     StaffStatus @default(NEEDED)
-  profileId  Int?        // Personne assignee (null si pas encore pourvu)
-  createdAt  DateTime    @default(now())
+  id                 Int         @id @default(autoincrement())
+  eventId            Int
+  role               String // Ex: "DJ", "Traiteur", "Photographe"
+  name               String? // Nom libre si pas de profil lié
+  count              Int         @default(1)
+  notes              String?
+  fee                Float? // Cachet prevu pour ce poste
+  status             StaffStatus @default(NEEDED)
+  profileId          Int? // Personne assignee (null si pas encore pourvu)
+  createdAt          DateTime    @default(now())
   reviewInviteSentAt DateTime? // Notification « laissez votre avis » envoyee
 
   event         Event          @relation(fields: [eventId], references: [id], onDelete: Cascade)
@@ -707,25 +726,25 @@ model EventStaff {
 // ─────────────────────────────────────────────
 
 model Offer {
-  id            Int           @id @default(autoincrement())
-  title         String
-  description   String
-  type          OfferType
-  specialty     String?
-  date          DateTime
-  endDate       DateTime?     // Date de fin (optionnel)
-  location      String
-  country       String
-  radiusKm      Int?
-  fee           Float?        // Tarif proposé (optionnel)
-  eventId       Int?          // Événement lié (optionnel)
-  status        OfferStatus   @default(ACTIVE)
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
-  organizerId   Int
+  id          Int         @id @default(autoincrement())
+  title       String
+  description String
+  type        OfferType
+  specialty   String?
+  date        DateTime
+  endDate     DateTime? // Date de fin (optionnel)
+  location    String
+  country     String
+  radiusKm    Int?
+  fee         Float? // Tarif proposé (optionnel)
+  eventId     Int? // Événement lié (optionnel)
+  status      OfferStatus @default(ACTIVE)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  organizerId Int
 
-  organizer     Profile       @relation(fields: [organizerId], references: [id])
-  event         Event?        @relation(fields: [eventId], references: [id])
+  organizer     Profile        @relation(fields: [organizerId], references: [id])
+  event         Event?         @relation(fields: [eventId], references: [id])
   applications  Application[]
   notifications Notification[]
 
@@ -736,14 +755,14 @@ model Offer {
 model Application {
   id          Int               @id @default(autoincrement())
   offerId     Int
-  applicantId Int               // Profile ID de l'artiste/prestataire
-  message     String?           // Message de motivation
+  applicantId Int // Profile ID de l'artiste/prestataire
+  message     String? // Message de motivation
   status      ApplicationStatus @default(PENDING)
   createdAt   DateTime          @default(now())
   updatedAt   DateTime          @updatedAt
 
-  offer       Offer             @relation(fields: [offerId], references: [id])
-  applicant   Profile           @relation("ApplicationApplicant", fields: [applicantId], references: [id])
+  offer     Offer   @relation(fields: [offerId], references: [id])
+  applicant Profile @relation("ApplicationApplicant", fields: [applicantId], references: [id])
 
   @@unique([offerId, applicantId]) // Pas de double candidature
   @@index([offerId])
@@ -757,8 +776,8 @@ model Application {
 model Contract {
   id          Int            @id @default(autoincrement())
   title       String
-  fileUrl     String         // URL du fichier PDF
-  amount      Float?         // Montant du contrat
+  fileUrl     String // URL du fichier PDF
+  amount      Float? // Montant du contrat
   status      ContractStatus @default(PENDING)
   senderId    Int
   recipientId Int
@@ -768,11 +787,11 @@ model Contract {
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
 
-  sender      Profile        @relation("ContractSender", fields: [senderId], references: [id])
-  recipient   Profile        @relation("ContractRecipient", fields: [recipientId], references: [id])
-  event       Event?         @relation(fields: [eventId], references: [id])
-  staff       EventStaff?    @relation(fields: [staffId], references: [id])
-  payments    Payment[]
+  sender    Profile     @relation("ContractSender", fields: [senderId], references: [id])
+  recipient Profile     @relation("ContractRecipient", fields: [recipientId], references: [id])
+  event     Event?      @relation(fields: [eventId], references: [id])
+  staff     EventStaff? @relation(fields: [staffId], references: [id])
+  payments  Payment[]
 
   @@index([senderId])
   @@index([recipientId])
@@ -783,22 +802,22 @@ model Contract {
 // ─────────────────────────────────────────────
 
 model Payment {
-  id           Int           @id @default(autoincrement())
-  amount       Float         // Montant total en euros
-  deposit      Float?        // Montant de l'acompte
-  commission   Float?        // Commission LSBookers
-  currency     String        @default("EUR")
-  status       PaymentStatus @default(PENDING)
-  stripeId     String?       // ID Stripe
-  payerId      Int
-  recipientId  Int
-  contractId   Int?
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+  id          Int           @id @default(autoincrement())
+  amount      Float // Montant total en euros
+  deposit     Float? // Montant de l'acompte
+  commission  Float? // Commission LSBookers
+  currency    String        @default("EUR")
+  status      PaymentStatus @default(PENDING)
+  stripeId    String? // ID Stripe
+  payerId     Int
+  recipientId Int
+  contractId  Int?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
 
-  payer        Profile       @relation("PaymentPayer", fields: [payerId], references: [id])
-  recipient    Profile       @relation("PaymentRecipient", fields: [recipientId], references: [id])
-  contract     Contract?     @relation(fields: [contractId], references: [id])
+  payer     Profile   @relation("PaymentPayer", fields: [payerId], references: [id])
+  recipient Profile   @relation("PaymentRecipient", fields: [recipientId], references: [id])
+  contract  Contract? @relation(fields: [contractId], references: [id])
 
   @@index([payerId])
   @@index([recipientId])
@@ -809,23 +828,23 @@ model Payment {
 // ─────────────────────────────────────────────
 
 model Review {
-  id        Int      @id @default(autoincrement())
-  rating    Int      // Note de 1 a 5
+  id        Int       @id @default(autoincrement())
+  rating    Int // Note de 1 a 5
   comment   String?
-  authorId  Int      // Qui ecrit l'avis
-  targetId  Int      // Qui est note
-  eventId   Int?     // Lien vers l'evenement (optionnel)
-  bookingId Int?     // Prestation reellement effectuee qui autorise l'avis (booking…
-  reply     String?  // Reponse unique de la personne notee
+  authorId  Int // Qui ecrit l'avis
+  targetId  Int // Qui est note
+  eventId   Int? // Lien vers l'evenement (optionnel)
+  bookingId Int? // Prestation reellement effectuee qui autorise l'avis (booking…
+  reply     String? // Reponse unique de la personne notee
   repliedAt DateTime?
-  staffId   Int?     // …ou poste staff d'un evenement)
-  createdAt DateTime @default(now())
+  staffId   Int? // …ou poste staff d'un evenement)
+  createdAt DateTime  @default(now())
 
-  author    Profile         @relation("ReviewAuthor", fields: [authorId], references: [id])
-  target    Profile         @relation("ReviewTarget", fields: [targetId], references: [id])
-  event     Event?          @relation(fields: [eventId], references: [id])
-  booking   BookingRequest? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
-  staff     EventStaff?     @relation(fields: [staffId], references: [id], onDelete: SetNull)
+  author  Profile         @relation("ReviewAuthor", fields: [authorId], references: [id])
+  target  Profile         @relation("ReviewTarget", fields: [targetId], references: [id])
+  event   Event?          @relation(fields: [eventId], references: [id])
+  booking BookingRequest? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  staff   EventStaff?     @relation(fields: [staffId], references: [id], onDelete: SetNull)
 
   @@unique([authorId, targetId, eventId])
   @@unique([authorId, bookingId])
@@ -838,18 +857,134 @@ model Review {
 // ─────────────────────────────────────────────
 
 model Subscription {
-  id          Int                @id @default(autoincrement())
-  userId      Int                @unique
-  status      SubscriptionStatus @default(TRIAL)
-  plan        String             @default("MONTHLY")
-  priceCents  Int                @default(1000) // 10 euros en centimes
-  stripeSubId String?            // ID abonnement Stripe
-  startDate   DateTime           @default(now())
-  endDate     DateTime?
-  createdAt   DateTime           @default(now())
-  updatedAt   DateTime           @updatedAt
+  id                Int                @id @default(autoincrement())
+  userId            Int                @unique
+  status            SubscriptionStatus @default(TRIAL)
+  plan              String             @default("PRO")
+  interval          String             @default("MONTH") // MONTH | YEAR | LIFETIME
+  source            String             @default("STRIPE") // STRIPE | FOUNDER (code fondateur) | ADMIN (offert)
+  priceCents        Int                @default(0)
+  stripeSubId       String?            @unique // ID abonnement Stripe
+  promoCode         String?
+  trialEndsAt       DateTime?
+  currentPeriodEnd  DateTime?
+  cancelAtPeriodEnd Boolean            @default(false)
+  startDate         DateTime           @default(now())
+  endDate           DateTime?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
 
-  user        User               @relation(fields: [userId], references: [id])
+  user User @relation(fields: [userId], references: [id])
+}
+
+// Codes promo : FOUNDER (Pro offert à vie, un code par personne, usage unique)
+// et LAUNCH (mois offerts qui remplacent l'essai, carte demandée)
+model PromoCode {
+  id         Int       @id @default(autoincrement())
+  code       String    @unique
+  kind       String // FOUNDER | LAUNCH
+  freeMonths Int? // LAUNCH : nombre de mois offerts
+  maxUses    Int? // vide = illimité (chaque compte une seule fois)
+  usedCount  Int       @default(0)
+  active     Boolean   @default(true)
+  expiresAt  DateTime?
+  note       String? // À qui il est destiné
+  createdAt  DateTime  @default(now())
+
+  redemptions PromoRedemption[]
+}
+
+model PromoRedemption {
+  id        Int      @id @default(autoincrement())
+  codeId    Int
+  userId    Int
+  createdAt DateTime @default(now())
+
+  code PromoCode @relation(fields: [codeId], references: [id], onDelete: Cascade)
+  user User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([codeId, userId])
+}
+
+// Formules supplémentaires de la page « Offres et abonnements » (carrousel, newsletter, réseaux…)
+model ExtraOffer {
+  id          Int      @id @default(autoincrement())
+  kind        String // CAROUSEL | NEWSLETTER | SOCIAL | OTHER
+  title       String
+  description String?
+  options     Json // [{ id, label, days, priceCents, scope }] — scope : REGIONAL | NATIONAL (carrousel)
+  active      Boolean  @default(true)
+  position    Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  orders ExtraOrder[]
+}
+
+model ExtraOrder {
+  id                    Int       @id @default(autoincrement())
+  offerId               Int
+  userId                Int
+  profileId             Int
+  kind                  String
+  label                 String // Libellé de la formule au moment de l'achat
+  days                  Int?
+  scope                 String? // REGIONAL | NATIONAL
+  regionCode            String?
+  amountCents           Int
+  status                String    @default("PENDING_PAYMENT") // PENDING_PAYMENT | PAID | ACTIVE | DONE | REFUSED | CANCELLED
+  desiredStart          DateTime? // Date d'affichage souhaitée (région complète → première date libre)
+  stripeSessionId       String?   @unique
+  stripePaymentIntentId String?
+  refundedCents         Int       @default(0)
+  adminNote             String?
+  paidAt                DateTime?
+  handledAt             DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  offer    ExtraOffer    @relation(fields: [offerId], references: [id])
+  user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profile  Profile       @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  featured HomeFeatured?
+
+  @@index([status])
+  @@index([userId])
+}
+
+// Paiement en ligne d'un booking (Stripe Connect). L'organisateur paie 100 % ; la personne bookée
+// voit 30 % acquis (bloqués) puis reçoit son dû 24 h après la prestation, commission déduite.
+model BookingPayment {
+  id                    Int       @id @default(autoincrement())
+  bookingId             Int       @unique
+  payerId               Int // Profil qui paie (celui qui organise le booking)
+  payeeId               Int // Profil payé (artiste / prestataire)
+  amountCents           Int // Prix du booking payé par l'organisateur
+  commissionPct         Float // Taux du compte de la personne bookée au moment du paiement
+  commissionCents       Int
+  depositPct            Int       @default(30)
+  status                String    @default("AWAITING_CARD") // AWAITING_CARD | SCHEDULED | PAID | RELEASED | REFUNDED | PARTIAL_REFUND | FAILED | DISPUTED
+  chargeAt              DateTime? // Débit prévu (60 jours avant la date, ou tout de suite)
+  stripeSessionId       String?   @unique
+  stripePaymentMethodId String?
+  stripePaymentIntentId String?   @unique
+  stripeChargeId        String?
+  stripeFeeCents        Int?
+  paidAt                DateTime?
+  transferId            String?
+  transferredCents      Int       @default(0)
+  releasedAt            DateTime?
+  refundedCents         Int       @default(0)
+  refundedAt            DateTime?
+  failureReason         String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  booking BookingRequest @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  payer   Profile        @relation("BookingPaymentPayer", fields: [payerId], references: [id])
+  payee   Profile        @relation("BookingPaymentPayee", fields: [payeeId], references: [id])
+
+  @@index([status, chargeAt])
 }
 
 // ─────────────────────────────────────────────
@@ -863,21 +998,21 @@ model Notification {
   content       String?
   legacyMessage String?  @map("message")
   read          Boolean  @default(false)
-  deviceToken   String?  // Pour notifications NEW_DEVICE_LOGIN
+  deviceToken   String? // Pour notifications NEW_DEVICE_LOGIN
   createdAt     DateTime @default(now())
 
-  user      User     @relation(fields: [userId], references: [id])
-  offerId   Int?
-  offer     Offer?   @relation(fields: [offerId], references: [id])
-  actorId   Int?
-  actor     User?    @relation("NotificationActor", fields: [actorId], references: [id])
+  user          User         @relation(fields: [userId], references: [id])
+  offerId       Int?
+  offer         Offer?       @relation(fields: [offerId], references: [id])
+  actorId       Int?
+  actor         User?        @relation("NotificationActor", fields: [actorId], references: [id])
   messageId     Int?
   message       Message?     @relation(fields: [messageId], references: [id])
   publicationId Int?
   publication   Publication? @relation(fields: [publicationId], references: [id], onDelete: SetNull)
   staffId       Int?
   staff         EventStaff?  @relation(fields: [staffId], references: [id], onDelete: SetNull)
-  eventId       Int?         // Evenement concerne (lien direct vers l'agenda)
+  eventId       Int? // Evenement concerne (lien direct vers l'agenda)
   event         Event?       @relation(fields: [eventId], references: [id], onDelete: SetNull)
 
   @@index([userId, type, deviceToken])
@@ -887,11 +1022,11 @@ model Notification {
 }
 
 model NotificationPreferences {
-  id            Int     @id @default(autoincrement())
-  profileId     Int     @unique
-  locationScope String  @default("INTERNATIONAL")
+  id            Int    @id @default(autoincrement())
+  profileId     Int    @unique
+  locationScope String @default("INTERNATIONAL")
 
-  profile       Profile @relation(fields: [profileId], references: [id])
+  profile Profile @relation(fields: [profileId], references: [id])
 }
 
 // ─────────────────────────────────────────────
@@ -899,24 +1034,27 @@ model NotificationPreferences {
 // ─────────────────────────────────────────────
 
 model AdminSettings {
-  id             Int      @id @default(1)
-  mainColor      String?  @default("#FF0055")
-  secondaryColor String?  @default("#000000")
-  bannerUrl      String?
-  logoUrl        String?
-  welcomeText    String?
-  landingBgUrl   String?
-  loginBgUrl     String?
-  registerBgUrl  String?
-  headerLogoUrl  String?
-  landingLogoUrl String?
+  id                 Int       @id @default(1)
+  mainColor          String?   @default("#FF0055")
+  secondaryColor     String?   @default("#000000")
+  bannerUrl          String?
+  logoUrl            String?
+  welcomeText        String?
+  landingBgUrl       String?
+  loginBgUrl         String?
+  registerBgUrl      String?
+  headerLogoUrl      String?
+  landingLogoUrl     String?
   // Annonce de l'en-tête (choix B6 d'Antho, 16/10/2026)
   announcementText   String?
   announcementUrl    String?
-  announcementActive Boolean  @default(false)
+  announcementActive Boolean   @default(false)
   announcementEndsAt DateTime? // Fin d'affichage (vide = sans limite)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  // Offres et abonnements : commissions, limites du compte gratuit, prix, places du carrousel
+  // (valeurs par défaut dans lib/planSettings.js, l'admin ne stocke que ce qu'il change)
+  planSettings       Json?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 }
 
 // ─────────────────────────────────────────────
@@ -949,7 +1087,7 @@ model PasswordReset {
   usedAt    DateTime?
   createdAt DateTime  @default(now())
 
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
 }
@@ -963,7 +1101,7 @@ model LoginEvent {
   userId      Int
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   userAgent   String?
-  deviceToken String?  // Identifiant unique de l'appareil (cookie device_token)
+  deviceToken String? // Identifiant unique de l'appareil (cookie device_token)
   createdAt   DateTime @default(now())
 
   @@index([userId])
@@ -980,13 +1118,13 @@ model TrustedDevice {
   userId      Int
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   deviceToken String
-  name        String   // Ex: "Chrome sur Windows", "Safari sur iPhone"
+  name        String // Ex: "Chrome sur Windows", "Safari sur iPhone"
   userAgent   String?
   createdAt   DateTime @default(now())
   lastUsedAt  DateTime @default(now())
 
-  @@index([userId])
   @@unique([userId, deviceToken])
+  @@index([userId])
 }
 
 // Appareil utilise pendant l'inscription. Il ne devient fiable qu'apres
@@ -1011,8 +1149,8 @@ model DeviceVerification {
   token       String    @unique
   userId      Int
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  deviceToken String    // cookie UUID de l'appareil
-  deviceName  String    // "Chrome sur iPhone"
+  deviceToken String // cookie UUID de l'appareil
+  deviceName  String // "Chrome sur iPhone"
   expiresAt   DateTime
   usedAt      DateTime?
   createdAt   DateTime  @default(now())
@@ -1034,7 +1172,6 @@ model AdminPost {
   updatedAt DateTime   @updatedAt
 }
 
-
 // ─────────────────────────────────────────────
 // Mon espace : vues du profil, checklists, devis / factures
 // ─────────────────────────────────────────────
@@ -1047,7 +1184,7 @@ model ProfileView {
   day          DateTime @db.Date
   createdAt    DateTime @default(now())
 
-  profile      Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  profile Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
 
   @@unique([profileId, viewerUserId, day])
   @@index([profileId, createdAt])
@@ -1062,7 +1199,7 @@ model ProfileSearchHit {
   day          DateTime @db.Date
   createdAt    DateTime @default(now())
 
-  profile      Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  profile Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
 
   @@unique([profileId, viewerUserId, day])
   @@index([createdAt])
@@ -1070,56 +1207,64 @@ model ProfileSearchHit {
 
 // Carrousel de l'accueil : profils mis en avant à la main par l'admin (à terme : mise en avant payante)
 model HomeFeatured {
-  id        Int       @id @default(autoincrement())
-  profileId Int       @unique
-  position  Int       @default(0)
-  endsAt    DateTime? // Fin de la mise en avant (vide = sans limite)
-  note      String?   // Note interne (paiement, contact…)
-  createdAt DateTime  @default(now())
+  id         Int       @id @default(autoincrement())
+  profileId  Int
+  position   Int       @default(0)
+  scope      String    @default("ADMIN") // ADMIN (offert, partout, hors quota) | REGIONAL | NATIONAL (payés)
+  regionCode String? // Mise en avant régionale : région où le profil s'affiche
+  startsAt   DateTime? // Début d'affichage (vide = tout de suite)
+  endsAt     DateTime? // Fin de la mise en avant (vide = sans limite)
+  note       String? // Note interne (paiement, contact…)
+  orderId    Int?      @unique
+  createdAt  DateTime  @default(now())
 
-  profile   Profile   @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  profile Profile     @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  order   ExtraOrder? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([profileId])
+  @@index([scope, regionCode])
 }
 
 // Checklist facultative d'un événement, propre à chaque personne (organisateur ou personne bookée)
 model EventChecklist {
-  id          Int                  @id @default(autoincrement())
+  id          Int       @id @default(autoincrement())
   eventId     Int
   profileId   Int
-  reminded7At DateTime?            // Rappel J-7 envoyé
-  reminded1At DateTime?            // Rappel J-1 envoyé
-  createdAt   DateTime             @default(now())
+  reminded7At DateTime? // Rappel J-7 envoyé
+  reminded1At DateTime? // Rappel J-1 envoyé
+  createdAt   DateTime  @default(now())
 
-  event       Event                @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  profile     Profile              @relation(fields: [profileId], references: [id], onDelete: Cascade)
-  items       EventChecklistItem[]
+  event   Event                @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  profile Profile              @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  items   EventChecklistItem[]
 
   @@unique([eventId, profileId])
   @@index([profileId])
 }
 
 model EventChecklistItem {
-  id          Int            @id @default(autoincrement())
+  id          Int      @id @default(autoincrement())
   checklistId Int
   label       String
-  done        Boolean        @default(false)
-  position    Int            @default(0)
-  createdAt   DateTime       @default(now())
+  done        Boolean  @default(false)
+  position    Int      @default(0)
+  createdAt   DateTime @default(now())
 
-  checklist   EventChecklist @relation(fields: [checklistId], references: [id], onDelete: Cascade)
+  checklist EventChecklist @relation(fields: [checklistId], references: [id], onDelete: Cascade)
 
   @@index([checklistId])
 }
 
 enum InvoiceKind {
-  QUOTE   // Devis
+  QUOTE // Devis
   INVOICE // Facture
 }
 
 enum InvoiceStatus {
-  DRAFT     // Brouillon
-  SENT      // Envoyé
-  ACCEPTED  // Devis accepté
-  PAID      // Facture payée
+  DRAFT // Brouillon
+  SENT // Envoyé
+  ACCEPTED // Devis accepté
+  PAID // Facture payée
   CANCELLED // Annulé
 }
 
@@ -1130,13 +1275,13 @@ model Invoice {
   number          String
   status          InvoiceStatus @default(DRAFT)
   issuerId        Int
-  clientProfileId Int?          // Client inscrit sur LS Bookers (facultatif)
+  clientProfileId Int? // Client inscrit sur LS Bookers (facultatif)
   clientName      String
   clientAddress   String?
   bookingId       Int?
-  title           String?       // Objet (ex : « DJ set — Soirée de Noël »)
-  serviceDate     DateTime?     // Date de la prestation
-  items           Json          // [{ label, quantity, unitPrice }]
+  title           String? // Objet (ex : « DJ set — Soirée de Noël »)
+  serviceDate     DateTime? // Date de la prestation
+  items           Json // [{ label, quantity, unitPrice }]
   vatRate         Float         @default(0)
   notes           String?
   issueDate       DateTime      @default(now())
@@ -1145,9 +1290,9 @@ model Invoice {
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
-  issuer          Profile         @relation("InvoiceIssuer", fields: [issuerId], references: [id], onDelete: Cascade)
-  client          Profile?        @relation("InvoiceClient", fields: [clientProfileId], references: [id], onDelete: SetNull)
-  booking         BookingRequest? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  issuer  Profile         @relation("InvoiceIssuer", fields: [issuerId], references: [id], onDelete: Cascade)
+  client  Profile?        @relation("InvoiceClient", fields: [clientProfileId], references: [id], onDelete: SetNull)
+  booking BookingRequest? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
 
   @@unique([issuerId, number])
   @@index([issuerId, kind])
@@ -1159,14 +1304,14 @@ model UserSession {
   id         Int       @id @default(autoincrement())
   userId     Int
   sid        String    @unique // Identifiant porté par le jeton de session
-  deviceId   String?   // Cookie « appareil » durable : reconnaît un appareil déjà utilisé
-  name       String    // Ex. « Safari sur iPhone »
+  deviceId   String? // Cookie « appareil » durable : reconnaît un appareil déjà utilisé
+  name       String // Ex. « Safari sur iPhone »
   userAgent  String?
   createdAt  DateTime  @default(now())
   lastUsedAt DateTime  @default(now())
   revokedAt  DateTime?
 
-  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, revokedAt])
   @@index([userId, deviceId])
