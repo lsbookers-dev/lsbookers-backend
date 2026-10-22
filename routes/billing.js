@@ -36,14 +36,28 @@ async function usage(profileId) {
   return { applicationsPerMonth: applications, bookingRequestsPerMonth: bookingRequests, activeEvents, activeOffers, albums, videos: videosMain + videosExtra }
 }
 
+// GET /api/billing/prices — public : prix et limites (page d'inscription)
+router.get('/prices', async (_req, res) => {
+  try {
+    const settings = await getPlanSettings()
+    res.set('Cache-Control', 'public, max-age=60')
+    res.json({ prices: settings.prices, trialDays: settings.trialDays, limits: settings.limits, commission: settings.commission })
+  } catch (err) {
+    sendError(res, err, 'GET /billing/prices')
+  }
+})
+
 // GET /api/billing/me — statut Pro, prix selon le rôle, limites et utilisation
 router.get('/me', requireAuth, async (req, res) => {
   try {
-    const [settings, plan, profile] = await Promise.all([
+    const [settings, plan, profile, account] = await Promise.all([
       getPlanSettings(),
       getPlan(req.user),
       prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } }),
+      prisma.user.findUnique({ where: { id: req.user.id }, select: { signupPlan: true } }),
     ])
+    // Formule choisie à l'inscription, pas encore finalisée
+    const [signupChoice, signupInterval, signupPromo] = String(account?.signupPlan || '').split('|')
     const sub = plan.subscription
     const role = String(req.user.role || '').toUpperCase()
     res.json({
@@ -62,9 +76,22 @@ router.get('/me', requireAuth, async (req, res) => {
       commission: settings.commission,
       limits: settings.limits,
       usage: await usage(profile?.id),
+      signupPlan: account?.signupPlan && !plan.isPro
+        ? { plan: signupChoice === 'PRO' ? 'PRO' : 'FREE', interval: signupInterval === 'MONTH' ? 'MONTH' : 'YEAR', promoCode: signupPromo || null }
+        : null,
     })
   } catch (err) {
     sendError(res, err, 'GET /billing/me')
+  }
+})
+
+// POST /api/billing/signup-plan/clear — le choix fait à l'inscription a été traité (ou écarté)
+router.post('/signup-plan/clear', requireAuth, async (req, res) => {
+  try {
+    await prisma.user.update({ where: { id: req.user.id }, data: { signupPlan: null } })
+    res.json({ ok: true })
+  } catch (err) {
+    sendError(res, err, 'POST /billing/signup-plan/clear')
   }
 })
 

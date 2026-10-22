@@ -3,7 +3,7 @@ const express = require('express')
 const router = express.Router()
 const prisma = require('../prisma/client')
 const { requireAuth } = require('../middleware/auth')
-const { requirePro } = require('../lib/plan')
+const { requirePro, isPro } = require('../lib/plan')
 const { PERSON_SELECT, publicName } = require('../services/publicPerson')
 const { activeOfferWhere } = require('../services/offerCleanup')
 const { artistPrestations, organizerEvents, organizerTeam, person } = require('../services/prestations')
@@ -19,15 +19,21 @@ async function myProfile(req) {
 }
 
 /** Vues du profil et nouveaux abonnés du mois (et du mois précédent pour la comparaison). */
-async function audience(profile, now) {
+// Compte gratuit : vues des 30 derniers jours. Pro : vues du mois, évolution et apparitions dans la recherche.
+async function audience(profile, now, pro) {
   const thisMonth = monthStart(now)
   const lastMonth = monthStart(now, -1)
-  const [views, viewsBefore, followers] = await Promise.all([
+  const followers = await prisma.follow.count({ where: { followingId: profile.userId, createdAt: { gte: thisMonth } } })
+  if (!pro) {
+    const views = await prisma.profileView.count({ where: { profileId: profile.id, createdAt: { gte: new Date(now.getTime() - 30 * 86400000) } } })
+    return { views, viewsTrend: null, newFollowers: followers, detailedStats: false }
+  }
+  const [views, viewsBefore, searchHits] = await Promise.all([
     prisma.profileView.count({ where: { profileId: profile.id, createdAt: { gte: thisMonth } } }),
     prisma.profileView.count({ where: { profileId: profile.id, createdAt: { gte: lastMonth, lt: thisMonth } } }),
-    prisma.follow.count({ where: { followingId: profile.userId, createdAt: { gte: thisMonth } } }),
+    prisma.profileSearchHit.count({ where: { profileId: profile.id, createdAt: { gte: thisMonth } } }),
   ])
-  return { views, viewsTrend: pct(views, viewsBefore), newFollowers: followers }
+  return { views, viewsTrend: pct(views, viewsBefore), newFollowers: followers, searchHits, detailedStats: true }
 }
 
 /** Bookings à venir (acceptés ou en attente) où je suis demandeur ou cible. */
@@ -71,7 +77,7 @@ router.get('/dashboard', requireAuth, async (req, res) => {
     const now = new Date()
     const thisMonth = monthStart(now)
 
-    const [aud, upcoming] = await Promise.all([audience(profile, now), upcomingBookings(profile.id, role, now)])
+    const [aud, upcoming] = await Promise.all([audience(profile, now, await isPro(req.user)), upcomingBookings(profile.id, role, now)])
     const pendingCount = upcoming.filter(b => b.status === 'PENDING').length
 
     let kpis

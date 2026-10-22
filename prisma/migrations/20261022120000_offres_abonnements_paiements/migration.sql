@@ -37,6 +37,7 @@ ALTER TABLE "User" ADD COLUMN     "banReason" TEXT,
 ADD COLUMN     "bannedAt" TIMESTAMP(3),
 ADD COLUMN     "lateCancelWarnedAt" TIMESTAMP(3),
 ADD COLUMN     "payoutMode" TEXT,
+ADD COLUMN     "signupPlan" TEXT,
 ADD COLUMN     "stripeCustomerId" TEXT;
 
 -- CreateTable

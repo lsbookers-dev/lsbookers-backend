@@ -154,6 +154,7 @@ model User {
   isIdentityVerified Boolean @default(false)
   isPaymentEnabled   Boolean @default(false) // Compte Stripe Connect prêt à recevoir des virements
   stripeCustomerId   String? @unique // Client Stripe (abonnement, paiements de bookings)
+  signupPlan         String? // Formule choisie à l'inscription, à finaliser : "PRO|YEAR|CODE"
   payoutMode         String? // Paiement des bookings : INVOICE (facture via une structure) | INTERMITTENT (cachet GUSO → paiement en direct)
 
   // Annulations tardives (3 en 12 mois → alerte admin, bannissement validé par l'admin)

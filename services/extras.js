@@ -75,10 +75,11 @@ async function carouselOccupancy(scope, regionCode) {
     prisma.extraOrder.findMany({ where: { kind: 'CAROUSEL', status: 'PAID', ...zone }, select: { desiredStart: true, days: true, paidAt: true } }),
   ])
   return [
-    ...live.map(f => ({ start: f.startsAt || now, end: f.endsAt })),
+    // Sans date de début : la place est occupée dès maintenant
+    ...live.map(f => ({ start: f.startsAt || new Date(0), end: f.endsAt })),
     ...waiting.map(o => {
       const start = o.desiredStart && o.desiredStart > now ? o.desiredStart : now
-      return { start, end: new Date(start.getTime() + (o.days || 7) * DAY) }
+      return { start: o.desiredStart && o.desiredStart > now ? start : new Date(0), end: new Date(start.getTime() + (o.days || 7) * DAY) }
     }),
   ]
 }

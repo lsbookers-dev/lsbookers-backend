@@ -92,8 +92,8 @@ router.post('/onboard', requireAuth, async (req, res) => {
     const link = await stripe.accountLinks.create({
       account: accountId,
       type: 'account_onboarding',
-      refresh_url: `${siteUrl()}/settings?section=paiements&stripe=retry`,
-      return_url: `${siteUrl()}/settings?section=paiements&stripe=ok`,
+      refresh_url: `${siteUrl()}/settings/subscription?stripe=retry`,
+      return_url: `${siteUrl()}/settings/subscription?stripe=ok`,
     })
     res.json({ url: link.url })
   } catch (err) {

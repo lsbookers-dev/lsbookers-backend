@@ -145,6 +145,7 @@ async function applyFounderCode({ user, code }) {
     stripeSubId: null, promoCode: promo.code, trialEndsAt: null, currentPeriodEnd: null,
     cancelAtPeriodEnd: false, endDate: null, startDate: new Date(),
   }
+  await prisma.user.update({ where: { id: user.id }, data: { signupPlan: null } }).catch(() => {})
   return prisma.subscription.upsert({ where: { userId: user.id }, create: { userId: user.id, ...data }, update: data })
 }
 
@@ -189,6 +190,9 @@ async function syncStripeSubscription(stripeSub) {
   if (promoCodeId) {
     const promo = await prisma.promoCode.findUnique({ where: { id: promoCodeId }, select: { code: true } })
     if (promo) data.promoCode = promo.code
+  }
+  if (status === 'TRIAL' || status === 'ACTIVE') {
+    await prisma.user.update({ where: { id: userId }, data: { signupPlan: null } }).catch(() => {})
   }
   return prisma.subscription.upsert({
     where: { userId },

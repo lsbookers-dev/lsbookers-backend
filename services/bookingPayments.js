@@ -171,8 +171,8 @@ async function startOnlinePayment({ user, bookingId }) {
     client_reference_id: String(user.id),
     locale: 'fr',
     metadata,
-    success_url: `${siteUrl()}/agenda?booking=${booking.id}&paiement=ok`,
-    cancel_url: `${siteUrl()}/agenda?booking=${booking.id}&paiement=annule`,
+    success_url: `${siteUrl()}/agenda?${booking.eventId ? `event=${booking.eventId}&tab=bookings&` : ''}paiement=ok`,
+    cancel_url: `${siteUrl()}/agenda?${booking.eventId ? `event=${booking.eventId}&tab=bookings&` : ''}paiement=annule`,
     custom_text: {
       submit: { message: "LS Bookers met en relation les deux parties et n'intervient pas dans la prestation. Frais bancaires retenus en cas de remboursement." },
     },

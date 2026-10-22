@@ -109,7 +109,7 @@ router.post('/register-complete', validate(registerCompleteSchema), async (req, 
     email, password, role,
     pseudo, firstName, lastName, dateOfBirth, phone, countryOfResidence,
     legalStatus, organizerType, establishmentName, typeEtablissement, siret, city,
-    specialties,
+    specialties, plan, billingInterval, promoCode,
   } = req.body;
 
   try {
@@ -179,6 +179,13 @@ router.post('/register-complete', validate(registerCompleteSchema), async (req, 
     if (dateOfBirth) userData.dateOfBirth = new Date(dateOfBirth);
     if (phone) userData.phone = phone.trim();
     if (countryOfResidence) userData.countryOfResidence = countryOfResidence.trim();
+    // Intermittent payé en cachet : ses bookings se règlent en direct (déclaration GUSO)
+    if (legalStatus === 'INTERMITTENT') userData.payoutMode = 'INTERMITTENT';
+    // Formule choisie : Pro (et/ou un code promo) à finaliser sur « Offres et abonnements » après connexion
+    const cleanPromo = String(promoCode || '').trim().toUpperCase().replace(/\s+/g, '');
+    if (plan === 'PRO' || cleanPromo) {
+      userData.signupPlan = [plan === 'PRO' ? 'PRO' : 'FREE', billingInterval === 'MONTH' ? 'MONTH' : 'YEAR', cleanPromo].join('|');
+    }
 
     const user = await prisma.user.create({
       data: userData,

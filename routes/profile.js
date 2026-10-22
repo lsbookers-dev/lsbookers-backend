@@ -3,6 +3,7 @@ const express = require('express');
 const router = express.Router();
 const prisma = require('../prisma/client');
 const { requireAuth, optionalAuth } = require('../middleware/auth');
+const { isProSubscription } = require('../lib/plan');
 const { isOwnMediaUrl } = require('../lib/mediaUrl');
 const { validate } = require('../middleware/validate');
 const { profileUpdateSchema, accountUpdateSchema } = require('../schemas');
@@ -204,6 +205,8 @@ router.get('/user/:userId', optionalAuth, async (req, res) => {
             lastName: true,
             role: true,
             pausedAt: true,
+            bannedAt: true,
+            subscription: { select: { status: true, endDate: true, currentPeriodEnd: true } },
             // email intentionnellement exclu (donnée privée)
             _count: { select: { followers: true, following: true } },
           },
@@ -219,7 +222,12 @@ router.get('/user/:userId', optionalAuth, async (req, res) => {
     if (profile.user.pausedAt && req.user?.id !== profile.userId) {
       return res.status(404).json({ error: 'Ce compte est en pause', code: 'ACCOUNT_PAUSED' });
     }
+    if (profile.user.bannedAt) return res.status(404).json({ error: 'Profil introuvable' });
     delete profile.user.pausedAt;
+    delete profile.user.bannedAt;
+    // Badge Pro (sans détail de l'abonnement)
+    profile.user.isPro = isProSubscription(profile.user.subscription);
+    delete profile.user.subscription;
 
     // Vue comptée pour « Mon espace » : visiteur connecté, autre que le propriétaire, une fois par jour
     if (req.user?.id && req.user.id !== profile.userId) {
