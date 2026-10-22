@@ -1,3 +1,4 @@
+const Sentry = require('./instrument'); // surveillance des erreurs, à charger en premier
 const http = require('http');
 const express = require('express');
 const cors = require('cors');
@@ -195,6 +196,9 @@ app.use('/api/space', spaceRoutes);
 app.use('/api/invoices', invoiceRoutes);
 
 /* ===================== Gestion d’erreurs ===================== */
+// Envoie les erreurs serveur à Sentry (si SENTRY_DSN est renseigné) avant la réponse générique
+Sentry.setupExpressErrorHandler(app);
+
 // Route API inconnue → 404 JSON (et non la page HTML par défaut d'Express)
 app.use((req, res) => {
   res.status(404).json({ error: 'Route introuvable' });
