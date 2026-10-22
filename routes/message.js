@@ -347,6 +347,7 @@ router.get('/messages/:conversationId', requireAuth, async (req, res) => {
             target:    { select: { id: true, userId: true } },
           },
         },
+        offer: { select: { id: true, title: true, date: true, fee: true, status: true, eventId: true, organizer: { select: { userId: true } } } },
       },
     })
 
@@ -380,6 +381,11 @@ router.get('/messages/:conversationId', requireAuth, async (req, res) => {
         cancellationRequesterUserId,
         requesterUserId: br.requester?.userId ?? null,
         targetUserId: br.target?.userId ?? null,
+      } : null,
+      // Candidature à une offre : de quoi proposer un booking pré-rempli
+      offer: m.offer ? {
+        id: m.offer.id, title: m.offer.title, date: m.offer.date, fee: m.offer.fee, status: m.offer.status,
+        eventId: m.offer.eventId, ownerUserId: m.offer.organizer?.userId ?? null,
       } : null,
       attachmentUrl: m.attachmentUrl || null,
       attachmentType: m.attachmentType || null,

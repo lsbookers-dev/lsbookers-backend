@@ -8,6 +8,7 @@ const { requireAuth } = require('../middleware/auth');
 const { createNotif, displayName } = require('../services/notifications');
 const { checkLimit } = require('../lib/plan');
 const { onBookingCancelled } = require('../services/bookingPayments');
+const { closeOffer } = require('./offers');
 
 /**
  * Rattache un booking accepté à l'événement de l'organisateur :
@@ -54,7 +55,8 @@ async function attachBookingToOrganizerEvent(br, targetName) {
 
 // POST /api/events/booking-request — envoyer une demande de booking
 router.post('/booking-request', requireAuth, async (req, res) => {
-  const { targetProfileId, date, message, fee, eventId } = req.body;
+  const { targetProfileId, date, message, fee, offerId, closeOfferOnAccept } = req.body;
+  let { eventId } = req.body;
   if (!targetProfileId || !date) return res.status(400).json({ error: 'Profil cible et date requis' });
   try {
     const requesterProfile = await prisma.profile.findUnique({
@@ -74,6 +76,14 @@ router.post('/booking-request', requireAuth, async (req, res) => {
     const limited = await checkLimit(req.user, 'bookingRequestsPerMonth', { profileId: requesterProfile.id });
     if (limited) return res.status(403).json(limited);
 
+    // Booking proposé depuis une candidature : l'offre doit être à l'auteur de la demande
+    let linkedOffer = null;
+    if (offerId) {
+      linkedOffer = await prisma.offer.findUnique({ where: { id: parseInt(offerId, 10) }, select: { id: true, organizerId: true, eventId: true, status: true } });
+      if (!linkedOffer || linkedOffer.organizerId !== requesterProfile.id) return res.status(403).json({ error: 'Offre introuvable' });
+      if (!eventId && linkedOffer.eventId) eventId = linkedOffer.eventId;
+    }
+
     // 1. Créer la BookingRequest
     const bookingRequest = await prisma.bookingRequest.create({
       data: {
@@ -84,6 +94,8 @@ router.post('/booking-request', requireAuth, async (req, res) => {
         fee:         fee ? parseFloat(fee) : null,
         status:      'PENDING',
         eventId:     eventId ? parseInt(eventId) : null,
+        offerId:     linkedOffer?.id ?? null,
+        closeOfferOnAccept: !!(linkedOffer && closeOfferOnAccept),
       },
     });
 
@@ -242,6 +254,19 @@ router.patch('/booking-request/:id', requireAuth, async (req, res) => {
         actorId:   br.target.userId,
         messageId: linkedMsgId,
       });
+
+      // Booking proposé depuis une offre avec « clôturer à l'acceptation » : l'offre est clôturée
+      if (br.offerId && br.closeOfferOnAccept) {
+        const closed = await closeOffer(br.offerId, { actorUserId: br.requester.userId, keepProfileId: br.targetId });
+        if (closed) {
+          await createNotif({
+            userId:  br.requester.userId,
+            type:    'OFFER_CLOSED',
+            content: `Booking confirmé avec ${targetName} : votre offre « ${closed.title} » est clôturée, les autres candidats ont été prévenus.`,
+            offerId: closed.id,
+          });
+        }
+      }
 
       // Offre encore en ligne pour ce besoin (même événement, ou offre à laquelle la personne a postulé) :
       // on propose à l'organisateur de la clôturer

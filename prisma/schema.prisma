@@ -523,10 +523,12 @@ model Message {
   createdAt          DateTime         @default(now())
   type               String           @default("TEXT") // TEXT | BOOKING_REQUEST
   bookingRequestId   Int?
+  offerId            Int? // Candidature à une offre (bouton « Proposer un booking » pour son auteur)
 
   sender         User            @relation("SentMessages", fields: [senderId], references: [id])
   conversation   Conversation    @relation(fields: [conversationId], references: [id])
   bookingRequest BookingRequest? @relation(fields: [bookingRequestId], references: [id], onDelete: SetNull)
+  offer          Offer?          @relation("MessageOffer", fields: [offerId], references: [id], onDelete: SetNull)
   notifications  Notification[]
 
   @@index([conversationId, createdAt])
@@ -648,6 +650,8 @@ model BookingRequest {
   cancelledAt             DateTime?
   cancelledById           Int? // Profil à l'origine de l'annulation
   lateCancellation        Boolean       @default(false) // Annulé à moins de 7 jours de la date
+  offerId                 Int? // Booking proposé depuis une candidature à cette offre
+  closeOfferOnAccept      Boolean       @default(false) // Clôturer l'offre quand ce booking est accepté
   cancellationRequestedBy Int? // Profile ID qui demande l'annulation
   cancellationNote        String? // Raison optionnelle
   createdAt               DateTime      @default(now())
@@ -665,6 +669,7 @@ model BookingRequest {
   reviews   Review[]
   invoices  Invoice[]
   payment   BookingPayment?
+  offer     Offer?            @relation("BookingOffer", fields: [offerId], references: [id], onDelete: SetNull)
 
   @@index([requesterId])
   @@index([targetId])
@@ -745,10 +750,12 @@ model Offer {
   updatedAt   DateTime    @updatedAt
   organizerId Int
 
-  organizer     Profile        @relation(fields: [organizerId], references: [id])
-  event         Event?         @relation(fields: [eventId], references: [id])
+  organizer     Profile          @relation(fields: [organizerId], references: [id])
+  event         Event?           @relation(fields: [eventId], references: [id])
   applications  Application[]
   notifications Notification[]
+  messages      Message[]        @relation("MessageOffer")
+  bookings      BookingRequest[] @relation("BookingOffer")
 
   @@index([type])
   @@index([createdAt])

@@ -283,11 +283,14 @@ router.post('/:id/apply', requireAuth, async (req, res) => {
 
     // Envoyer le message de candidature
     const content = message?.trim() || `Bonjour, je souhaite postuler pour l'offre "${offer.title}" que vous venez de publier. Je me tiens à votre disposition.`;
+    // Message de candidature lié à l'offre : son auteur peut proposer un booking en un clic
     await prisma.message.create({
       data: {
         conversationId: conversation.id,
         senderId:       applicantUserId,
         content,
+        type:           'OFFER_APPLICATION',
+        offerId,
       },
     });
 
@@ -331,27 +334,37 @@ router.post('/:id/apply', requireAuth, async (req, res) => {
 /* ── POST /api/offers/:id/close — clôturer (offre pourvue) ──
    L'offre disparaît de la liste et ne reçoit plus de candidatures ; les candidats encore
    en attente sont prévenus. */
+// Clôture une offre et prévient les candidats encore en attente (sauf la personne retenue)
+async function closeOffer(offerId, { actorUserId, keepProfileId } = {}) {
+  const offer = await prisma.offer.findUnique({
+    where: { id: offerId },
+    include: { applications: { where: { status: 'PENDING' }, select: { applicantId: true, applicant: { select: { userId: true } } } } },
+  });
+  if (!offer || offer.status === 'CLOSED') return offer;
+  await prisma.offer.update({ where: { id: offer.id }, data: { status: 'CLOSED' } });
+  if (keepProfileId) {
+    await prisma.application.updateMany({ where: { offerId: offer.id, applicantId: keepProfileId }, data: { status: 'ACCEPTED' } });
+  }
+  for (const a of offer.applications) {
+    if (a.applicantId === keepProfileId) continue;
+    await createNotif({
+      userId: a.applicant.userId,
+      type: 'OFFER_CLOSED',
+      content: `L'offre « ${offer.title} » a été pourvue et n'est plus en ligne. Merci pour votre candidature !`,
+      actorId: actorUserId,
+      offerId: offer.id,
+    });
+  }
+  return offer;
+}
+
 router.post('/:id/close', requireAuth, async (req, res) => {
   try {
     const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
-    const offer = await prisma.offer.findUnique({
-      where: { id: parseInt(req.params.id, 10) },
-      include: { applications: { where: { status: 'PENDING' }, select: { id: true, applicant: { select: { userId: true } } } } },
-    });
+    const offer = await prisma.offer.findUnique({ where: { id: parseInt(req.params.id, 10) }, select: { id: true, organizerId: true } });
     if (!offer) return res.status(404).json({ error: 'OFFRE_INTROUVABLE' });
     if (!profile || offer.organizerId !== profile.id) return res.status(403).json({ error: 'ACCÈS_REFUSÉ' });
-    if (offer.status === 'CLOSED') return res.json({ ok: true });
-
-    await prisma.offer.update({ where: { id: offer.id }, data: { status: 'CLOSED' } });
-    for (const a of offer.applications) {
-      await createNotif({
-        userId: a.applicant.userId,
-        type: 'OFFER_CLOSED',
-        content: `L'offre « ${offer.title} » a été pourvue et n'est plus en ligne. Merci pour votre candidature !`,
-        actorId: req.user.id,
-        offerId: offer.id,
-      });
-    }
+    await closeOffer(offer.id, { actorUserId: req.user.id });
     return res.json({ ok: true });
   } catch (err) {
     console.error('❌ POST /offers/:id/close :', err);
@@ -380,3 +393,4 @@ router.delete('/:id', requireAuth, async (req, res) => {
 });
 
 module.exports = router;
+module.exports.closeOffer = closeOffer;
