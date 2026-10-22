@@ -9,18 +9,18 @@ const { getStripe, siteUrl, stripeUnavailable } = require('../lib/stripe')
 
 const PAYEE_ROLES = ['ARTIST', 'PROVIDER', 'ORGANIZER'] // un prestataire ou organisateur peut aussi être booké
 
+// Comptes « Accounts v2 » de Stripe (imposés pour les nouvelles plateformes depuis 2026) :
+// le compte de l'artiste a la configuration « recipient » (il reçoit des virements de LS Bookers)
 async function refreshAccount(stripe, user) {
   if (!user.stripeAccountId) return null
-  const account = await stripe.accounts.retrieve(user.stripeAccountId)
-  const ready = !!(account.details_submitted && account.payouts_enabled && account.capabilities?.transfers === 'active')
+  const account = await stripe.v2.core.accounts.retrieve(user.stripeAccountId, { include: ['configuration.recipient', 'requirements'] })
+  const transfers = account.configuration?.recipient?.capabilities?.stripe_balance?.stripe_transfers?.status
+  const ready = transfers === 'active'
   if (ready !== user.isPaymentEnabled || ready !== user.isIdentityVerified) {
     await prisma.user.update({ where: { id: user.id }, data: { isPaymentEnabled: ready, isIdentityVerified: ready } })
   }
-  return {
-    ready,
-    detailsSubmitted: !!account.details_submitted,
-    pendingRequirements: (account.requirements?.currently_due || []).length,
-  }
+  const due = (account.requirements?.entries || []).filter(e => ['currently_due', 'past_due'].includes(e.minimum_deadline?.status))
+  return { ready, detailsSubmitted: ready || due.length === 0, pendingRequirements: due.length, status: transfers || null }
 }
 
 // GET /api/payouts/status
@@ -77,23 +77,30 @@ router.post('/onboard', requireAuth, async (req, res) => {
     }
     let accountId = user.stripeAccountId
     if (!accountId) {
-      const account = await stripe.accounts.create({
-        type: 'express',
-        country: 'FR', // lancement en France ; un pays par compte quand LS Bookers s'ouvrira à l'Europe
-        email: user.email,
-        capabilities: { transfers: { requested: true } },
-        business_profile: { mcc: '7929', product_description: 'Prestations artistiques et événementielles réservées via LS Bookers' },
-        settings: { payouts: { schedule: { interval: 'daily' } } },
+      const account = await stripe.v2.core.accounts.create({
+        contact_email: user.email,
+        identity: { country: 'FR' }, // lancement en France ; un pays par compte quand LS Bookers s'ouvrira à l'Europe
+        dashboard: 'express',
+        defaults: {
+          locales: ['fr-FR'],
+          // LS Bookers paie les frais Stripe et porte les pertes (contestations reprises ensuite sur le versement)
+          responsibilities: { fees_collector: 'application', losses_collector: 'application' },
+        },
+        configuration: { recipient: { capabilities: { stripe_balance: { stripe_transfers: { requested: true } } } } },
         metadata: { userId: String(user.id) },
       })
       accountId = account.id
       await prisma.user.update({ where: { id: user.id }, data: { stripeAccountId: accountId, payoutMode: 'INVOICE' } })
     }
-    const link = await stripe.accountLinks.create({
+    const link = await stripe.v2.core.accountLinks.create({
       account: accountId,
-      type: 'account_onboarding',
-      refresh_url: `${siteUrl()}/settings/subscription?stripe=retry`,
-      return_url: `${siteUrl()}/settings/subscription?stripe=ok`,
+      use_case: {
+        type: 'account_onboarding',
+        account_onboarding: {
+          refresh_url: `${siteUrl()}/settings/subscription?stripe=retry`,
+          return_url: `${siteUrl()}/settings/subscription?stripe=ok`,
+        },
+      },
     })
     res.json({ url: link.url })
   } catch (err) {
