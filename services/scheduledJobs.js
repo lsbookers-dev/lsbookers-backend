@@ -7,6 +7,7 @@ const { sendReviewInvites } = require('./reviewInvites')
 const { sendChecklistReminders } = require('./checklistReminders')
 const { sendWeeklyRecaps } = require('./weeklyRecap')
 const { chargeDuePayments, releaseDuePayouts } = require('./bookingPayments')
+const { dailyBackupIfDue } = require('./dbBackup')
 
 const INTERVAL_MS = 60 * 60 * 1000
 const PAYMENTS_INTERVAL_MS = 15 * 60 * 1000
@@ -28,6 +29,7 @@ const JOBS = [
   ['Rappels de checklist', sendChecklistReminders],
   ['Récap e-mail du lundi', sendWeeklyRecaps],
   ['Fin des mises en avant payantes', closeFinishedFeatures],
+  ['Sauvegarde quotidienne de la base', dailyBackupIfDue],
 ]
 
 const PAYMENT_JOBS = [

@@ -1,0 +1,4 @@
+# Outils ajoutés à l'image Railway : pg_dump (sauvegardes de la base, services/dbBackup.js).
+# "..." garde les paquets que Nixpacks installe déjà (Node, npm, openssl).
+[phases.setup]
+nixPkgs = ["...", "postgresql_16"]
