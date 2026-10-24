@@ -352,6 +352,7 @@ model PublicationLike {
 
   @@unique([publicationId, profileId]) // Un seul like par personne par publication
   @@index([createdAt])
+  @@index([profileId])
 }
 
 model PublicationComment {
@@ -438,6 +439,7 @@ model AlbumItem {
   publication Publication? @relation(fields: [publicationId], references: [id], onDelete: SetNull)
 
   @@index([albumId])
+  @@index([publicationId])
 }
 
 // ─────────────────────────────────────────────
@@ -455,6 +457,9 @@ model Media {
 
   user    User    @relation(fields: [userId], references: [id])
   profile Profile @relation(fields: [profileId], references: [id])
+
+  @@index([userId, createdAt]) // Médias d'un profil
+  @@index([profileId])
 }
 
 // ─────────────────────────────────────────────
@@ -471,6 +476,7 @@ model Follow {
   following User @relation("following", fields: [followingId], references: [id])
 
   @@unique([followerId, followingId])
+  @@index([followingId]) // Mes abonnés, nombre d'abonnés d'un profil
 }
 
 model Block {
@@ -483,6 +489,7 @@ model Block {
   blocked User @relation("blockedBy", fields: [blockedId], references: [id])
 
   @@unique([blockerId, blockedId])
+  @@index([blockedId]) // Blocages dans les deux sens (recherche, fil, messagerie)
 }
 
 // ─────────────────────────────────────────────
@@ -509,6 +516,7 @@ model ConversationParticipant {
   conversation Conversation @relation(fields: [conversationId], references: [id])
 
   @@unique([userId, conversationId])
+  @@index([conversationId]) // Participants d'une conversation
 }
 
 model Message {
@@ -535,7 +543,8 @@ model Message {
 
   @@index([conversationId, createdAt])
   @@index([senderId])
-  @@index([seen])
+  @@index([conversationId, seen]) // Messages non lus d'une conversation (pastille, « vu »)
+  @@index([bookingRequestId])
 }
 
 // ─────────────────────────────────────────────
@@ -675,6 +684,8 @@ model BookingRequest {
 
   @@index([requesterId])
   @@index([targetId])
+  @@index([eventId])
+  @@index([offerId])
 }
 
 // Logistique par booking (logement / transport)
@@ -728,6 +739,7 @@ model EventStaff {
   reviews       Review[]
 
   @@index([eventId])
+  @@index([profileId])
 }
 
 // ─────────────────────────────────────────────
@@ -761,6 +773,8 @@ model Offer {
 
   @@index([type])
   @@index([createdAt])
+  @@index([organizerId, status]) // Offres d'un organisateur, limite du compte gratuit
+  @@index([eventId])
 }
 
 model Application {
@@ -806,6 +820,7 @@ model Contract {
 
   @@index([senderId])
   @@index([recipientId])
+  @@index([eventId])
 }
 
 // ─────────────────────────────────────────────
@@ -861,6 +876,8 @@ model Review {
   @@unique([authorId, bookingId])
   @@unique([authorId, staffId])
   @@index([targetId])
+  @@index([bookingId])
+  @@index([eventId])
 }
 
 // ─────────────────────────────────────────────
@@ -963,6 +980,7 @@ model ExtraOrder {
 
   @@index([status])
   @@index([userId])
+  @@index([profileId])
 }
 
 // Paiement en ligne d'un booking (Stripe Connect). L'organisateur paie 100 % ; la personne bookée
@@ -998,6 +1016,8 @@ model BookingPayment {
   payee   Profile        @relation("BookingPaymentPayee", fields: [payeeId], references: [id])
 
   @@index([status, chargeAt])
+  @@index([payeeId]) // « Mon argent sur LS Bookers »
+  @@index([payerId])
 }
 
 // ─────────────────────────────────────────────
@@ -1032,6 +1052,11 @@ model Notification {
   @@index([userId, createdAt])
   @@index([userId, read])
   @@index([staffId])
+  @@index([messageId])
+  @@index([publicationId])
+  @@index([offerId])
+  @@index([actorId])
+  @@index([eventId])
 }
 
 model NotificationPreferences {
@@ -1310,6 +1335,7 @@ model Invoice {
   @@unique([issuerId, number])
   @@index([issuerId, kind])
   @@index([clientProfileId])
+  @@index([bookingId])
 }
 
 // Session de connexion (un appareil) : listée dans Réglages › Connexion et sécurité, révocable une à une
