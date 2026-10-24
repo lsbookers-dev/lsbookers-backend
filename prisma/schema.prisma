@@ -294,6 +294,8 @@ model Profile {
   checklists              EventChecklist[]
   invoicesIssued          Invoice[]          @relation("InvoiceIssuer")
   invoicesReceived        Invoice[]          @relation("InvoiceClient")
+
+  @@index([latitude, longitude]) // Recherche par distance et fil « À proximité »
 }
 
 // ─────────────────────────────────────────────

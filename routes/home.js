@@ -7,6 +7,7 @@ const { requireAuth, optionalAuth } = require('../middleware/auth')
 const { carouselFeatured } = require('../services/extras')
 const { ensureProfileRegion } = require('../lib/regions')
 const { isProSubscription } = require('../lib/plan')
+const { boundingBoxWhere } = require('../lib/geo')
 
 const MEMBER_ROLES = ['ARTIST', 'ORGANIZER', 'PROVIDER']
 
@@ -342,8 +343,26 @@ router.get('/nearby', requireAuth, async (req, res) => {
       return res.json({ posts: [], hasMore: false, nextCursor: null, needsLocation: true, region: null, radiusKm: NEARBY_RADIUS_KM })
     }
 
+    // La base ne renvoie que les profils de la région : ceux dans le carré de 100 km autour
+    // de votre ville, ou (sans coordonnées) ceux qui portent le même nom de ville
+    const sameCity = [viewer.city, viewer.location]
+      .filter(v => v && v.trim())
+      .flatMap(v => [
+        { city: { equals: v.trim(), mode: 'insensitive' } },
+        { location: { equals: v.trim(), mode: 'insensitive' } },
+      ])
+    const cityWhere = hasCoords
+      ? [{ latitude: null }, { longitude: null }].map(noCoords => ({ ...noCoords, OR: sameCity }))
+      : sameCity
     const candidates = await prisma.profile.findMany({
-      where:  { id: { notIn: [viewer.id, ...blockedProfileIds] }, user: { role: { in: MEMBER_ROLES }, pausedAt: null } },
+      where: {
+        id: { notIn: [viewer.id, ...blockedProfileIds] },
+        user: { role: { in: MEMBER_ROLES }, pausedAt: null },
+        OR: [
+          ...(hasCoords ? [boundingBoxWhere(viewer.latitude, viewer.longitude, NEARBY_RADIUS_KM)] : []),
+          ...(sameCity.length ? cityWhere : []),
+        ],
+      },
       select: { id: true, latitude: true, longitude: true, city: true, location: true },
     })
     const nearbyIds = candidates
