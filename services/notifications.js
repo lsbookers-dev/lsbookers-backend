@@ -70,6 +70,53 @@ async function createNotif({ userId, type, content, actorId, messageId, offerId,
 }
 
 /**
+ * Même notification pour beaucoup de membres (ex. nouvelle offre pour les abonnés) :
+ * réglages lus en une requête, cloches créées par paquets, e-mails envoyés groupés.
+ * À lancer sans attendre (la personne à l'origine de l'action n'attend pas l'envoi).
+ * Renvoie { bell, email } : nombre de cloches créées et d'e-mails acceptés.
+ */
+const NOTIFY_CHUNK = 500
+async function notifyMany({ userIds, type, content, actorId, offerId, publicationId, eventId } = {}) {
+  const ids = [...new Set((userIds || []).map(Number).filter(id => id && id !== Number(actorId)))]
+  if (!ids.length || !type || !content) return { bell: 0, email: 0 }
+
+  const bellIds = []
+  const emailTo = []
+  for (let i = 0; i < ids.length; i += NOTIFY_CHUNK) {
+    const users = await prisma.user.findMany({
+      where: { id: { in: ids.slice(i, i + NOTIFY_CHUNK) } },
+      select: { id: true, email: true, notifPrefs: true },
+    })
+    for (const u of users) {
+      const prefs = resolvePrefs(u.notifPrefs)
+      if (wantsBell(prefs, type)) bellIds.push(u.id)
+      if (u.email && wantsEmail(prefs, type)) emailTo.push(u.email)
+    }
+  }
+
+  for (let i = 0; i < bellIds.length; i += NOTIFY_CHUNK) {
+    await prisma.notification.createMany({
+      data: bellIds.slice(i, i + NOTIFY_CHUNK).map(userId => ({
+        userId,
+        type,
+        content,
+        ...(actorId       != null ? { actorId:       Number(actorId)       } : {}),
+        ...(offerId       != null ? { offerId:       Number(offerId)       } : {}),
+        ...(publicationId != null ? { publicationId: Number(publicationId) } : {}),
+        ...(eventId       != null ? { eventId:       Number(eventId)       } : {}),
+      })),
+    })
+  }
+  // Pastille de la cloche mise à jour tout de suite sur les sites ouverts
+  try {
+    if (bellIds.length) require('../socket').getIO().to(bellIds.map(id => `user:${id}`)).emit('notifications_changed')
+  } catch { /* temps réel indisponible */ }
+
+  const email = emailTo.length ? await emails().sendNotificationEmails(emailTo, { content }) : 0
+  return { bell: bellIds.length, email }
+}
+
+/**
  * Utilitaire — retourne le nom d'affichage d'un user Prisma.
  */
 function displayName(user) {
@@ -77,4 +124,4 @@ function displayName(user) {
   return user.pseudo || [user.firstName, user.lastName].filter(Boolean).join(' ') || 'Utilisateur'
 }
 
-module.exports = { createNotif, displayName }
+module.exports = { createNotif, notifyMany, displayName }

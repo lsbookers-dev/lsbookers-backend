@@ -250,6 +250,40 @@ async function sendNotificationEmail(to, { content }) {
   })
 }
 
+/**
+ * Même e-mail de notification à beaucoup de membres (ex. nouvelle offre pour tous les abonnés).
+ * Envoi par paquets de 100 (un seul appel à Resend par paquet), espacés pour rester
+ * sous la limite de Resend (2 appels par seconde). Renvoie le nombre d'e-mails acceptés.
+ */
+const BATCH_SIZE = 100
+const BATCH_GAP_MS = 600
+async function sendNotificationEmails(recipients, { content }) {
+  const to = [...new Set(recipients.filter(Boolean))]
+  if (!to.length) return 0
+  const html = emailLayout({
+    title: 'Du nouveau sur LS Bookers',
+    paragraphs: [escapeHtml(content)],
+    ctaLabel: 'Voir sur LS Bookers',
+    ctaUrl: `${APP_URL}/notifications`,
+  })
+  const subject = `${String(content).slice(0, 90)} — LS Bookers`
+  let sent = 0
+  for (let i = 0; i < to.length; i += BATCH_SIZE) {
+    if (i > 0) await new Promise(resolve => setTimeout(resolve, BATCH_GAP_MS))
+    const chunk = to.slice(i, i + BATCH_SIZE)
+    // Tests automatiques : aucun e-mail réel n'est jamais envoyé
+    if (process.env.LSB_DISABLE_EMAILS === '1') { sent += chunk.length; continue }
+    try {
+      const result = await resend.batch.send(chunk.map(email => ({ from: FROM, to: email, subject, html })))
+      if (result?.error) throw new Error(result.error.message || 'Envoi groupé refusé')
+      sent += chunk.length
+    } catch (err) {
+      console.error(`❌ [sendNotificationEmails] paquet ${i / BATCH_SIZE + 1} :`, err.message)
+    }
+  }
+  return sent
+}
+
 /** Nouveau message reçu pendant que le membre n'est pas sur le site */
 async function sendNewMessageEmail(to, { senderName, conversationId }) {
   await deliverEmail({
@@ -267,5 +301,5 @@ async function sendNewMessageEmail(to, { senderName, conversationId }) {
 module.exports = {
   deliverEmail, FROM, APP_URL, sendVerificationEmail, sendPasswordResetEmail, sendNewDeviceEmail,
   emailLayout, sendLoginAlertEmail, sendEmailChangeConfirmation, sendEmailChangedNotice,
-  sendNotificationEmail, sendNewMessageEmail,
+  sendNotificationEmail, sendNotificationEmails, sendNewMessageEmail,
 };

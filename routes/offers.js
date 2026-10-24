@@ -7,7 +7,7 @@ const { requireAuth } = require('../middleware/auth');
 const { checkLimit } = require('../lib/plan');
 const { validate } = require('../middleware/validate');
 const { offerCreateSchema, offerUpdateSchema } = require('../schemas');
-const { createNotif, displayName } = require('../services/notifications');
+const { createNotif, notifyMany, displayName } = require('../services/notifications');
 const { PERSON_SELECT, publicName } = require('../services/publicPerson');
 
 /* ── Helpers ─────────────────────────────────────────────── */
@@ -97,38 +97,9 @@ router.post('/', requireAuth, validate(offerCreateSchema), async (req, res) => {
       include: offerInclude,
     });
 
-    // ── Notification NEW_OFFER aux abonnés artistes/prestataires concernés ──
-    try {
-      const organizer = await prisma.user.findUnique({
-        where: { id: req.user.id },
-        select: { pseudo: true, firstName: true, lastName: true },
-      })
-      const orgName = displayName(organizer)
-
-      // Rôles qui peuvent être ciblés par cette offre
-      const targetRoles = offer.type === 'ALL'
-        ? ['ARTIST', 'PROVIDER']
-        : offer.type === 'ARTIST' ? ['ARTIST'] : ['PROVIDER']
-
-      // Récupère les abonnés qui correspondent au rôle ciblé
-      const followers = await prisma.follow.findMany({
-        where: { followingId: req.user.id },
-        include: { follower: { select: { id: true, role: true } } },
-      })
-
-      const relevant = followers.filter(f => targetRoles.includes(f.follower?.role))
-      for (const f of relevant) {
-        await createNotif({
-          userId:  f.follower.id,
-          type:    'NEW_OFFER',
-          content: `${orgName} a publié une nouvelle offre : "${offer.title}".`,
-          actorId: req.user.id,
-          offerId: offer.id,
-        })
-      }
-    } catch (notifErr) {
-      console.error('❌ POST /offers — erreur notifs abonnés :', notifErr.message)
-    }
+    // Abonnés artistes/prestataires concernés prévenus en arrière-plan : la réponse n'attend pas
+    notifyFollowersOfOffer(offer, req.user.id)
+      .catch(err => console.error('❌ POST /offers — erreur notifs abonnés :', err.message))
 
     return res.status(201).json(formatOffer(offer));
   } catch (err) {
@@ -136,6 +107,33 @@ router.post('/', requireAuth, validate(offerCreateSchema), async (req, res) => {
     return res.status(500).json({ error: 'ERREUR_SERVEUR' });
   }
 });
+
+/* ── Nouvelle offre : prévenir les abonnés concernés (cloche + e-mail selon leurs réglages) ── */
+async function notifyFollowersOfOffer(offer, organizerUserId) {
+  // Rôles qui peuvent être ciblés par cette offre
+  const targetRoles = offer.type === 'ALL'
+    ? ['ARTIST', 'PROVIDER']
+    : offer.type === 'ARTIST' ? ['ARTIST'] : ['PROVIDER']
+
+  const [organizer, followers] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: organizerUserId },
+      select: { pseudo: true, firstName: true, lastName: true },
+    }),
+    prisma.follow.findMany({
+      where: { followingId: organizerUserId, follower: { role: { in: targetRoles } } },
+      select: { followerId: true },
+    }),
+  ])
+
+  return notifyMany({
+    userIds: followers.map(f => f.followerId),
+    type: 'NEW_OFFER',
+    content: `${displayName(organizer)} a publié une nouvelle offre : "${offer.title}".`,
+    actorId: organizerUserId,
+    offerId: offer.id,
+  })
+}
 
 /* ── GET /api/offers — lister avec filtres ──────────────── */
 // Page Opportunités (?paged=1) : paquets de 20 → { offers, total, hasMore, nextCursor }.
