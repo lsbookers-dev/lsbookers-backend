@@ -161,6 +161,18 @@ app.post('/api/csp-report', cspReportLimiter,
     res.status(204).end();
   });
 
+/* ===================== Surveillance (UptimeRobot) ===================== */
+// GET /api/health : « ok » si le serveur et la base de données répondent, 503 sinon
+const prismaHealth = require('./prisma/client');
+app.get('/api/health', async (_req, res) => {
+  try {
+    await prismaHealth.$queryRaw`SELECT 1`;
+    res.set('Cache-Control', 'no-store').json({ status: 'ok' });
+  } catch {
+    res.status(503).json({ status: 'database_unavailable' });
+  }
+});
+
 /* ===================== Routes API ===================== */
 // Rate limiting uniquement sur login et register (pas sur /me)
 app.use('/api/auth/login', authLimiter);
