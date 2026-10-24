@@ -774,6 +774,7 @@ model Offer {
   @@index([type])
   @@index([createdAt])
   @@index([organizerId, status]) // Offres d'un organisateur, limite du compte gratuit
+  @@index([status, createdAt]) // Page Opportunités : offres actives, les plus récentes d'abord
   @@index([eventId])
 }
 

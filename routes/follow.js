@@ -117,6 +117,7 @@ router.get('/following', requireAuth, async (req, res) => {
         },
       },
       orderBy: { createdAt: 'desc' },
+      take: 200, // Liste plafonnée (plus utilisée par le site)
     })
     return res.json({ following: followings })
   } catch (error) {
@@ -141,6 +142,7 @@ router.get('/followers', requireAuth, async (req, res) => {
         },
       },
       orderBy: { createdAt: 'desc' },
+      take: 200, // Liste plafonnée (plus utilisée par le site)
     })
     return res.json({ followers })
   } catch (error) {
@@ -152,17 +154,23 @@ router.get('/followers', requireAuth, async (req, res) => {
 /* =========================================================
  *  GET /api/follow/contacts — retourne les followers + suivis de l'utilisateur connecté
  * =======================================================*/
+const CONTACTS_MAX = 200
 router.get('/contacts', requireAuth, async (req, res) => {
   const userId = req.user.id
   try {
     const [following, followers] = await Promise.all([
+      // Les 200 plus récents de chaque côté, avec les seuls champs affichés
       prisma.follow.findMany({
         where: { followerId: userId },
-        include: { following: { include: { profile: { select: { avatar: true } } } } },
+        select: { following: { select: { id: true, pseudo: true, firstName: true, lastName: true, role: true, profile: { select: { avatar: true } } } } },
+        orderBy: { createdAt: 'desc' },
+        take: CONTACTS_MAX,
       }),
       prisma.follow.findMany({
         where: { followingId: userId },
-        include: { follower: { include: { profile: { select: { avatar: true } } } } },
+        select: { follower: { select: { id: true, pseudo: true, firstName: true, lastName: true, role: true, profile: { select: { avatar: true } } } } },
+        orderBy: { createdAt: 'desc' },
+        take: CONTACTS_MAX,
       }),
     ])
     const seen = new Set()

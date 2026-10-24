@@ -36,6 +36,7 @@ router.get('/user/:userId', async (req, res) => {
       where: { userId },
       orderBy: { createdAt: 'desc' },
       select: { id: true, title: true, url: true, caption: true, createdAt: true },
+      take: 100, // Liste plafonnée (ancienne route, plus utilisée par le site)
     });
 
     // Normalisation simple pour le front (image=url)

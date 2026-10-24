@@ -138,12 +138,22 @@ router.post('/', requireAuth, validate(offerCreateSchema), async (req, res) => {
 });
 
 /* ── GET /api/offers — lister avec filtres ──────────────── */
+// Page Opportunités (?paged=1) : paquets de 20 → { offers, total, hasMore, nextCursor }.
+// Autres appels (encart de l'accueil, offres d'un événement) : tableau limité à ?limit= (50 max).
+// « Pour moi » : ?forRole=ARTIST&forSpecialties=DJ,Chanteur (offres de mon rôle, sans spécialité ou de ma spécialité).
+const OFFERS_PAGE = 20
+const OFFERS_MAX = 50
+
 router.get('/', async (req, res) => {
-  const { type, specialty, location, country, organizerId, eventId } = req.query;
+  const { type, specialty, location, country, organizerId, eventId, forRole } = req.query;
+  const paged = req.query.paged === '1' || req.query.paged === 'true';
+  const cursor = Math.max(parseInt(req.query.cursor, 10) || 0, 0);
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || (paged ? OFFERS_PAGE : OFFERS_MAX), 1), OFFERS_MAX);
 
   try {
     // Offres passées exclues (elles sont supprimées le lendemain, cf. services/offerCleanup)
-    const where = { status: 'ACTIVE', AND: [activeOfferWhere()] };
+    const and = [activeOfferWhere()];
+    const where = { status: 'ACTIVE', AND: and };
 
     if (type && ['ARTIST', 'PROVIDER', 'ALL'].includes(type)) where.type = type;
     if (specialty) where.specialty = { contains: specialty, mode: 'insensitive' };
@@ -153,13 +163,34 @@ router.get('/', async (req, res) => {
     // Filtre par eventId via la relation (pas le champ scalaire)
     if (eventId) where.event = { id: parseInt(eventId, 10) };
 
-    const offers = await prisma.offer.findMany({
-      where,
-      include: offerInclude,
-      orderBy: { createdAt: 'desc' },
-    });
+    // « Pour moi »
+    if (forRole && ['ARTIST', 'PROVIDER'].includes(String(forRole))) {
+      and.push({ type: { in: [String(forRole), 'ALL'] } });
+      const specialties = String(req.query.forSpecialties || '').split(',').map(s => s.trim()).filter(Boolean);
+      and.push({
+        OR: [
+          { specialty: null },
+          { specialty: '' },
+          ...specialties.map(s => ({ specialty: { equals: s, mode: 'insensitive' } })),
+        ],
+      });
+    }
 
-    return res.json(offers.map(formatOffer));
+    const [offers, total] = await Promise.all([
+      prisma.offer.findMany({
+        where,
+        include: offerInclude,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: paged ? cursor : 0,
+        take: limit,
+      }),
+      paged ? prisma.offer.count({ where }) : null,
+    ]);
+
+    if (!paged) return res.json(offers.map(formatOffer));
+
+    const nextCursor = cursor + offers.length < total ? cursor + offers.length : null;
+    return res.json({ offers: offers.map(formatOffer), total, hasMore: nextCursor !== null, nextCursor });
   } catch (err) {
     console.error('❌ GET /offers :', err);
     return res.status(500).json({ error: 'ERREUR_SERVEUR' });
