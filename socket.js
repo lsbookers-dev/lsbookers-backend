@@ -13,6 +13,22 @@ let io = null
 // Rate limit typing en mémoire — max 1 event/s par userId (pas de Redis nécessaire)
 const typingLastSent = new Map() // userId → timestamp
 
+// Présence « en ligne » : membres qui ont le site ouvert (au moins un onglet connecté).
+// Leur « dernière activité » est rafraîchie ici, en une requête par minute pour tout le monde,
+// au lieu d'un appel « je suis là » envoyé par chaque onglet.
+// (Un seul serveur : à déplacer dans Redis le jour où il y en aura plusieurs, cf. #282.)
+const openTabs = new Map() // userId → nombre d'onglets connectés
+const PRESENCE_EVERY_MS = 60 * 1000
+
+function touchUsers(userIds) {
+  if (!userIds.length) return
+  prisma.user.updateMany({ where: { id: { in: userIds } }, data: { lastActiveAt: new Date() } }).catch(() => {})
+}
+
+function isUserOnline(userId) {
+  return (openTabs.get(Number(userId)) || 0) > 0
+}
+
 const ALLOWED_ORIGINS = [
   'https://www.lsbookers.com',
   'https://lsbookers.com',
@@ -71,9 +87,15 @@ function init(httpServer) {
     }
   })
 
+  setInterval(() => touchUsers([...openTabs.keys()]), PRESENCE_EVERY_MS).unref()
+
   io.on('connection', (socket) => {
     // Chaque utilisateur rejoint automatiquement sa salle personnelle
     socket.join(`user:${socket.userId}`)
+
+    const tabs = (openTabs.get(socket.userId) || 0) + 1
+    openTabs.set(socket.userId, tabs)
+    if (tabs === 1) touchUsers([socket.userId])
 
     // Rejoindre une conversation (Point 1 — vérifier que l'utilisateur est bien participant)
     socket.on('join_conversation', async (conversationId) => {
@@ -124,7 +146,12 @@ function init(httpServer) {
     })
 
     socket.on('disconnect', () => {
-      // Socket.io gère le nettoyage automatiquement
+      // Les salles sont nettoyées par Socket.io ; dernier onglet fermé → « vu à l'instant »
+      const left = (openTabs.get(socket.userId) || 1) - 1
+      if (left > 0) return openTabs.set(socket.userId, left)
+      openTabs.delete(socket.userId)
+      typingLastSent.delete(socket.userId)
+      touchUsers([socket.userId])
     })
   })
 
@@ -136,4 +163,4 @@ function getIO() {
   return io
 }
 
-module.exports = { init, getIO }
+module.exports = { init, getIO, isUserOnline }

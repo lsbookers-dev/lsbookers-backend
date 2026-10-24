@@ -61,6 +61,8 @@ async function createNotif({ userId, type, content, actorId, messageId, offerId,
         ...(eventId       != null ? { eventId:       Number(eventId)       } : {}),
       },
     })
+    // Pastille de la cloche mise à jour tout de suite sur le site ouvert
+    try { require('../socket').getIO().to(`user:${Number(userId)}`).emit('notifications_changed') } catch { /* temps réel indisponible */ }
   } catch (err) {
     // Silencieux — ne jamais faire planter le flux principal pour une notif
     console.error(`❌ [createNotif] type=${type} userId=${userId} :`, err.message)

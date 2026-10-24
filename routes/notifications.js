@@ -7,9 +7,7 @@ const { requireAuth } = require('../middleware/auth');
    GET /api/notifications
    ➜ Lister les notifications d’un utilisateur
 ========================================================= */
-// Les messages ne passent jamais par la cloche : seule la pastille de l'enveloppe les signale
-// (anciennes notifications NEW_MESSAGE ignorées).
-const NOT_MESSAGE = { NOT: { type: 'NEW_MESSAGE' } };
+const { NOT_MESSAGE, countUnreadMessages, countUnreadNotifications } = require('../lib/unreadCounts');
 
 router.get('/', requireAuth, async (req, res) => {
   try {
@@ -138,12 +136,29 @@ router.get('/unread-count', requireAuth, async (req, res) => {
   try {
     const userId = Number(req.user?.id)
     if (!userId) return res.status(401).json({ error: 'Unauthorized' })
-    const count = await prisma.notification.count({
-      where: { userId, read: false, ...NOT_MESSAGE },
-    })
+    const count = await countUnreadNotifications(userId)
     res.json({ count })
   } catch (err) {
     console.error('❌ [GET /notifications/unread-count] Error:', err)
+    res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
+/* =========================================================
+   GET /api/notifications/counts
+   ➜ Les deux pastilles en un seul appel : { messages, notifications }
+========================================================= */
+router.get('/counts', requireAuth, async (req, res) => {
+  try {
+    const userId = Number(req.user?.id)
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' })
+    const [messages, notifications] = await Promise.all([
+      countUnreadMessages(userId),
+      countUnreadNotifications(userId),
+    ])
+    res.set('Cache-Control', 'no-store').json({ messages, notifications })
+  } catch (err) {
+    console.error('❌ [GET /notifications/counts] Error:', err)
     res.status(500).json({ error: 'Erreur serveur' })
   }
 })

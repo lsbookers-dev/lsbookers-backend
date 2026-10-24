@@ -12,6 +12,7 @@ const { notifyNewMessageByEmail } = require('../services/messageEmails')
 const { newConversationRefusal } = require('../lib/messagePolicy')
 const { isFileContentValid, extensionFor } = require('../lib/fileCheck')
 const { isBlockedBetween } = require('../lib/blocks')
+const { countUnreadMessages } = require('../lib/unreadCounts')
 
 /* ─── Whitelist MIME pour les fichiers messages ─── */
 const MSG_ALLOWED_MIME = new Set([
@@ -174,8 +175,6 @@ router.get('/conversations', requireAuth, async (req, res) => {
     const cursor = Math.max(parseInt(req.query.cursor, 10) || 0, 0)
     const withId = parseInt(req.query.with, 10) || null
 
-    // Mettre à jour lastActiveAt
-    prisma.user.update({ where: { id: userId }, data: { lastActiveAt: new Date() } }).catch(() => {})
 
     // Conversations avec au moins 1 message (une conversation vide n'apparaît pas chez le destinataire),
     // sans les échanges avec l'admin
@@ -272,21 +271,7 @@ router.get('/unread-count', requireAuth, async (req, res) => {
     const userId = Number(req.user?.id)
     if (!userId) return res.status(401).json({ error: 'Unauthorized' })
 
-    const participations = await prisma.conversationParticipant.findMany({
-      where: { userId, muted: false },
-      select: { conversationId: true },
-    })
-
-    const conversationIds = participations.map((p) => p.conversationId)
-    if (!conversationIds.length) return res.json({ count: 0 })
-
-    const count = await prisma.message.count({
-      where: {
-        conversationId: { in: conversationIds },
-        seen: false,
-        NOT: { senderId: userId },
-      },
-    })
+    const count = await countUnreadMessages(userId)
 
     return res.json({ count })
   } catch (err) {
@@ -334,8 +319,6 @@ router.get('/messages/:conversationId', requireAuth, async (req, res) => {
     const conversationId = Number(req.params.conversationId)
     if (!userId) return res.status(401).json({ error: 'Unauthorized' })
 
-    // Mettre à jour lastActiveAt
-    prisma.user.update({ where: { id: userId }, data: { lastActiveAt: new Date() } }).catch(() => {})
     if (!conversationId) return res.status(400).json({ error: 'conversationId invalide' })
 
     const participation = await prisma.conversationParticipant.findFirst({
