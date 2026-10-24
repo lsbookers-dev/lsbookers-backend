@@ -1,6 +1,7 @@
 const express = require('express')
 const router = express.Router()
 const prisma = require('../prisma/client')
+const { Prisma } = require('@prisma/client')
 const { requireAuth, isAdminUser } = require('../middleware/auth')
 const { validate } = require('../middleware/validate')
 const { conversationCreateSchema } = require('../schemas')
@@ -121,48 +122,108 @@ async function uploadMessageFile(buffer, mimetype, originalname) {
 }
 
 /* =========================================================
-   GET /api/messages/conversations
+   GET /api/messages/conversations?cursor=&with=
+   Conversations par paquets de 30, la plus récente d'abord.
+   - cursor : position de départ (renvoyée par le paquet précédent)
+   - with   : id d'une conversation à joindre même si elle est plus loin (conversation ouverte)
+   Réponse : { conversations, total, unreadTotal, hasMore, nextCursor }
 ========================================================= */
+const CONVERSATIONS_PAGE = 30
+
+// Texte d'aperçu du dernier message dans la liste
+function lastMessagePreview(lastMessage) {
+  if (!lastMessage) return ''
+  if (lastMessage.type === 'PROFILE_SHARE') {
+    try {
+      const d = JSON.parse(lastMessage.content)
+      return `Fiche partagée : ${d.name || 'Utilisateur'}`
+    } catch { return 'Fiche partagée' }
+  }
+  if (lastMessage.type === 'OFFER_SHARE') {
+    try {
+      const d = JSON.parse(lastMessage.content)
+      return `Offre partagée : ${d.title || 'Offre'}`
+    } catch { return 'Offre partagée' }
+  }
+  if (lastMessage.type === 'BOOKING_REQUEST') return 'Proposition de booking'
+  if (lastMessage.type === 'CANCELLATION_REQUEST') return 'Demande d\'annulation'
+  return lastMessage.content ||
+    (lastMessage.attachmentType === 'IMAGE' ? 'Photo' : '') ||
+    (lastMessage.attachmentType === 'VIDEO' ? 'Vidéo' : '') ||
+    (lastMessage.attachmentType === 'DOCUMENT' ? 'Document' : '') ||
+    ''
+}
+
+// Dernier message de chaque conversation, en une seule requête (index conversationId + createdAt)
+async function lastMessagesByConversation(conversationIds) {
+  if (!conversationIds.length) return new Map()
+  const rows = await prisma.$queryRaw`
+    SELECT DISTINCT ON ("conversationId")
+      "id", "conversationId", "senderId", "content", "type", "attachmentType", "seen", "createdAt"
+    FROM "Message"
+    WHERE "conversationId" IN (${Prisma.join(conversationIds)})
+    ORDER BY "conversationId", "createdAt" DESC, "id" DESC`
+  return new Map(rows.map(m => [m.conversationId, m]))
+}
+
 router.get('/conversations', requireAuth, async (req, res) => {
   try {
     const userId = Number(req.user?.id)
     if (!userId) return res.status(401).json({ error: 'Unauthorized' })
 
+    const cursor = Math.max(parseInt(req.query.cursor, 10) || 0, 0)
+    const withId = parseInt(req.query.with, 10) || null
+
     // Mettre à jour lastActiveAt
     prisma.user.update({ where: { id: userId }, data: { lastActiveAt: new Date() } }).catch(() => {})
 
-    const participations = await prisma.conversationParticipant.findMany({
-      where: { userId },
-      include: {
-        conversation: {
-          include: {
-            participants: {
-              include: { user: PUBLIC_USER_SELECT },
-            },
-            messages: {
-              orderBy: { createdAt: 'desc' },
-              take: 1,
-            },
-          },
-        },
+    // Conversations avec au moins 1 message (une conversation vide n'apparaît pas chez le destinataire),
+    // sans les échanges avec l'admin
+    const noAdmin = { participants: { none: { user: { role: 'ADMIN' } } } }
+    const where = { userId, conversation: { ...noAdmin, messages: { some: {} } } }
+    const include = {
+      conversation: {
+        include: { participants: { include: { user: PUBLIC_USER_SELECT } } },
       },
-    })
+    }
 
-    // Fix 1 : ne montrer que les conversations avec au moins 1 message
-    // (évite qu'une conversation vide apparaisse chez le destinataire)
-    const withMessages = participations.filter(
-      (p) => p.conversation.messages.length > 0
-    )
+    const [rows, total, unreadTotal] = await Promise.all([
+      prisma.conversationParticipant.findMany({
+        where,
+        include,
+        orderBy: [{ conversation: { updatedAt: 'desc' } }, { conversationId: 'desc' }],
+        skip: cursor,
+        take: CONVERSATIONS_PAGE + 1,
+      }),
+      prisma.conversationParticipant.count({ where }),
+      prisma.conversationParticipant.count({
+        where: { userId, conversation: { ...noAdmin, messages: { some: { seen: false, senderId: { not: userId } } } } },
+      }),
+    ])
+
+    const hasMore = rows.length > CONVERSATIONS_PAGE
+    const participations = rows.slice(0, CONVERSATIONS_PAGE)
+
+    // Conversation ouverte mais plus loin dans la liste : on la joint pour pouvoir l'afficher
+    if (withId && !participations.some(p => p.conversationId === withId)) {
+      const extra = await prisma.conversationParticipant.findFirst({
+        where: { ...where, conversationId: withId },
+        include,
+      })
+      if (extra) participations.push(extra)
+    }
+
+    const lastMessages = await lastMessagesByConversation(participations.map(p => p.conversationId))
 
     const conversations = await Promise.all(
-      withMessages.map(async (p) => {
+      participations.map(async (p) => {
         const c = p.conversation
-        const lastMessage = c.messages[0] || null
+        const lastMessage = lastMessages.get(c.id) || null
 
         // Construire la liste des participants
         let participants = c.participants.map((part) => pickUserPublic(part.user))
 
-        // Fix 2 : si l'autre participant a supprimé sa copie de la conv,
+        // Si l'autre participant a supprimé sa copie de la conv,
         // récupérer ses infos depuis l'historique des messages
         const hasOther = participants.some((u) => u && u.id !== userId && !isAdminUser(u))
         if (!hasOther) {
@@ -179,28 +240,7 @@ router.get('/conversations', requireAuth, async (req, res) => {
         return {
           id: c.id,
           participants: participants.filter(Boolean),
-          lastMessage: (() => {
-            if (!lastMessage) return ''
-            if (lastMessage.type === 'PROFILE_SHARE') {
-              try {
-                const d = JSON.parse(lastMessage.content)
-                return `Fiche partagée : ${d.name || 'Utilisateur'}`
-              } catch { return 'Fiche partagée' }
-            }
-            if (lastMessage.type === 'OFFER_SHARE') {
-              try {
-                const d = JSON.parse(lastMessage.content)
-                return `Offre partagée : ${d.title || 'Offre'}`
-              } catch { return 'Offre partagée' }
-            }
-            if (lastMessage.type === 'BOOKING_REQUEST') return 'Proposition de booking'
-            if (lastMessage.type === 'CANCELLATION_REQUEST') return 'Demande d\'annulation'
-            return lastMessage.content ||
-              (lastMessage.attachmentType === 'IMAGE' ? 'Photo' : '') ||
-              (lastMessage.attachmentType === 'VIDEO' ? 'Vidéo' : '') ||
-              (lastMessage.attachmentType === 'DOCUMENT' ? 'Document' : '') ||
-              ''
-          })(),
+          lastMessage: lastMessagePreview(lastMessage),
           lastMessageMeta: lastMessage
             ? {
                 id: lastMessage.id,
@@ -216,16 +256,8 @@ router.get('/conversations', requireAuth, async (req, res) => {
       })
     )
 
-    const filtered = conversations.filter(
-      (c) => !c.participants.some((u) => isAdminUser(u))
-    )
-
-    filtered.sort(
-      (a, b) =>
-        new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime()
-    )
-
-    return res.json({ conversations: filtered })
+    const nextCursor = hasMore ? cursor + CONVERSATIONS_PAGE : null
+    return res.json({ conversations, total, unreadTotal, hasMore, nextCursor })
   } catch (err) {
     console.error('❌ [GET /conversations]', err)
     return res.status(500).json({ error: 'Erreur serveur' })
