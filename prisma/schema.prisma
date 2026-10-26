@@ -199,6 +199,10 @@ model User {
   pendingEmailExpiresAt DateTime?
   tagsReceived          PublicationTag[] @relation("TaggedUser")
   tagsGiven             PublicationTag[] @relation("TaggedByUser")
+
+  // Profils gérés (formule Agence, 27/10/2026)
+  canManageProfiles Boolean          @default(false) // Accès à la gestion de plusieurs profils (activé par l'admin en attendant la formule Agence)
+  managedProfiles   ProfileManager[] @relation("ProfileManagerUser")
 }
 
 model Profile {
@@ -294,6 +298,7 @@ model Profile {
   checklists              EventChecklist[]
   invoicesIssued          Invoice[]          @relation("InvoiceIssuer")
   invoicesReceived        Invoice[]          @relation("InvoiceClient")
+  managers                ProfileManager[]
 
   @@index([latitude, longitude]) // Recherche par distance et fil « À proximité »
 }
@@ -670,6 +675,10 @@ model BookingRequest {
 
   sharedNotes        String? // Notes partagées organisateur ↔ artiste/prestataire
   reviewInviteSentAt DateTime? // Notification « laissez votre avis » envoyée
+
+  // Profil géré avec « accord de l'artiste avant booking » : l'agent a accepté, l'artiste doit confirmer
+  awaitingArtistSince   DateTime?
+  approvalRequestedById Int? // Compte de l'agent qui a demandé la confirmation
 
   requester Profile           @relation("BookingRequester", fields: [requesterId], references: [id])
   target    Profile           @relation("BookingTarget", fields: [targetId], references: [id])
@@ -1216,6 +1225,35 @@ model AdminPost {
 // ─────────────────────────────────────────────
 
 // Une vue par visiteur connecté, par profil et par jour (le propriétaire n'est pas compté)
+// ─────────────────────────────────────────────
+//  PROFILS GÉRÉS (agent / plusieurs salles)
+// ─────────────────────────────────────────────
+
+// Un compte (l'agent) gère le profil d'un autre compte (l'artiste, la salle).
+// Chacun garde son compte ; l'artiste peut retirer l'accès d'un clic.
+model ProfileManager {
+  id              Int       @id @default(autoincrement())
+  managerUserId   Int // Compte de l'agent
+  profileId       Int // Profil géré
+  status          String    @default("PENDING") // PENDING (invitation envoyée) | ACTIVE | ENDED
+  origin          String    @default("INVITED") // INVITED (compte existant) | CREATED (profil créé par l'agent, à récupérer par e-mail)
+  requireApproval Boolean   @default(true) // L'artiste confirme les bookings acceptés par l'agent
+  invitedEmail    String?
+  tokenHash       String?   @unique // Lien de l'e-mail (haché)
+  expiresAt       DateTime?
+  acceptedAt      DateTime?
+  endedAt         DateTime?
+  endedBy         String? // ARTIST | MANAGER | ADMIN | DECLINED
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  manager User    @relation("ProfileManagerUser", fields: [managerUserId], references: [id], onDelete: Cascade)
+  profile Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([managerUserId, status])
+  @@index([profileId, status])
+}
+
 model ProfileView {
   id           Int      @id @default(autoincrement())
   profileId    Int

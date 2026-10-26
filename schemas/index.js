@@ -334,7 +334,32 @@ const contactCreateSchema = z.object({
    EXPORTS
 ───────────────────────────────────────── */
 
+/* ─────────────────────────────────────────
+   PROFILS GÉRÉS (agent / plusieurs salles)
+───────────────────────────────────────── */
+
+// L'agent prépare le profil d'une personne qui n'a pas encore de compte
+const managedCreateSchema = z.object({
+  email:       z.string().email('Adresse e-mail invalide').toLowerCase().trim(),
+  pseudo:      step2Schema.shape.pseudo,
+  role:        z.enum(['ARTIST', 'ORGANIZER', 'PROVIDER'], { message: 'Type de profil invalide' }),
+  city:        z.string().max(100).trim().transform(stripHtml).optional(),
+  specialties: z.array(z.string().max(100).transform(stripHtml)).max(20).optional(),
+});
+
+// La personne récupère le profil préparé pour elle (lien reçu par e-mail)
+const managedClaimSchema = z.object({
+  password:        z.string().min(8, 'Le mot de passe doit contenir au moins 8 caractères').max(200),
+  firstName:       step2Schema.shape.firstName,
+  lastName:        step2Schema.shape.lastName,
+  requireApproval: z.boolean().optional(),
+  isAdult:         z.literal(true, { errorMap: () => ({ message: 'Vous devez certifier être majeur.' }) }),
+});
+
 module.exports = {
+  // Profils gérés
+  managedCreateSchema,
+  managedClaimSchema,
   // Auth
   registerSchema,
   loginSchema,

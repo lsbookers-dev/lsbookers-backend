@@ -12,6 +12,40 @@
 const jwt = require('jsonwebtoken');
 const prisma = require('../prisma/client');
 const { touchSession } = require('../lib/sessions');
+const { requestedProfileId, findActiveManagement, isBlockedWhileActing } = require('../lib/managedProfiles');
+
+// Champs chargés pour le compte connecté (et pour le compte d'un profil géré)
+const USER_SELECT = {
+  id: true,
+  pseudo: true,
+  firstName: true,
+  lastName: true,
+  email: true,
+  role: true,
+  isAdmin: true,
+  registrationStep: true,
+  emailVerified: true,
+  tokenVersion: true,
+  pausedAt: true,
+  bannedAt: true,
+  canManageProfiles: true,
+  profile: {
+    select: { id: true, avatar: true, banner: true },
+  },
+};
+
+/**
+ * Profil géré demandé par l'en-tête X-Act-As-Profile : renvoie le compte du profil
+ * si une gestion active le permet, sinon une erreur (le site retire alors la sélection).
+ */
+async function resolveActing(manager, profileId) {
+  if (!manager.canManageProfiles) return { status: 403, error: 'MANAGEMENT_ENDED' };
+  const management = await findActiveManagement(manager.id, profileId);
+  if (!management) return { status: 403, error: 'MANAGEMENT_ENDED' };
+  const managed = await prisma.user.findUnique({ where: { id: management.profile.userId }, select: USER_SELECT });
+  if (!managed || managed.bannedAt || !managed.emailVerified) return { status: 403, error: 'MANAGEMENT_ENDED' };
+  return { user: managed, management: { id: management.id, profileId: management.profileId, requireApproval: management.requireApproval } };
+}
 
 /**
  * authenticate
@@ -43,21 +77,7 @@ async function authenticate(req) {
     const user = await prisma.user.findUnique({
       where: { id: decoded.id },
       select: {
-        id: true,
-        pseudo: true,
-        firstName: true,
-        lastName: true,
-        email: true,
-        role: true,
-        isAdmin: true,
-        registrationStep: true,
-        emailVerified: true,
-        tokenVersion: true,
-        pausedAt: true,
-        bannedAt: true,
-        profile: {
-          select: { id: true, avatar: true, banner: true },
-        },
+        ...USER_SELECT,
         // Session de l'appareil (jetons émis depuis le 21/10/2026) : refusée si retirée dans les Réglages
         ...(typeof decoded.sid === 'string'
           ? { sessions: { where: { sid: decoded.sid }, select: { id: true, revokedAt: true, lastUsedAt: true }, take: 1 } }
@@ -95,6 +115,14 @@ async function authenticate(req) {
     }
     delete user.sessions;
 
+    // « Vous agissez en tant que » : le compte du profil géré remplace celui de l'agent
+    const actAs = requestedProfileId(req);
+    if (actAs && actAs !== user.profile?.id) {
+      const acting = await resolveActing(user, actAs);
+      if (!acting.user) return acting;
+      return { user: acting.user, actor: user, management: acting.management, sessionSid };
+    }
+
     return { user, sessionSid };
   } catch (err) {
     if (err.name === 'TokenExpiredError') {
@@ -116,6 +144,14 @@ const requireAuth = async (req, res, next) => {
   }
   req.user = result.user;
   req.sessionSid = result.sessionSid || null;
+  if (result.actor) {
+    req.actor = result.actor;
+    req.management = result.management;
+    // Identifiants, réglages du compte, abonnement, argent : réservés au titulaire
+    if (isBlockedWhileActing(req.method, req.originalUrl)) {
+      return res.status(403).json({ error: 'MANAGED_FORBIDDEN', message: 'Cette action est réservée au titulaire du compte.' });
+    }
+  }
   next();
 };
 
@@ -127,6 +163,7 @@ const requireAuth = async (req, res, next) => {
 const optionalAuth = async (req, res, next) => {
   const result = await authenticate(req);
   if (result.user) req.user = result.user;
+  if (result.actor) { req.actor = result.actor; req.management = result.management; }
   next();
 };
 
@@ -152,4 +189,4 @@ const requireAdmin = (req, res, next) => {
   next();
 };
 
-module.exports = { requireAuth, optionalAuth, requireAdmin, isAdminUser };
+module.exports = { requireAuth, optionalAuth, requireAdmin, isAdminUser, authenticate };

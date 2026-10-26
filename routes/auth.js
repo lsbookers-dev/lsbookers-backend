@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const { memberOrIp } = require('../lib/rateLimitKeys');
 const prisma = require('../prisma/client');
+const { hidePrivateFromManager, accountName } = require('../lib/managedProfiles');
 const { requireAuth, isAdminUser } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const {
@@ -40,6 +41,19 @@ const siretCheckLimiter = rateLimit({
 });
 
 // Ne jamais exposer les secrets et compteurs internes du compte au navigateur.
+/** Supprime le profil préparé par une agence pour cette adresse si son invitation a expiré */
+async function releaseExpiredDraft(email) {
+  const draft = await prisma.user.findUnique({
+    where: { email },
+    select: { emailVerified: true, profile: { select: { id: true, managers: { select: { origin: true, status: true, expiresAt: true } } } } },
+  });
+  const managers = draft?.profile?.managers || [];
+  if (!draft || draft.emailVerified || !managers.length) return;
+  const stillValid = managers.some(m => m.origin !== 'CREATED' || m.status === 'ACTIVE' || (m.status === 'PENDING' && m.expiresAt && m.expiresAt > new Date()));
+  if (stillValid) return;
+  await require('./managers').removeUnclaimedDraft(draft.profile.id);
+}
+
 function toClientUser(user) {
   const {
     password: _password,
@@ -114,6 +128,9 @@ router.post('/register-complete', validate(registerCompleteSchema), async (req, 
   } = req.body;
 
   try {
+    // Profil préparé par une agence, jamais validé et dont le lien a expiré : l'adresse redevient libre
+    await releaseExpiredDraft(email.toLowerCase().trim());
+
     // Vérifier email unique
     const existingEmail = await prisma.user.findUnique({ where: { email: email.toLowerCase().trim() } });
     if (existingEmail) {
@@ -405,8 +422,9 @@ router.post('/resend-verification', validate(resendVerificationSchema), async (r
 // ─────────────────────────────────────────────
 router.post('/heartbeat', requireAuth, async (req, res) => {
   try {
+    // Un agent qui agit pour un artiste reste « en ligne » lui-même, pas l'artiste
     await prisma.user.update({
-      where: { id: req.user.id },
+      where: { id: (req.actor || req.user).id },
       data: { lastActiveAt: new Date() },
     });
     res.json({ ok: true });
@@ -429,6 +447,17 @@ router.get('/me', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'Utilisateur introuvable' });
     }
 
+    // Profil géré : le site s'affiche comme le profil, sans les données personnelles du titulaire
+    if (req.actor) {
+      return res.json({
+        user: hidePrivateFromManager(toClientUser(user)),
+        acting: {
+          profileId: req.management.profileId,
+          requireApproval: req.management.requireApproval,
+          manager: { id: req.actor.id, name: accountName(req.actor), avatar: req.actor.profile?.avatar || null, profileId: req.actor.profile?.id || null },
+        },
+      });
+    }
     const safeUser = toClientUser(user);
     res.json({ user: safeUser });
   } catch (err) {

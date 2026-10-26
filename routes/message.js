@@ -395,6 +395,7 @@ router.get('/messages/:conversationId', requireAuth, async (req, res) => {
         cancellationRequesterUserId,
         requesterUserId: br.requester?.userId ?? null,
         targetUserId: br.target?.userId ?? null,
+        awaitingArtist: !!br.awaitingArtistSince, // profil géré : l'agence a accepté, l'artiste doit confirmer
       } : null,
       // Candidature à une offre : de quoi proposer un booking pré-rempli
       offer: m.offer ? {

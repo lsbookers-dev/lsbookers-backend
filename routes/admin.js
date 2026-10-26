@@ -244,6 +244,7 @@ router.get('/users/:id', requireAuth, requireAdmin, async (req, res) => {
         isPaymentEnabled: true,
         registrationStep: true,
         stripeAccountId: true,
+        canManageProfiles: true,
         profile: {
           select: {
             id: true,
@@ -304,6 +305,29 @@ router.patch('/users/:id/role', requireAuth, requireAdmin, validate(adminRoleUpd
     return res.json({ ok: true, user: updated });
   } catch (err) {
     console.error('❌ patch role', err);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+/* =========================================================
+ *  USERS — gestion de plusieurs profils (agent, plusieurs salles)
+ *  PATCH /api/admin/users/:id/manage-profiles { enabled }
+ *  En attendant la formule Agence, l'admin active la fonction à la main.
+ * =======================================================*/
+router.patch('/users/:id/manage-profiles', requireAuth, requireAdmin, async (req, res) => {
+  const id = parseInt(String(req.params.id || ''), 10);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'ID invalide' });
+  if (typeof req.body?.enabled !== 'boolean') return res.status(400).json({ error: 'Choix invalide' });
+  try {
+    const updated = await prisma.user.update({
+      where: { id },
+      data: { canManageProfiles: req.body.enabled },
+      select: { id: true, canManageProfiles: true },
+    });
+    return res.json({ ok: true, user: updated });
+  } catch (err) {
+    if (err.code === 'P2025') return res.status(404).json({ error: 'Utilisateur introuvable' });
+    console.error('❌ patch manage-profiles', err);
     return res.status(500).json({ error: 'Erreur serveur' });
   }
 });

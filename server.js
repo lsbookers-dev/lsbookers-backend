@@ -45,6 +45,7 @@ const billingRoutes = require('./routes/billing'); // Offres et abonnements (Pro
 const adminBillingRoutes = require('./routes/adminBilling'); // admin : réglages, codes, commandes, annulations
 const payoutRoutes = require('./routes/payouts'); // Réglages › Paiements (compte Stripe Connect)
 const bookingPaymentRoutes = require('./routes/bookingPayments'); // paiement d'un booking (direct ou en ligne)
+const managersRoutes = require('./routes/managers'); // profils gérés (agent, plusieurs salles)
 const stripeWebhookRoutes = require('./routes/stripeWebhook'); // messages de Stripe
 
 const app = express();
@@ -76,7 +77,7 @@ const corsOptions = {
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Authorization', 'Content-Type', 'X-Device-Token', 'Cache-Control', 'Pragma', 'Expires'],
+  allowedHeaders: ['Authorization', 'Content-Type', 'X-Device-Token', 'X-Act-As-Profile', 'Cache-Control', 'Pragma', 'Expires'],
 };
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
@@ -229,6 +230,7 @@ app.use('/api/invoices', invoiceRoutes);
 app.use('/api/billing', billingRoutes);
 app.use('/api/payouts', payoutRoutes);
 app.use('/api/booking-payments', bookingPaymentRoutes);
+app.use('/api/managers', managersRoutes);
 
 /* ===================== Gestion d’erreurs ===================== */
 // Envoie les erreurs serveur à Sentry (si SENTRY_DSN est renseigné) avant la réponse générique

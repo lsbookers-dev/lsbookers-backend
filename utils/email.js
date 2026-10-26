@@ -298,7 +298,37 @@ async function sendNewMessageEmail(to, { senderName, conversationId }) {
   })
 }
 
+/**
+ * Profil géré : invitation d'une agence (ou d'un gérant de lieux).
+ * created = profil préparé par l'agence pour quelqu'un qui n'a pas encore de compte.
+ */
+async function sendManagedProfileInviteEmail(to, { managerName, profileName, created, token }) {
+  const link = `${APP_URL}/gestion/invitation?token=${encodeURIComponent(token)}`
+  await deliverEmail({
+    from: FROM, to,
+    subject: `${String(managerName).slice(0, 60)} vous invite sur LS Bookers`,
+    html: emailLayout({
+      title: created ? 'Votre profil vous attend sur LS Bookers' : `${managerName} souhaite gérer votre profil`,
+      paragraphs: created
+        ? [
+            `<strong style="color:#fff">${escapeHtml(managerName)}</strong> a préparé le profil <strong style="color:#fff">${escapeHtml(profileName)}</strong> pour vous sur LS Bookers, la plateforme qui met en relation artistes, organisateurs et prestataires.`,
+            'Le profil reste invisible tant que vous ne l\'avez pas validé. En le validant, vous choisissez votre mot de passe et vous gardez la main : vous pouvez retirer l\'accès de l\'agence à tout moment, et l\'argent de vos bookings est toujours versé sur votre compte.',
+            'Lien valable 14 jours. Si vous ne connaissez pas cette agence, ignorez cet e-mail : le profil ne sera jamais publié.',
+          ]
+        : [
+            `<strong style="color:#fff">${escapeHtml(managerName)}</strong> souhaite gérer votre profil <strong style="color:#fff">${escapeHtml(profileName)}</strong> (agenda, messages, publications, bookings).`,
+            'Vous gardez la main : vous pouvez retirer l\'accès à tout moment, et l\'argent de vos bookings est toujours versé sur votre compte.',
+            'Lien valable 14 jours. Si vous ne connaissez pas cette agence, ignorez cet e-mail.',
+          ],
+      ctaLabel: created ? 'Valider mon profil' : 'Voir l\'invitation',
+      ctaUrl: link,
+      footer: 'E-mail envoyé à la demande d\'une agence inscrite sur LS Bookers.',
+    }),
+  })
+}
+
 module.exports = {
+  sendManagedProfileInviteEmail,
   deliverEmail, FROM, APP_URL, sendVerificationEmail, sendPasswordResetEmail, sendNewDeviceEmail,
   emailLayout, sendLoginAlertEmail, sendEmailChangeConfirmation, sendEmailChangedNotice,
   sendNotificationEmail, sendNotificationEmails, sendNewMessageEmail,
