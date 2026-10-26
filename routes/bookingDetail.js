@@ -3,8 +3,9 @@ const express  = require('express')
 const router   = express.Router()
 const prisma   = require('../prisma/client')
 const { requireAuth } = require('../middleware/auth')
-const { uploadBufferToR2, deleteR2Object } = require('../lib/r2')
-const { isFileContentValid, extensionFor } = require('../lib/fileCheck')
+const { deleteR2Object } = require('../lib/r2')
+const { extensionFor } = require('../lib/fileCheck')
+const { receiveFile, UploadError, sendUploadError } = require('../lib/directUpload')
 const multer   = require('multer')
 const { createNotif } = require('../services/notifications')
 const { PERSON_SELECT, publicName, frenchDate } = require('../services/publicPerson')
@@ -180,17 +181,13 @@ router.post('/:id/logistics', requireAuth, singleFile(LOGISTIC_MIME), async (req
   if (!['HOTEL', 'TRANSPORT'].includes(type)) return res.status(400).json({ error: 'Type invalide' })
 
   try {
-    let fileUrl  = null
-    let fileName = null
-
-    if (req.file) {
-      if (!isFileContentValid(req.file.buffer, req.file.mimetype)) {
-        return res.status(400).json({ error: 'FORMAT_NOT_ALLOWED' })
-      }
-      const key = `logistics/${id}/${Date.now()}.${extensionFor(req.file.mimetype)}`
-      fileUrl  = await uploadBufferToR2(req.file.buffer, key, req.file.mimetype)
-      fileName = req.file.originalname
-    }
+    // Fichier facultatif : envoyé à l'ancienne ou déjà déposé sur R2 par le navigateur
+    const file = await receiveFile(req, {
+      purpose: 'booking-logistics',
+      legacyKey: type => `logistics/${id}/${Date.now()}.${extensionFor(type)}`,
+    })
+    const fileUrl  = file?.url ?? null
+    const fileName = file?.name ?? null
 
     const [logistic] = await prisma.$queryRaw`
       INSERT INTO "BookingLogistic" ("bookingRequestId", type, title, "fileUrl", "fileName", "addedByProfileId", "createdAt")
@@ -200,6 +197,7 @@ router.post('/:id/logistics', requireAuth, singleFile(LOGISTIC_MIME), async (req
     await notifyBookingItem(result, req.user.id, LOGISTIC_LABEL[type])
     res.status(201).json({ logistic })
   } catch (err) {
+    if (err instanceof UploadError) return sendUploadError(res, err)
     console.error('❌ bookingDetail POST /:id/logistics', err)
     res.status(500).json({ error: 'Erreur serveur' })
   }
@@ -235,16 +233,16 @@ router.post('/:id/media', requireAuth, singleFile(MEDIA_MIME), async (req, res) 
   const result = await canAccessBooking(req.user.id, id)
   if (!result || !result.isOrganizer) return res.status(403).json({ error: 'Seul l\'organisateur peut ajouter un média' })
 
-  if (!req.file) return res.status(400).json({ error: 'Fichier requis' })
-  if (!isFileContentValid(req.file.buffer, req.file.mimetype)) {
-    return res.status(400).json({ error: 'FORMAT_NOT_ALLOWED' })
-  }
+  if (!req.file && !req.body?.fileKey) return res.status(400).json({ error: 'Fichier requis' })
 
   try {
-    const key       = `booking-media/${id}/${Date.now()}.${extensionFor(req.file.mimetype)}`
-    const url       = await uploadBufferToR2(req.file.buffer, key, req.file.mimetype)
-    const mediaType = req.file.mimetype.startsWith('video') ? 'VIDEO' : 'IMAGE'
-    const name      = String(req.file.originalname || 'fichier').slice(0, 200)
+    const file = await receiveFile(req, {
+      purpose: 'booking-media',
+      legacyKey: type => `booking-media/${id}/${Date.now()}.${extensionFor(type)}`,
+    })
+    const url       = file.url
+    const mediaType = file.mimetype.startsWith('video') ? 'VIDEO' : 'IMAGE'
+    const name      = String(file.name || 'fichier').slice(0, 200)
 
     const [media] = await prisma.$queryRaw`
       INSERT INTO "BookingMedia" ("bookingRequestId", url, "mediaType", name, "createdAt")
@@ -254,6 +252,7 @@ router.post('/:id/media', requireAuth, singleFile(MEDIA_MIME), async (req, res) 
     await notifyBookingItem(result, req.user.id, mediaType === 'VIDEO' ? 'Une vidéo a été ajoutée' : 'Une photo a été ajoutée')
     res.status(201).json({ media })
   } catch (err) {
+    if (err instanceof UploadError) return sendUploadError(res, err)
     console.error('❌ bookingDetail POST /:id/media', err)
     res.status(500).json({ error: 'Erreur serveur' })
   }
@@ -287,18 +286,18 @@ router.post('/:id/contracts', requireAuth, singleFile(CONTRACT_MIME), async (req
   if (!result) return res.status(403).json({ error: 'Accès refusé' })
   const { booking } = result
   if (!booking.eventId) return res.status(400).json({ error: 'Le booking doit être confirmé avant d\'ajouter un contrat' })
-  if (!req.file) return res.status(400).json({ error: 'Fichier requis' })
-  if (!isFileContentValid(req.file.buffer, req.file.mimetype)) {
-    return res.status(400).json({ error: 'FORMAT_NOT_ALLOWED' })
-  }
+  if (!req.file && !req.body?.fileKey) return res.status(400).json({ error: 'Fichier requis' })
 
   try {
-    const key     = `documents/contracts/${id}/${Date.now()}.${extensionFor(req.file.mimetype)}`
-    const fileUrl = await uploadBufferToR2(req.file.buffer, key, req.file.mimetype)
+    const file = await receiveFile(req, {
+      purpose: 'booking-contract',
+      legacyKey: type => `documents/contracts/${id}/${Date.now()}.${extensionFor(type)}`,
+    })
+    const fileUrl = file.url
     const recipientId = result.isOrganizer ? booking.targetId : booking.requesterId
     const contract = await prisma.contract.create({
       data: {
-        title: String(req.file.originalname || 'Contrat.pdf').slice(0, 200),
+        title: String(file.name || 'Contrat.pdf').slice(0, 200),
         fileUrl,
         amount: booking.fee ?? null,
         senderId: result.myProfileId,
@@ -310,6 +309,7 @@ router.post('/:id/contracts', requireAuth, singleFile(CONTRACT_MIME), async (req
     await notifyBookingItem(result, req.user.id, 'Un contrat a été ajouté')
     res.status(201).json({ contract })
   } catch (err) {
+    if (err instanceof UploadError) return sendUploadError(res, err)
     console.error('❌ bookingDetail POST /:id/contracts', err)
     res.status(500).json({ error: 'Erreur serveur' })
   }

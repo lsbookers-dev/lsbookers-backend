@@ -7,6 +7,7 @@ const { r2Client, R2_BUCKET, R2_PUBLIC_URL } = require('../lib/r2');
 const rateLimit = require('express-rate-limit');
 const { requireAuth } = require('../middleware/auth');
 const { isFileContentValid, extensionFor } = require('../lib/fileCheck');
+const { createUploadUrl, confirmUpload, sendUploadError } = require('../lib/directUpload');
 
 /* -------------------- Rate limiter uploads -------------------- */
 // Max 30 uploads par IP par heure (protection stockage + abus)
@@ -132,6 +133,47 @@ router.post('/', requireAuth, uploadLimiter, (req, res) => {
       return res.status(500).json({ error: 'SERVER_ERROR' });
     }
   });
+});
+
+/* ------------------------- Envoi direct vers R2 (#275) ------------------------- */
+// Le navigateur envoie le fichier lui-même à R2 : le serveur ne le garde plus en mémoire.
+// Limite par membre (et non par connexion internet) : 60 autorisations par heure
+const directLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => `u${req.user.id}`,
+  message: { error: 'Trop d\'uploads, réessayez dans 1 heure' },
+});
+
+// POST /api/upload/presign — { purpose?, folder?, contentType, size, name }
+// purpose : general (défaut) | message | booking-logistics | booking-media | booking-contract
+router.post('/presign', requireAuth, directLimiter, async (req, res) => {
+  try {
+    const { purpose = 'general', folder, contentType, size, name } = req.body || {};
+    const result = await createUploadUrl({ userId: req.user.id, purpose, folder, contentType, size, name });
+    return res.set('Cache-Control', 'no-store').json(result);
+  } catch (err) {
+    try { return sendUploadError(res, err); } catch {
+      console.error('❌ POST /upload/presign :', err);
+      return res.status(500).json({ error: 'SERVER_ERROR' });
+    }
+  }
+});
+
+// POST /api/upload/confirm — { key } : vérifie le fichier déposé (envoi général)
+// Même réponse que l'ancien POST /api/upload
+router.post('/confirm', requireAuth, async (req, res) => {
+  try {
+    const file = await confirmUpload({ userId: req.user.id, purpose: 'general', key: req.body?.key });
+    return res.json({ url: file.url, pathname: file.key, contentType: file.contentType, size: file.size });
+  } catch (err) {
+    try { return sendUploadError(res, err); } catch {
+      console.error('❌ POST /upload/confirm :', err);
+      return res.status(500).json({ error: 'SERVER_ERROR' });
+    }
+  }
 });
 
 module.exports = router;

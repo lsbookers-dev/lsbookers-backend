@@ -6,11 +6,12 @@ const { requireAuth, isAdminUser } = require('../middleware/auth')
 const { validate } = require('../middleware/validate')
 const { conversationCreateSchema } = require('../schemas')
 const multer = require('multer')
-const { uploadBufferToR2 } = require('../lib/r2')
+const crypto = require('crypto')
+const { receiveFile, UploadError, sendUploadError } = require('../lib/directUpload')
 const { getIO } = require('../socket')
 const { notifyNewMessageByEmail } = require('../services/messageEmails')
 const { newConversationRefusal } = require('../lib/messagePolicy')
-const { isFileContentValid, extensionFor } = require('../lib/fileCheck')
+const { extensionFor } = require('../lib/fileCheck')
 const { isBlockedBetween } = require('../lib/blocks')
 const { countUnreadMessages } = require('../lib/unreadCounts')
 
@@ -115,11 +116,9 @@ function detectAttachmentType(mimetype) {
   return 'DOCUMENT'
 }
 
-/* Upload vers Cloudflare R2 depuis un buffer en mémoire */
-async function uploadMessageFile(buffer, mimetype, originalname) {
-  const base = (originalname || 'file').replace(/\.[^.]*$/, '').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80) || 'file'
-  const safeName = `${base}.${extensionFor(mimetype)}`
-  return uploadBufferToR2(buffer, `messages/${Date.now()}-${safeName}`, mimetype)
+/* Emplacement R2 d'un fichier de message reçu à l'ancienne (envoi de secours) */
+function messageFileKey(mimetype) {
+  return `messages/${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${extensionFor(mimetype)}`
 }
 
 /* =========================================================
@@ -586,9 +585,10 @@ router.post('/send-file', requireAuth, (req, res) => {
     if (!senderId) return res.status(401).json({ error: 'Unauthorized' })
 
     const { content, conversationId } = req.body
-    const file = req.file
+    // Fichier envoyé à l'ancienne (req.file) ou déjà déposé sur R2 par le navigateur (fileKey)
+    const hasFile = !!req.file || !!req.body?.fileKey
 
-    if (!conversationId || (!content?.trim() && !file))
+    if (!conversationId || (!content?.trim() && !hasFile))
       return res.status(400).json({ error: 'conversationId et (content ou fichier) requis' })
 
     const participation = await prisma.conversationParticipant.findFirst({
@@ -602,21 +602,20 @@ router.post('/send-file', requireAuth, (req, res) => {
     let attachmentName = null
     let attachmentMimeType = null
 
-    if (file) {
-      // Vérification du contenu réel (images, vidéos, PDF, audio)
-      if (!isFileContentValid(file.buffer, file.mimetype)) {
-        return res.status(400).json({ error: 'FORMAT_NOT_ALLOWED' })
-      }
-
+    if (hasFile) {
+      // Contenu réel vérifié (images, vidéos, PDF, audio) dans les deux cas
+      let file
       try {
-        attachmentUrl = await uploadMessageFile(file.buffer, file.mimetype, file.originalname)
-        attachmentType = detectAttachmentType(file.mimetype)
-        attachmentName = file.originalname || null
-        attachmentMimeType = file.mimetype || null
+        file = await receiveFile(req, { purpose: 'message', legacyKey: messageFileKey })
       } catch (uploadErr) {
+        if (uploadErr instanceof UploadError) return sendUploadError(res, uploadErr)
         console.error('❌ Erreur envoi fichier message (R2) :', uploadErr)
         return res.status(500).json({ error: 'Erreur lors de l\'upload du fichier' })
       }
+      attachmentUrl = file.url
+      attachmentType = detectAttachmentType(file.mimetype)
+      attachmentName = file.name || null
+      attachmentMimeType = file.mimetype || null
     }
 
     const message = await prisma.message.create({
