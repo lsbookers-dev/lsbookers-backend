@@ -6,7 +6,7 @@ const { getBlockedProfileIds } = require('../lib/blocks')
 const { requireAuth, optionalAuth } = require('../middleware/auth')
 const { carouselFeatured } = require('../services/extras')
 const { ensureProfileRegion } = require('../lib/regions')
-const { isProSubscription } = require('../lib/plan')
+const { isProRow, managedProUserIds } = require('../lib/plan')
 const { boundingBoxWhere } = require('../lib/geo')
 
 const MEMBER_ROLES = ['ARTIST', 'ORGANIZER', 'PROVIDER']
@@ -460,7 +460,7 @@ router.get('/trends', optionalAuth, async (req, res) => {
             hiddenFromSearch: false,
             ...(city ? { OR: [{ city: { contains: city, mode: 'insensitive' } }, { location: { contains: city, mode: 'insensitive' } }] } : {}),
           },
-          include: { user: { select: { id: true, pseudo: true, firstName: true, lastName: true, role: true, subscription: { select: { status: true, endDate: true, currentPeriodEnd: true } } } } },
+          include: { user: { select: { id: true, pseudo: true, firstName: true, lastName: true, role: true, subscription: { select: { status: true, endDate: true, currentPeriodEnd: true } }, agencySubscription: { select: { status: true, endDate: true, currentPeriodEnd: true } } } } },
         })
       : []
 
@@ -469,6 +469,7 @@ router.get('/trends', optionalAuth, async (req, res) => {
     for (const p of profiles) for (const s of p.specialties || []) specialtyCount.set(s, (specialtyCount.get(s) || 0) + 1)
     const specialties = [...specialtyCount.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'fr')).map(([s]) => s)
 
+    const managedPro = await managedProUserIds(profiles.map(p => p.user.id))
     const items = profiles
       .filter(p => !specialty || (p.specialties || []).includes(specialty))
       .map(p => ({
@@ -479,8 +480,8 @@ router.get('/trends', optionalAuth, async (req, res) => {
         profession: p.profession || p.specialties?.[0] || null,
         location: p.location || p.city || null,
         // Léger coup de pouce aux comptes Pro (+10 % de points)
-        score: (scores.get(p.id) || 0) * (isProSubscription(p.user.subscription) ? 1.1 : 1),
-        isPro: isProSubscription(p.user.subscription),
+        score: (scores.get(p.id) || 0) * (isProRow(p.user, managedPro) ? 1.1 : 1),
+        isPro: isProRow(p.user, managedPro),
         profileUrl: profileUrl(p.user),
       }))
       .sort((a, b) => b.score - a.score || a.profileId - b.profileId)

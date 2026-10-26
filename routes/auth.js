@@ -7,6 +7,7 @@ const rateLimit = require('express-rate-limit');
 const { memberOrIp } = require('../lib/rateLimitKeys');
 const prisma = require('../prisma/client');
 const { hidePrivateFromManager, accountName } = require('../lib/managedProfiles');
+const { hasAgency } = require('../lib/plan');
 const { requireAuth, isAdminUser } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const {
@@ -201,8 +202,8 @@ router.post('/register-complete', validate(registerCompleteSchema), async (req, 
     if (legalStatus === 'INTERMITTENT') userData.payoutMode = 'INTERMITTENT';
     // Formule choisie : Pro (et/ou un code promo) à finaliser sur « Offres et abonnements » après connexion
     const cleanPromo = String(promoCode || '').trim().toUpperCase().replace(/\s+/g, '');
-    if (plan === 'PRO' || cleanPromo) {
-      userData.signupPlan = [plan === 'PRO' ? 'PRO' : 'FREE', billingInterval === 'MONTH' ? 'MONTH' : 'YEAR', cleanPromo].join('|');
+    if (plan === 'PRO' || plan === 'AGENCY' || cleanPromo) {
+      userData.signupPlan = [plan === 'PRO' || plan === 'AGENCY' ? plan : 'FREE', billingInterval === 'MONTH' ? 'MONTH' : 'YEAR', cleanPromo].join('|');
     }
 
     const user = await prisma.user.create({
@@ -459,6 +460,7 @@ router.get('/me', requireAuth, async (req, res) => {
       });
     }
     const safeUser = toClientUser(user);
+    safeUser.hasAgency = await hasAgency(user); // formule Agence (payée ou offerte) : gérer plusieurs profils
     res.json({ user: safeUser });
   } catch (err) {
     console.error('Erreur dans /me :', err);

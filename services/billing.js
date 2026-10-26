@@ -70,14 +70,17 @@ const addMonths = (date, months) => { const d = new Date(date); d.setMonth(d.get
  * Carte demandée tout de suite ; prélèvement à la fin de l'essai (1 mois), ou des mois offerts
  * par un code Lancement (qui remplacent l'essai).
  */
-async function createSubscriptionCheckout({ user, interval, promoCode }) {
+async function createSubscriptionCheckout({ user, interval, promoCode, plan = 'PRO' }) {
   const stripe = getStripe()
   if (!stripe) throw new BillingError('PAYMENTS_UNAVAILABLE', 'Les paiements en ligne ne sont pas encore ouverts.', 503)
   if (!['MONTH', 'YEAR'].includes(interval)) throw new BillingError('INTERVAL_INVALID', 'Formule invalide.')
   const role = String(user.role || '').toUpperCase()
   if (!ROLE_LABELS[role]) throw new BillingError('ROLE_NOT_ELIGIBLE', "L'abonnement Pro n'existe pas pour ce type de compte.")
+  if (plan === 'AGENCY') return createAgencyCheckout({ stripe, user, interval, promoCode })
 
   const existing = await prisma.subscription.findUnique({ where: { userId: user.id } })
+  const agencySub = await prisma.agencySubscription.findUnique({ where: { userId: user.id } })
+  if (isProSubscription(agencySub)) throw new BillingError('ALREADY_AGENCY', 'Votre formule Agence comprend déjà le Pro.')
   if (isProSubscription(existing) && existing.source !== 'STRIPE') {
     throw new BillingError('ALREADY_PRO', 'Votre compte Pro vous est déjà offert.')
   }
@@ -127,6 +130,104 @@ async function createSubscriptionCheckout({ user, interval, promoCode }) {
   return { url: session.url }
 }
 
+/**
+ * Page de paiement Stripe pour la formule Agence.
+ * Un abonné Pro (payant) qui passe à l'Agence : son abonnement Pro est arrêté quand l'Agence
+ * démarre, et Stripe déduit la partie non utilisée de la prochaine facture (voir syncAgencySubscription).
+ * Un Pro offert (Fondateur, admin) n'est pas touché : il le retrouve si l'Agence s'arrête.
+ */
+async function createAgencyCheckout({ stripe, user, interval, promoCode }) {
+  const existing = await prisma.agencySubscription.findUnique({ where: { userId: user.id } })
+  if (isProSubscription(existing) && existing.status !== 'CANCELLED') {
+    throw new BillingError('ALREADY_AGENCY', 'Vous avez déjà la formule Agence. Gérez-la depuis cette page.')
+  }
+  const settings = await getPlanSettings()
+  const unitAmount = interval === 'YEAR' ? settings.agency.yearCents : settings.agency.monthCents
+  const customer = await getOrCreateCustomer(stripe, user.id)
+
+  let promo = null
+  if (promoCode) promo = await checkPromoCode(promoCode, user.id, 'LAUNCH')
+  const metadata = { userId: String(user.id), plan: 'AGENCY', promoCodeId: promo ? String(promo.id) : '' }
+  const subscriptionData = { metadata }
+  if (promo?.freeMonths) {
+    subscriptionData.trial_end = Math.floor(addMonths(new Date(), promo.freeMonths).getTime() / 1000)
+    subscriptionData.trial_settings = { end_behavior: { missing_payment_method: 'cancel' } }
+  }
+
+  const session = await stripe.checkout.sessions.create({
+    mode: 'subscription',
+    customer,
+    client_reference_id: String(user.id),
+    locale: 'fr',
+    payment_method_collection: 'always',
+    line_items: [{
+      quantity: 1,
+      price_data: {
+        currency: 'eur',
+        unit_amount: unitAmount,
+        recurring: { interval: interval === 'YEAR' ? 'year' : 'month' },
+        product_data: { name: `LS Bookers Agence — ${settings.agency.includedProfiles} profils inclus` },
+      },
+    }],
+    subscription_data: subscriptionData,
+    metadata: { kind: 'subscription', ...metadata },
+    success_url: `${siteUrl()}/subscriptions?agence=ok`,
+    cancel_url: `${siteUrl()}/subscriptions?abonnement=annule`,
+  })
+  return { url: session.url }
+}
+
+// Recopie un abonnement Stripe « formule Agence » dans AgencySubscription (appelé par les webhooks)
+async function syncAgencySubscription(stripeSub, userId) {
+  const status = STRIPE_STATUS[stripeSub.status]
+  if (!status) return null
+  const existing = await prisma.agencySubscription.findUnique({ where: { userId } })
+  // Un ancien abonnement Agence ne remplace pas un plus récent
+  if (existing?.stripeSubId && existing.stripeSubId !== stripeSub.id && isProSubscription(existing) && status === 'CANCELLED') return existing
+
+  const items = stripeSub.items?.data || []
+  const extraItem = items.find(i => i.id === existing?.stripeExtraItemId) || null
+  const base = items.find(i => i !== extraItem) || items[0]
+  const periodEnd = base?.current_period_end ?? stripeSub.current_period_end
+  const data = {
+    status,
+    interval: base?.price?.recurring?.interval === 'year' ? 'YEAR' : 'MONTH',
+    priceCents: base?.price?.unit_amount ?? 0,
+    stripeSubId: stripeSub.id,
+    trialEndsAt: toDate(stripeSub.trial_end),
+    currentPeriodEnd: toDate(periodEnd),
+    cancelAtPeriodEnd: !!stripeSub.cancel_at_period_end,
+    endDate: status === 'EXPIRED' ? new Date() : (status === 'CANCELLED' ? (toDate(stripeSub.ended_at) || new Date()) : null),
+    ...(existing && existing.stripeSubId !== stripeSub.id ? { stripeExtraItemId: null, extraProfiles: 0 } : {}),
+  }
+  const promoCodeId = Number(stripeSub.metadata?.promoCodeId)
+  if (promoCodeId) {
+    const promo = await prisma.promoCode.findUnique({ where: { id: promoCodeId }, select: { code: true } })
+    if (promo) data.promoCode = promo.code
+  }
+  const saved = await prisma.agencySubscription.upsert({
+    where: { userId },
+    create: { userId, startDate: toDate(stripeSub.start_date) || new Date(), ...data },
+    update: data,
+  })
+
+  if (status === 'TRIAL' || status === 'ACTIVE') {
+    await prisma.user.update({ where: { id: userId }, data: { signupPlan: null } }).catch(() => {})
+    // Abonné Pro payant passé à l'Agence : le Pro s'arrête, la partie non utilisée est déduite
+    const pro = await prisma.subscription.findUnique({ where: { userId } })
+    if (pro?.source === 'STRIPE' && pro.stripeSubId && isProSubscription(pro) && pro.status !== 'CANCELLED') {
+      const stripe = getStripe()
+      if (stripe) {
+        await stripe.subscriptions.cancel(pro.stripeSubId, { prorate: true, invoice_now: true })
+          .catch(err => console.error('Agence : arrêt du Pro remplacé', err.message))
+      }
+    }
+  }
+  // Ses artistes : Pro suspendu ou relancé selon que la formule est en cours
+  await require('./agency').onAgencyChanged(userId)
+  return saved
+}
+
 // Code Fondateur : Pro offert à vie, sans carte
 async function applyFounderCode({ user, code }) {
   const promo = await checkPromoCode(code, user.id, 'FOUNDER')
@@ -163,6 +264,7 @@ async function syncStripeSubscription(stripeSub) {
     console.warn('Abonnement Stripe sans userId :', stripeSub.id)
     return null
   }
+  if (stripeSub.metadata?.plan === 'AGENCY') return syncAgencySubscription(stripeSub, userId)
   const status = STRIPE_STATUS[stripeSub.status]
   if (!status) return null // incomplete : paiement pas encore fait
 
@@ -217,6 +319,7 @@ async function createPortalSession(user) {
 }
 
 module.exports = {
+  syncAgencySubscription, createAgencyCheckout,
   BillingError, ROLE_LABELS, normalizeCode, getOrCreateCustomer, priceFor, checkPromoCode, redeemPromoCode,
   createSubscriptionCheckout, applyFounderCode, syncStripeSubscription, createPortalSession,
 }

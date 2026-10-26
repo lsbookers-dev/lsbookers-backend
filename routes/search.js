@@ -2,7 +2,7 @@ const express = require('express')
 const router = express.Router()
 const prisma = require('../prisma/client')
 const { requireAuth } = require('../middleware/auth')
-const { boostPro, isProSubscription } = require('../lib/plan')
+const { boostPro, isProRow, managedProUserIds } = require('../lib/plan')
 const { haversineKm, boundingBoxWhere } = require('../lib/geo')
 
 // fetch compatible CommonJS
@@ -49,8 +49,9 @@ const publicSearchSelect = {
   lastName: true,
   role: true,
   createdAt: true,
-  // Badge Pro et coup de pouce dans les résultats
+  // Badge Pro et coup de pouce dans les résultats (abonnement Pro ou formule Agence)
   subscription: { select: { status: true, endDate: true, currentPeriodEnd: true } },
+  agencySubscription: { select: { status: true, endDate: true, currentPeriodEnd: true } },
   profile: {
     select: {
       location: true,
@@ -64,7 +65,7 @@ const publicSearchSelect = {
   },
 }
 
-function toPublicSearchUser(user) {
+function toPublicSearchUser(user, managedPro) {
   const profile = user.profile
   const showRealName = profile?.showRealName === true
 
@@ -75,7 +76,7 @@ function toPublicSearchUser(user) {
     lastName: showRealName ? user.lastName : null,
     role: user.role,
     createdAt: user.createdAt,
-    isPro: isProSubscription(user.subscription),
+    isPro: isProRow(user, managedPro),
     profile: profile
       ? {
           location: profile.location,
@@ -271,6 +272,7 @@ router.get('/', requireAuth, async (req, res) => {
         firstName: true,
         lastName: true,
         subscription: { select: { status: true, endDate: true, currentPeriodEnd: true } },
+        agencySubscription: { select: { status: true, endDate: true, currentPeriodEnd: true } },
         profile: {
           select: {
             showRealName: true,
@@ -308,9 +310,11 @@ router.get('/', requireAuth, async (req, res) => {
       return true
     })
 
+    // Profils gérés par une agence qui a la formule : Pro aussi
+    const managedPro = await managedProUserIds(ranked.map(u => u.id))
     ranked = sort === 'alpha'
       ? [...ranked].sort((a, b) => displayName(a).localeCompare(displayName(b), 'fr'))
-      : boostPro(ranked, u => isProSubscription(u.subscription))
+      : boostPro(ranked, u => isProRow(u, managedPro))
 
     const counts = { ARTIST: 0, ORGANIZER: 0, PROVIDER: 0 }
     for (const u of ranked) if (u.role in counts) counts[u.role]++
@@ -321,7 +325,7 @@ router.get('/', requireAuth, async (req, res) => {
       ? await prisma.user.findMany({ where: { id: { in: pageIds } }, select: publicSearchSelect })
       : []
     const byId = new Map(pageUsers.map(u => [u.id, u]))
-    const users = pageIds.map(id => byId.get(id)).filter(Boolean).map(toPublicSearchUser)
+    const users = pageIds.map(id => byId.get(id)).filter(Boolean).map(u => toPublicSearchUser(u, managedPro))
 
     const nextCursor = cursor + limit < ranked.length ? cursor + limit : null
     return res.json({ users, total: ranked.length, counts, hasMore: nextCursor !== null, nextCursor })

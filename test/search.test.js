@@ -20,7 +20,15 @@ function routeHandler(router, method, path) {
   return layer.route.stack.at(-1).handle
 }
 
+// Comptes normaux : ni formule Agence, ni profil géré par une agence
+const NO_AGENCY = {
+  agencySubscription: { findUnique: async () => null },
+  profileManager: { findMany: async () => [] },
+}
+
 async function withMocks(mocks, fn) {
+  mocks = { ...mocks }
+  for (const [model, methods] of Object.entries(NO_AGENCY)) mocks[model] = { ...methods, ...mocks[model] }
   const originals = []
   for (const [model, methods] of Object.entries(mocks)) {
     for (const [name, impl] of Object.entries(methods)) {

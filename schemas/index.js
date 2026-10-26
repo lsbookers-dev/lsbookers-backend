@@ -76,7 +76,7 @@ const step3Schema = z.object({
 
 // Choix de formule à l'inscription (compte gratuit par défaut, Pro finalisé après la première connexion)
 const signupPlanSchema = z.object({
-  plan:            z.enum(['FREE', 'PRO']).optional(),
+  plan:            z.enum(['FREE', 'PRO', 'AGENCY']).optional(),
   billingInterval: z.enum(['MONTH', 'YEAR']).optional(),
   promoCode:       z.string().trim().max(40).regex(/^[A-Za-z0-9 -]*$/).optional(),
 });

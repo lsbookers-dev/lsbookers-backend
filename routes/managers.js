@@ -31,6 +31,16 @@ const { notifyAdmins } = require('../services/adminAlerts')
 const {
   MAX_PENDING_INVITES, hashToken, newInviteToken, inviteExpiry, accountName,
 } = require('../lib/managedProfiles')
+const { hasAgency } = require('../lib/plan')
+const agency = require('../services/agency')
+
+// Refus lié à la formule Agence (places, profil en plus) : message clair pour le site
+function sendAgencyError(res, err) {
+  if (!(err instanceof agency.AgencyError)) return false
+  const { code, message, status, extraPriceCents, interval, included, used } = err
+  res.status(status).json({ error: code, message, extraPriceCents, interval, included, used })
+  return true
+}
 
 // Module e-mail chargé à la demande (il exige la clé Resend, absente des tests)
 const emails = () => require('../utils/email')
@@ -73,8 +83,13 @@ function managerView(m) {
 // ── Accès agent ────────────────────────────────────────────
 async function requireManager(req, res, next) {
   const me = req.actor || req.user
-  if (!me?.canManageProfiles) {
-    return res.status(403).json({ error: 'MANAGEMENT_DISABLED', message: 'La gestion de plusieurs profils n’est pas activée sur votre compte.' })
+  try {
+    if (!me || !(await hasAgency(me))) {
+      return res.status(403).json({ error: 'MANAGEMENT_DISABLED', message: 'La gestion de plusieurs profils demande la formule Agence.' })
+    }
+  } catch (err) {
+    console.error('requireManager:', err)
+    return res.status(500).json({ error: 'Erreur serveur' })
   }
   req.manager = me
   next()
@@ -105,7 +120,11 @@ router.get('/profiles', requireAuth, requireManager, async (req, res) => {
       orderBy: [{ status: 'asc' }, { createdAt: 'asc' }],
       include: { profile: { select: PROFILE_SUMMARY } },
     })
-    res.json({ profiles: list.map(managerView) })
+    const slots = await agency.profileSlots(req.manager.id)
+    res.json({
+      profiles: list.map(managerView),
+      slots: { used: slots.used, included: slots.included, extra: slots.extra, unlimited: slots.unlimited, extraPriceCents: slots.extraPriceCents, interval: slots.interval },
+    })
   } catch (err) {
     console.error('GET managers/profiles:', err)
     res.status(500).json({ error: 'Erreur serveur' })
@@ -144,12 +163,13 @@ router.get('/candidates', requireAuth, requireManager, async (req, res) => {
 })
 
 /** Crée une invitation vers un profil existant (refus si déjà géré par cet agent) */
-async function inviteExisting(manager, profile, invitedEmail = null) {
+async function inviteExisting(manager, profile, invitedEmail = null, { acceptExtra = false } = {}) {
   const already = await prisma.profileManager.findFirst({
     where: { managerUserId: manager.id, profileId: profile.id, status: { in: ['ACTIVE', 'PENDING'] } },
   })
   if (already && !isExpired(already)) return { error: 'Vous gérez déjà ce profil ou une invitation est en cours.' }
   if (already) await prisma.profileManager.update({ where: { id: already.id }, data: { status: 'ENDED', endedAt: new Date(), endedBy: 'EXPIRED' } })
+  await agency.reserveSlot(manager.id, { acceptExtra })
 
   const management = await prisma.profileManager.create({
     data: { managerUserId: manager.id, profileId: profile.id, status: 'PENDING', origin: 'INVITED', invitedEmail },
@@ -179,10 +199,11 @@ router.post('/invite', requireAuth, requireManager, async (req, res) => {
     })
     if (!profile || !profile.user.emailVerified || profile.user.bannedAt || profile.user.pausedAt) return res.status(404).json({ error: 'Profil introuvable' })
     if (profile.userId === req.manager.id) return res.status(400).json({ error: 'C’est votre propre profil.' })
-    const result = await inviteExisting(req.manager, profile)
+    const result = await inviteExisting(req.manager, profile, null, { acceptExtra: req.body?.acceptExtra === true })
     if (result.error) return res.status(409).json({ error: result.error })
     res.status(201).json({ ok: true })
   } catch (err) {
+    if (sendAgencyError(res, err)) return
     console.error('POST managers/invite:', err)
     res.status(500).json({ error: 'Erreur serveur' })
   }
@@ -207,7 +228,7 @@ router.post('/create', requireAuth, requireManager, validate(managedCreateSchema
     if (existing) {
       if (existing.id === req.manager.id) return res.status(400).json({ error: 'C’est votre propre adresse e-mail.' })
       if (existing.profile && existing.emailVerified && !existing.bannedAt) {
-        const result = await inviteExisting(req.manager, { ...existing.profile, user: existing }, email)
+        const result = await inviteExisting(req.manager, { ...existing.profile, user: existing }, email, { acceptExtra: req.body?.acceptExtra === true })
         if (result.error) return res.status(409).json({ error: result.error })
       }
       return res.status(201).json(sent)
@@ -217,6 +238,7 @@ router.post('/create', requireAuth, requireManager, validate(managedCreateSchema
     if (pseudoTaken) {
       return res.status(409).json({ error: 'Ce nom de profil est déjà pris. Si la personne est déjà inscrite, invitez-la plutôt avec la recherche.' })
     }
+    await agency.reserveSlot(req.manager.id, { acceptExtra: req.body?.acceptExtra === true })
 
     const created = await prisma.user.create({
       data: {
@@ -253,6 +275,7 @@ router.post('/create', requireAuth, requireManager, validate(managedCreateSchema
     }
     res.status(201).json(sent)
   } catch (err) {
+    if (sendAgencyError(res, err)) return
     if (err.code === 'P2002') return res.status(409).json({ error: 'Ce nom de profil ou cette adresse est déjà utilisé.' })
     console.error('POST managers/create:', err)
     res.status(500).json({ error: 'Erreur serveur' })
@@ -283,13 +306,14 @@ router.post('/profiles/:id/resend', requireAuth, requireManager, async (req, res
 
 /** Profil préparé par l'agent et jamais validé : on le supprime (l'adresse redevient libre) */
 async function removeUnclaimedDraft(profileId) {
-  const profile = await prisma.profile.findUnique({ where: { id: profileId }, select: { id: true, userId: true, user: { select: { emailVerified: true } } } })
+  const profile = await prisma.profile.findUnique({ where: { id: profileId }, select: { id: true, userId: true, user: { select: { emailVerified: true } }, managers: { select: { managerUserId: true } } } })
   if (!profile || profile.user.emailVerified) return
   await prisma.$transaction([
     prisma.profileManager.deleteMany({ where: { profileId } }),
     prisma.profile.delete({ where: { id: profileId } }),
     prisma.user.delete({ where: { id: profile.userId } }),
   ])
+  for (const managerUserId of new Set(profile.managers.map(m => m.managerUserId))) await agency.releaseSlots(managerUserId)
 }
 
 // DELETE /api/managers/profiles/:id — l'agent arrête de gérer ce profil
@@ -305,6 +329,7 @@ router.delete('/profiles/:id', requireAuth, requireManager, async (req, res) => 
       return res.json({ ok: true })
     }
     await prisma.profileManager.update({ where: { id: management.id }, data: { status: 'ENDED', endedAt: new Date(), endedBy: 'MANAGER', tokenHash: null } })
+    await agency.onManagementEnded(management.id)
     if (management.status === 'ACTIVE') {
       await createNotif({
         userId: management.profile.userId,
@@ -349,6 +374,7 @@ async function activate(management, requireApproval) {
     where: { id: management.id },
     data: { status: 'ACTIVE', acceptedAt: new Date(), tokenHash: null, requireApproval: requireApproval !== false },
   })
+  await agency.onManagementActive(updated.id)
   return { management: updated }
 }
 
@@ -395,6 +421,7 @@ router.post('/mine/:id/decline', requireAuth, requireOwner, async (req, res) => 
     const management = await myManagement(req, req.params.id, 'PENDING')
     if (!management) return res.status(404).json({ error: 'Invitation introuvable' })
     await prisma.profileManager.update({ where: { id: management.id }, data: { status: 'ENDED', endedAt: new Date(), endedBy: 'DECLINED', tokenHash: null } })
+    await agency.releaseSlots(management.managerUserId)
     await createNotif({
       userId: management.managerUserId,
       type: 'MANAGEMENT_DECLINED',
@@ -428,6 +455,7 @@ router.delete('/mine/:id', requireAuth, requireOwner, async (req, res) => {
     const management = await myManagement(req, req.params.id)
     if (!management) return res.status(404).json({ error: 'Gestion introuvable' })
     await prisma.profileManager.update({ where: { id: management.id }, data: { status: 'ENDED', endedAt: new Date(), endedBy: 'ARTIST', tokenHash: null } })
+    await agency.onManagementEnded(management.id)
     if (management.status === 'ACTIVE') {
       await createNotif({
         userId: management.managerUserId,
@@ -504,6 +532,7 @@ router.post('/claim/:token', optionalAuth, async (req, res) => {
           data: { status: 'ACTIVE', acceptedAt: new Date(), tokenHash: null, requireApproval: requireApproval !== false },
         }),
       ])
+      await agency.onManagementActive(management.id)
     }
 
     await createNotif({

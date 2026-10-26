@@ -75,7 +75,11 @@ async function runAuth({ userId, actAs, method = 'GET', url = '/api/events/booki
   const res = responseRecorder()
   let nextCalled = false
   await withMocks({
-    user: { findUnique: async ({ where }) => usersById[where.id] || null },
+    user: {
+      findUnique: async ({ where }) => usersById[where.id] || null,
+      // Formule Agence : seul le compte avec l'interrupteur de l'admin l'a ici
+      findFirst: async ({ where }) => (usersById[where.id]?.canManageProfiles ? { id: where.id } : null),
+    },
     profileManager: { findFirst: async () => management },
   }, () => requireAuth(req, res, () => { nextCalled = true }))
   return { req, res, nextCalled }

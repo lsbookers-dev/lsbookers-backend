@@ -203,6 +203,7 @@ router.get('/users', requireAuth, requireAdmin, async (req, res) => {
           email: true,
           role: true,
           emailVerified: true,
+          canManageProfiles: true,
           createdAt: true,
           profile: { select: { id: true, avatar: true } },
         },
@@ -324,6 +325,8 @@ router.patch('/users/:id/manage-profiles', requireAuth, requireAdmin, async (req
       data: { canManageProfiles: req.body.enabled },
       select: { id: true, canManageProfiles: true },
     });
+    // Ses artistes gérés : leur propre Pro est suspendu ou relancé selon la formule
+    await require('../services/agency').onAgencyChanged(id);
     return res.json({ ok: true, user: updated });
   } catch (err) {
     if (err.code === 'P2025') return res.status(404).json({ error: 'Utilisateur introuvable' });

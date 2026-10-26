@@ -3,7 +3,7 @@ const express = require('express')
 const router = express.Router()
 const prisma = require('../prisma/client')
 const { requireAuth } = require('../middleware/auth')
-const { getPlan, startOfMonthParis } = require('../lib/plan')
+const { getPlan, startOfMonthParis, isProSubscription } = require('../lib/plan')
 const { getPlanSettings } = require('../lib/planSettings')
 const { getStripe } = require('../lib/stripe')
 const billing = require('../services/billing')
@@ -41,7 +41,7 @@ router.get('/prices', async (_req, res) => {
   try {
     const settings = await getPlanSettings()
     res.set('Cache-Control', 'public, max-age=60')
-    res.json({ prices: settings.prices, trialDays: settings.trialDays, limits: settings.limits, commission: settings.commission })
+    res.json({ prices: settings.prices, agency: settings.agency, trialDays: settings.trialDays, limits: settings.limits, commission: settings.commission })
   } catch (err) {
     sendError(res, err, 'GET /billing/prices')
   }
@@ -82,8 +82,24 @@ router.get('/me', requireAuth, async (req, res) => {
       limits: settings.limits,
       usage: await usage(profile?.id),
       founderCode: founder?.code || null,
+      // Formule Agence : payée, offerte par l'admin, ou profil Pro grâce à son agence
+      agency: (() => {
+        const a = plan.agency
+        const active = isProSubscription(a) || plan.agencyOffered
+        if (!active && !a) return null
+        return {
+          active,
+          offered: plan.agencyOffered && !isProSubscription(a),
+          status: a?.status || null, interval: a?.interval || null, priceCents: a?.priceCents ?? null,
+          currentPeriodEnd: a?.currentPeriodEnd || null, cancelAtPeriodEnd: !!a?.cancelAtPeriodEnd,
+          extraProfiles: a?.extraProfiles || 0, trialEndsAt: a?.trialEndsAt || null,
+        }
+      })(),
+      agencyPrices: settings.agency,
+      managedPro: plan.managedPro,
+      proPausedByAgency: !!sub?.pausedByAgency,
       signupPlan: account?.signupPlan && !plan.isPro
-        ? { plan: signupChoice === 'PRO' ? 'PRO' : 'FREE', interval: signupInterval === 'MONTH' ? 'MONTH' : 'YEAR', promoCode: signupPromo || null }
+        ? { plan: signupChoice === 'PRO' || signupChoice === 'AGENCY' ? signupChoice : 'FREE', interval: signupInterval === 'MONTH' ? 'MONTH' : 'YEAR', promoCode: signupPromo || null }
         : null,
     })
   } catch (err) {
@@ -105,7 +121,8 @@ router.post('/signup-plan/clear', requireAuth, async (req, res) => {
 router.post('/checkout', requireAuth, async (req, res) => {
   try {
     const interval = String(req.body?.interval || '').toUpperCase()
-    const result = await billing.createSubscriptionCheckout({ user: req.user, interval, promoCode: req.body?.promoCode || null })
+    const plan = req.body?.plan === 'AGENCY' ? 'AGENCY' : 'PRO'
+    const result = await billing.createSubscriptionCheckout({ user: req.user, interval, promoCode: req.body?.promoCode || null, plan })
     res.json(result)
   } catch (err) {
     sendError(res, err, 'POST /billing/checkout')

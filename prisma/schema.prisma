@@ -201,8 +201,9 @@ model User {
   tagsGiven             PublicationTag[] @relation("TaggedByUser")
 
   // Profils gérés (formule Agence, 27/10/2026)
-  canManageProfiles Boolean          @default(false) // Accès à la gestion de plusieurs profils (activé par l'admin en attendant la formule Agence)
-  managedProfiles   ProfileManager[] @relation("ProfileManagerUser")
+  canManageProfiles  Boolean             @default(false) // Formule Agence offerte par l'admin (sans paiement)
+  managedProfiles    ProfileManager[]    @relation("ProfileManagerUser")
+  agencySubscription AgencySubscription?
 }
 
 model Profile {
@@ -912,7 +913,32 @@ model Subscription {
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
 
+  pausedByAgency Boolean @default(false) // Prélèvements suspendus : le profil est Pro grâce à son agence
+
   user User @relation(fields: [userId], references: [id])
+}
+
+// Formule Agence (gérer plusieurs profils) : séparée de l'abonnement Pro, pour qu'un Pro offert
+// (Fondateur) soit retrouvé intact quand l'Agence s'arrête.
+model AgencySubscription {
+  id                Int                @id @default(autoincrement())
+  userId            Int                @unique
+  status            SubscriptionStatus @default(ACTIVE)
+  interval          String             @default("MONTH") // MONTH | YEAR
+  priceCents        Int                @default(0)
+  stripeSubId       String?            @unique
+  stripeExtraItemId String? // Ligne « profils en plus » de l'abonnement Stripe
+  extraProfiles     Int                @default(0)
+  promoCode         String?
+  trialEndsAt       DateTime?
+  currentPeriodEnd  DateTime?
+  cancelAtPeriodEnd Boolean            @default(false)
+  startDate         DateTime           @default(now())
+  endDate           DateTime?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 // Codes promo : FOUNDER (Pro offert à vie, un code par personne, usage unique)

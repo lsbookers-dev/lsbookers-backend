@@ -13,6 +13,7 @@ const jwt = require('jsonwebtoken');
 const prisma = require('../prisma/client');
 const { touchSession } = require('../lib/sessions');
 const { requestedProfileId, findActiveManagement, isBlockedWhileActing } = require('../lib/managedProfiles');
+const { hasAgency } = require('../lib/plan');
 
 // Champs chargés pour le compte connecté (et pour le compte d'un profil géré)
 const USER_SELECT = {
@@ -39,7 +40,7 @@ const USER_SELECT = {
  * si une gestion active le permet, sinon une erreur (le site retire alors la sélection).
  */
 async function resolveActing(manager, profileId) {
-  if (!manager.canManageProfiles) return { status: 403, error: 'MANAGEMENT_ENDED' };
+  if (!(await hasAgency(manager))) return { status: 403, error: 'MANAGEMENT_ENDED' };
   const management = await findActiveManagement(manager.id, profileId);
   if (!management) return { status: 403, error: 'MANAGEMENT_ENDED' };
   const managed = await prisma.user.findUnique({ where: { id: management.profile.userId }, select: USER_SELECT });
