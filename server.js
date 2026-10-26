@@ -266,3 +266,21 @@ httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ Serveur lancé sur http://0.0.0.0:${PORT} (WebSocket activé)`);
   if (process.env.NODE_ENV !== 'test') startScheduledJobs();
 });
+
+// Arrêt propre (mise à jour Railway, redémarrage) : on finit les requêtes en cours, puis on rend
+// les connexions à la base au lieu de les laisser ouvertes jusqu'à ce que la base les coupe.
+let stopping = false;
+function shutdown(signal) {
+  if (stopping) return;
+  stopping = true;
+  console.log(`⏹️  ${signal} reçu : arrêt propre du serveur`);
+  const prisma = require('./prisma/client');
+  const exit = () => prisma.$disconnect().catch(() => {}).finally(() => process.exit(0));
+  httpServer.once('close', exit);
+  // Ferme le temps réel (les sites ouverts se reconnectent tout seuls au nouveau serveur) et le serveur HTTP
+  try { require('./socket').getIO().close(); } catch { httpServer.close(); }
+  // Connexions qui traînent (temps réel, requêtes longues) : on n'attend pas plus de 10 s
+  setTimeout(exit, 10000).unref();
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
