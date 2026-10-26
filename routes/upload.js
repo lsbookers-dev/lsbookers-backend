@@ -5,15 +5,17 @@ const multer = require('multer');
 const { PutObjectCommand } = require('@aws-sdk/client-s3');
 const { r2Client, R2_BUCKET, R2_PUBLIC_URL } = require('../lib/r2');
 const rateLimit = require('express-rate-limit');
+const { memberOrIp } = require('../lib/rateLimitKeys');
 const { requireAuth } = require('../middleware/auth');
 const { isFileContentValid, extensionFor } = require('../lib/fileCheck');
 const { createUploadUrl, confirmUpload, sendUploadError } = require('../lib/directUpload');
 
 /* -------------------- Rate limiter uploads -------------------- */
-// Max 30 uploads par IP par heure (protection stockage + abus)
+// Max 30 uploads par membre et par heure (protection stockage + abus)
 const uploadLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 30,
+  keyGenerator: memberOrIp,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Trop d\'uploads, réessayez dans 1 heure' },

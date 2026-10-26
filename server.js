@@ -6,6 +6,7 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 const cookieParser = require('cookie-parser');
+const { memberOrIp, ipAndEmail } = require('./lib/rateLimitKeys');
 const { init: initSocket } = require('./socket');
 const { startScheduledJobs } = require('./services/scheduledJobs');
 require('dotenv').config();
@@ -80,11 +81,22 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 
-// Rate limiting — protection anti-brute-force
-// Sur les routes sensibles (login, register, mot de passe)
+// Rate limiting — par membre quand il est connecté, par adresse IP sinon (#278) :
+// sur un wifi partagé (festival, salle), les membres ne se bloquent plus entre eux.
+
+// Connexion, inscription, mot de passe : 10 essais / 5 min par adresse IP ET par e-mail visé…
 const authLimiter = rateLimit({
-  windowMs: 5 * 60 * 1000, // fenetre de 5 minutes
-  max: 10,                  // max 10 tentatives par IP sur cette fenetre
+  windowMs: 5 * 60 * 1000,
+  max: 10,
+  keyGenerator: ipAndEmail,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Trop de tentatives, reessayez dans 5 minutes' },
+});
+// … et 100 essais / 5 min par adresse IP tous e-mails confondus (anti-robot)
+const authIpLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: 100,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Trop de tentatives, reessayez dans 5 minutes' },
@@ -93,16 +105,18 @@ const authLimiter = rateLimit({
 // Sur l'ensemble de l'API — protection générale
 const globalLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  max: 300,            // 300 requêtes par IP par minute (augmenté pour la messagerie)
+  max: 300,            // 300 requêtes par minute et par membre (ou par IP hors connexion)
+  keyGenerator: memberOrIp,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'Trop de requêtes, ralentissez ❌' },
+  message: { error: 'Trop de requêtes, ralentissez' },
 });
 
 // Rate limit dédié messagerie — plus permissif (la messagerie est intensive)
 const messagingLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 600, // 10 req/s pour la messagerie (conversations, messages, mark-seen)
+  keyGenerator: memberOrIp,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Trop de requêtes messagerie' },
@@ -175,12 +189,9 @@ app.get('/api/health', async (_req, res) => {
 
 /* ===================== Routes API ===================== */
 // Rate limiting uniquement sur login et register (pas sur /me)
-app.use('/api/auth/login', authLimiter);
-app.use('/api/auth/register', authLimiter);
-app.use('/api/auth/register-complete', authLimiter);
-app.use('/api/auth/resend-verification', authLimiter);
-app.use('/api/auth/forgot-password', authLimiter);
-app.use('/api/auth/reset-password', authLimiter);
+for (const path of ['login', 'register', 'register-complete', 'resend-verification', 'forgot-password', 'reset-password']) {
+  app.use(`/api/auth/${path}`, authIpLimiter, authLimiter);
+}
 app.use('/api/auth', authRoutes);
 app.use('/api/auth', passwordRoutes);
 

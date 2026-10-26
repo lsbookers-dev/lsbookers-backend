@@ -16,6 +16,7 @@ const express = require('express')
 const crypto = require('crypto')
 const bcrypt = require('bcrypt')
 const rateLimit = require('express-rate-limit')
+const { memberOrIp } = require('../lib/rateLimitKeys')
 const { z } = require('zod')
 const prisma = require('../prisma/client')
 const { requireAuth, isAdminUser } = require('../middleware/auth')
@@ -28,9 +29,11 @@ const router = express.Router()
 const emails = () => require('../utils/email')
 const sha256 = (v) => crypto.createHash('sha256').update(String(v)).digest('hex')
 
+// Par membre (ou par IP hors connexion), cf. lib/rateLimitKeys
 const sensitiveLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
+  keyGenerator: memberOrIp,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Trop de tentatives, réessayez dans quelques minutes' },
@@ -39,6 +42,7 @@ const sensitiveLimiter = rateLimit({
 const exportLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 5,
+  keyGenerator: memberOrIp,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Trop de téléchargements, réessayez dans une heure' },

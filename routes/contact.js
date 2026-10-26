@@ -6,6 +6,7 @@ const { requireAuth, requireAdmin } = require('../middleware/auth')
 const { validate } = require('../middleware/validate')
 const { contactCreateSchema } = require('../schemas')
 const rateLimit = require('express-rate-limit')
+const { memberOrIp } = require('../lib/rateLimitKeys')
 
 /* ─────────────────────────────────────────────
  * Rate limiter — formulaire de contact public
@@ -14,6 +15,7 @@ const rateLimit = require('express-rate-limit')
 const contactLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 5,
+  keyGenerator: memberOrIp, // par membre connecté, par IP sinon
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Trop de messages envoyés, réessayez dans 1 heure.' },

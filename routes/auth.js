@@ -4,6 +4,7 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
+const { memberOrIp } = require('../lib/rateLimitKeys');
 const prisma = require('../prisma/client');
 const { requireAuth, isAdminUser } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
@@ -290,6 +291,7 @@ router.post('/logout', async (req, res) => {
 const deleteAccountLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 5,
+  keyGenerator: memberOrIp, // par membre (ou par IP hors connexion)
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Trop de tentatives, réessayez plus tard' },
