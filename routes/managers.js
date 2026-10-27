@@ -87,7 +87,7 @@ async function requireManager(req, res, next) {
   const me = req.actor || req.user
   try {
     if (!me || !(await hasAgency(me))) {
-      return res.status(403).json({ error: 'MANAGEMENT_DISABLED', message: 'La gestion de plusieurs profils demande la formule Agence.' })
+      return res.status(403).json({ error: 'MANAGEMENT_DISABLED', message: 'La gestion de plusieurs profils demande la formule Business.' })
     }
   } catch (err) {
     console.error('requireManager:', err)
@@ -430,7 +430,7 @@ async function myManagement(req, id, status) {
 /** Passe une invitation en gestion active (une seule agence à la fois) */
 async function activate(management, requireApproval) {
   const other = await prisma.profileManager.findFirst({ where: { profileId: management.profileId, status: 'ACTIVE', id: { not: management.id } } })
-  if (other) return { error: 'Votre profil est déjà géré par une autre agence. Retirez d’abord son accès.' }
+  if (other) return { error: 'Votre profil est déjà géré par quelqu’un d’autre. Retirez d’abord son accès.' }
   const updated = await prisma.profileManager.update({
     where: { id: management.id },
     data: { status: 'ACTIVE', acceptedAt: new Date(), tokenHash: null, requireApproval: requireApproval !== false },
@@ -565,7 +565,7 @@ async function findByToken(token) {
 router.get('/claim/:token', optionalAuth, async (req, res) => {
   try {
     const management = await findByToken(req.params.token)
-    if (!management || isExpired(management)) return res.status(404).json({ error: 'INVITE_INVALID', message: 'Ce lien n’est plus valable. Demandez à l’agence de vous renvoyer une invitation.' })
+    if (!management || isExpired(management)) return res.status(404).json({ error: 'INVITE_INVALID', message: 'Ce lien n’est plus valable. Demandez à la personne qui vous a invité de vous renvoyer une invitation.' })
     res.json({
       origin: management.origin,
       manager: { name: accountName(management.manager), avatar: management.manager.profile?.avatar || null },
@@ -583,7 +583,7 @@ router.get('/claim/:token', optionalAuth, async (req, res) => {
 router.post('/claim/:token', optionalAuth, async (req, res) => {
   try {
     const management = await findByToken(req.params.token)
-    if (!management || isExpired(management)) return res.status(404).json({ error: 'INVITE_INVALID', message: 'Ce lien n’est plus valable. Demandez à l’agence de vous renvoyer une invitation.' })
+    if (!management || isExpired(management)) return res.status(404).json({ error: 'INVITE_INVALID', message: 'Ce lien n’est plus valable. Demandez à la personne qui vous a invité de vous renvoyer une invitation.' })
     const managerName = accountName(management.manager)
 
     if (management.origin === 'INVITED') {

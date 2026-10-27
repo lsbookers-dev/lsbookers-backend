@@ -80,7 +80,7 @@ async function createSubscriptionCheckout({ user, interval, promoCode, plan = 'P
 
   const existing = await prisma.subscription.findUnique({ where: { userId: user.id } })
   const agencySub = await prisma.agencySubscription.findUnique({ where: { userId: user.id } })
-  if (isProSubscription(agencySub)) throw new BillingError('ALREADY_AGENCY', 'Votre formule Agence comprend déjà le Pro.')
+  if (isProSubscription(agencySub)) throw new BillingError('ALREADY_AGENCY', 'Votre formule Business comprend déjà le Pro.')
   if (isProSubscription(existing) && existing.source !== 'STRIPE') {
     throw new BillingError('ALREADY_PRO', 'Votre compte Pro vous est déjà offert.')
   }
@@ -139,7 +139,7 @@ async function createSubscriptionCheckout({ user, interval, promoCode, plan = 'P
 async function createAgencyCheckout({ stripe, user, interval, promoCode }) {
   const existing = await prisma.agencySubscription.findUnique({ where: { userId: user.id } })
   if (isProSubscription(existing) && existing.status !== 'CANCELLED') {
-    throw new BillingError('ALREADY_AGENCY', 'Vous avez déjà la formule Agence. Gérez-la depuis cette page.')
+    throw new BillingError('ALREADY_AGENCY', 'Vous avez déjà la formule Business. Gérez-la depuis cette page.')
   }
   const settings = await getPlanSettings()
   const unitAmount = interval === 'YEAR' ? settings.agency.yearCents : settings.agency.monthCents
@@ -166,12 +166,12 @@ async function createAgencyCheckout({ stripe, user, interval, promoCode }) {
         currency: 'eur',
         unit_amount: unitAmount,
         recurring: { interval: interval === 'YEAR' ? 'year' : 'month' },
-        product_data: { name: `LS Bookers Agence — ${settings.agency.includedProfiles} profils inclus` },
+        product_data: { name: `LS Bookers Business — ${settings.agency.includedProfiles} profils inclus` },
       },
     }],
     subscription_data: subscriptionData,
     metadata: { kind: 'subscription', ...metadata },
-    success_url: `${siteUrl()}/subscriptions?agence=ok`,
+    success_url: `${siteUrl()}/subscriptions?business=ok`,
     cancel_url: `${siteUrl()}/subscriptions?abonnement=annule`,
   })
   return { url: session.url }

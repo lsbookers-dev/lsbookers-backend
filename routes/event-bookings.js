@@ -224,7 +224,7 @@ router.patch('/booking-request/:id', requireAuth, async (req, res) => {
       });
       const day = new Date(br.startDate).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
       const organizer = br.requester.user?.pseudo || [br.requester.user?.firstName, br.requester.user?.lastName].filter(Boolean).join(' ') || 'un organisateur';
-      const agentName = req.actor.pseudo || [req.actor.firstName, req.actor.lastName].filter(Boolean).join(' ') || 'Votre agence';
+      const agentName = req.actor.pseudo || [req.actor.firstName, req.actor.lastName].filter(Boolean).join(' ') || 'Votre gestionnaire';
       const linked = await prisma.message.findFirst({ where: { bookingRequestId: br.id, type: 'BOOKING_REQUEST' }, select: { id: true } });
       await createNotif({
         userId:    req.user.id,

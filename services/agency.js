@@ -59,7 +59,7 @@ async function setExtraProfiles(agency, quantity) {
       currency: 'eur',
       unit_amount: year ? settings.agency.extraYearCents : settings.agency.extraMonthCents,
       recurring: { interval: year ? 'year' : 'month' },
-      product_data: { name: 'LS Bookers Agence — profil en plus' },
+      product_data: { name: 'LS Bookers Business — profil en plus' },
     })
     const item = await stripe.subscriptionItems.create({ subscription: agency.stripeSubId, price: price.id, quantity: qty, proration_behavior: 'create_prorations' })
     itemId = item.id
@@ -75,7 +75,7 @@ async function reserveSlot(managerUserId, { acceptExtra = false } = {}) {
   const slots = await profileSlots(managerUserId)
   if (slots.unlimited || slots.used < slots.included + slots.extra) return slots
   if (!slots.paid) {
-    throw new AgencyError('AGENCY_LIMIT', `Votre formule comprend ${slots.included} profils. Passez à la formule Agence payante pour en ajouter.`, 403)
+    throw new AgencyError('AGENCY_LIMIT', `Votre formule comprend ${slots.included} profils. Passez à la formule Business payante pour en ajouter.`, 403)
   }
   if (!acceptExtra) {
     throw new AgencyError('EXTRA_PROFILE_REQUIRED', 'Toutes les places de votre formule sont prises.', 402, {
@@ -123,11 +123,11 @@ async function resumeOwnPro(userId) {
   await createNotif({
     userId,
     type: 'SUBSCRIPTION_UPDATE',
-    content: 'Votre profil n’est plus géré par une agence : votre abonnement Pro reprend normalement.',
+    content: 'Votre profil n’est plus géré par quelqu’un d’autre : votre abonnement Pro reprend normalement.',
   })
 }
 
-const agencyName = (u) => u?.pseudo || [u?.firstName, u?.lastName].filter(Boolean).join(' ') || 'votre agence'
+const agencyName = (u) => u?.pseudo || [u?.firstName, u?.lastName].filter(Boolean).join(' ') || 'votre gestionnaire'
 
 /** Gestion acceptée : si l'agence a la formule, le Pro propre de l'artiste est suspendu */
 async function onManagementActive(managementId) {
@@ -191,7 +191,7 @@ async function endLapsedManagements(now = new Date()) {
       await createNotif({
         userId: m.profile.userId,
         type: 'MANAGEMENT_ENDED',
-        content: `${agencyName(a.user)} n’a plus la formule Agence : votre profil n’est plus géré. Vous gardez tout : profil, avis, agenda et conversations.`,
+        content: `${agencyName(a.user)} n’a plus la formule Business : votre profil n’est plus géré. Vous gardez tout : profil, avis, agenda et conversations.`,
       })
     }
   }
