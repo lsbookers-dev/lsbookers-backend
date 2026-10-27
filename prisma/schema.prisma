@@ -1264,6 +1264,7 @@ model ProfileManager {
   status          String    @default("PENDING") // PENDING (invitation envoyée) | ACTIVE | ENDED
   origin          String    @default("INVITED") // INVITED (compte existant) | CREATED (profil créé par l'agent, à récupérer par e-mail)
   requireApproval Boolean   @default(true) // L'artiste confirme les bookings acceptés par l'agent
+  commissionPct   Float? // Taux convenu entre l'agence et l'artiste (relevé des cachets, indicatif, vu par l'agence seule)
   invitedEmail    String?
   tokenHash       String?   @unique // Lien de l'e-mail (haché)
   expiresAt       DateTime?

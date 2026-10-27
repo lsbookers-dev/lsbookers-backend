@@ -33,6 +33,7 @@ const {
 } = require('../lib/managedProfiles')
 const { hasAgency } = require('../lib/plan')
 const agency = require('../services/agency')
+const { agencyDashboard, agencyAgenda, managedProfiles, unreadByProfile } = require('../services/agencyDashboard')
 
 // Refus lié à la formule Agence (places, profil en plus) : message clair pour le site
 function sendAgencyError(res, err) {
@@ -121,12 +122,57 @@ router.get('/profiles', requireAuth, requireManager, async (req, res) => {
       include: { profile: { select: PROFILE_SUMMARY } },
     })
     const slots = await agency.profileSlots(req.manager.id)
+    // Couleur et messages non lus de chaque profil géré (pastille du sélecteur)
+    const active = await managedProfiles(req.manager.id)
+    const unread = await unreadByProfile(active)
+    const colors = Object.fromEntries(active.map(p => [p.profileId, p.color]))
     res.json({
-      profiles: list.map(managerView),
+      profiles: list.map(m => ({ ...managerView(m), color: colors[m.profileId] || null, unread: unread[m.profileId] || 0 })),
       slots: { used: slots.used, included: slots.included, extra: slots.extra, unlimited: slots.unlimited, extraPriceCents: slots.extraPriceCents, interval: slots.interval },
     })
   } catch (err) {
     console.error('GET managers/profiles:', err)
+    res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
+// GET /api/managers/dashboard?month=2026-11 — espace agence (E1)
+router.get('/dashboard', requireAuth, requireManager, async (req, res) => {
+  try {
+    res.set('Cache-Control', 'private, no-store')
+    res.json(await agencyDashboard(req.manager.id, { month: req.query.month }))
+  } catch (err) {
+    console.error('GET managers/dashboard:', err)
+    res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
+// GET /api/managers/agenda?from=…&to=… — agenda de l'agence (B1), 62 jours au plus
+router.get('/agenda', requireAuth, requireManager, async (req, res) => {
+  try {
+    res.set('Cache-Control', 'private, no-store')
+    res.json(await agencyAgenda(req.manager.id, { from: req.query.from, to: req.query.to }))
+  } catch (err) {
+    if (err.status === 400) return res.status(400).json({ error: err.message })
+    console.error('GET managers/agenda:', err)
+    res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
+// PATCH /api/managers/profiles/:id/commission { commissionPct } — taux convenu (relevé des cachets)
+router.patch('/profiles/:id/commission', requireAuth, requireManager, async (req, res) => {
+  const raw = req.body?.commissionPct
+  const pct = raw === null || raw === '' ? null : Number(raw)
+  if (pct !== null && (!Number.isFinite(pct) || pct < 0 || pct > 50)) return res.status(400).json({ error: 'Le taux doit être compris entre 0 et 50 %.' })
+  try {
+    const updated = await prisma.profileManager.updateMany({
+      where: { id: Number(req.params.id), managerUserId: req.manager.id, status: 'ACTIVE' },
+      data: { commissionPct: pct === null ? null : Math.round(pct * 10) / 10 },
+    })
+    if (!updated.count) return res.status(404).json({ error: 'Profil géré introuvable' })
+    res.json({ ok: true, commissionPct: pct === null ? null : Math.round(pct * 10) / 10 })
+  } catch (err) {
+    console.error('PATCH managers/commission:', err)
     res.status(500).json({ error: 'Erreur serveur' })
   }
 })
