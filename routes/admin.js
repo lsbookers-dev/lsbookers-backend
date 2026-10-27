@@ -139,15 +139,18 @@ router.get('/stats/series', requireAuth, requireAdmin, async (req, res) => {
         where: { role: { not: 'ADMIN' }, createdAt: { gte: dayStart, lte: dayEnd } },
       });
 
-      // Revenus ce jour (table optionnelle)
+      // Revenus LS Bookers ce jour : commissions des bookings payés en ligne + services achetés
+      // (l'ancienne table Payment n'a pas de montant en centimes : la requête échouait à chaque appel)
       let revenueCents = 0;
       try {
-        const payments = await prisma.payment.findMany({
-          where: { createdAt: { gte: dayStart, lte: dayEnd } },
-          select: { amountCents: true },
-        });
-        revenueCents = payments.reduce((s, p) => s + (p.amountCents || 0), 0);
-      } catch { /* table absente */ }
+        const [commissions, extras] = await Promise.all([
+          prisma.bookingPayment.aggregate({ _sum: { commissionCents: true }, where: { paidAt: { gte: dayStart, lte: dayEnd } } }),
+          prisma.extraOrder.aggregate({ _sum: { amountCents: true }, where: { paidAt: { gte: dayStart, lte: dayEnd }, status: { in: ['PAID', 'ACTIVE', 'DONE'] } } }),
+        ]);
+        revenueCents = (commissions._sum.commissionCents || 0) + (extras._sum.amountCents || 0);
+      } catch (err) {
+        console.error('stats/series revenus :', err.message);
+      }
 
       series.push({
         date: dayStart.toISOString().split('T')[0],

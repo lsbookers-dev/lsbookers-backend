@@ -180,6 +180,8 @@ router.post('/register-complete', validate(registerCompleteSchema), async (req, 
     if (city) profileData.location = city.trim();
     if (countryOfResidence) profileData.country = countryOfResidence.trim();
     if (Array.isArray(specialties) && specialties.length > 0) profileData.specialties = specialties;
+    // Organisateur : le premier métier coché devient son type d'établissement (affiché et filtré dans la recherche)
+    if (role === 'ORGANIZER' && !profileData.typeEtablissement && profileData.specialties?.length) profileData.typeEtablissement = profileData.specialties[0];
 
     // Construire les données utilisateur (étape 2)
     const userData = {

@@ -101,6 +101,24 @@ test('recherche : spécialités et styles filtrés par le serveur, sans tenir co
   assert.deepEqual(res.body.users.map(u => u.id), [3, 4])
 })
 
+test('recherche : un organisateur est trouvé par le métier coché à l’inscription (agence)', async () => {
+  const candidates = [
+    member(5, { role: 'ORGANIZER', profile: { specialties: ['Agence artistique / booking'], styles: [], typeEtablissement: null } }),
+    member(6, { role: 'ORGANIZER', profile: { specialties: ['Bar'], styles: [], typeEtablissement: 'Bar' } }),
+  ]
+  const res = await search({ specialties: 'agence artistique / booking' }, { user: userMock(candidates, []) })
+  assert.deepEqual(res.body.users.map(u => u.id), [5])
+})
+
+test('recherche : filtre « type d’établissement » aussi sur les métiers cochés', async () => {
+  const calls = []
+  await search({ typeEtablissement: 'Groupe de lieux' }, { user: userMock([], calls) })
+  assert.deepEqual(calls[0].where.profile.OR, [
+    { typeEtablissement: { equals: 'Groupe de lieux' } },
+    { specialties: { has: 'Groupe de lieux' } },
+  ])
+})
+
 test('recherche : tri alphabétique sur le nom affiché', async () => {
   const candidates = [
     member(1, { pseudo: 'Zoé' }),

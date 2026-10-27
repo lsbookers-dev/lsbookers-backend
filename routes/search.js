@@ -229,10 +229,12 @@ router.get('/', requireAuth, async (req, res) => {
           specialties: { has: String(specialty) },
         }),
 
+        // Type d'établissement : choisi dans le profil, ou coché à l'inscription (spécialités)
         ...(typeEtablissement && {
-          typeEtablissement: {
-            equals: String(typeEtablissement),
-          },
+          OR: [
+            { typeEtablissement: { equals: String(typeEtablissement) } },
+            { specialties: { has: String(typeEtablissement) } },
+          ],
         }),
 
         ...(country && {
@@ -298,7 +300,9 @@ router.get('/', requireAuth, async (req, res) => {
       }
 
       if (specialties.size > 0) {
-        const values = user.role === 'ORGANIZER' ? [p.typeEtablissement] : (p.specialties || [])
+        // Organisateur : son type d'établissement et les métiers cochés à l'inscription
+        // (ex. « Agence artistique / booking », « Groupe de lieux »)
+        const values = user.role === 'ORGANIZER' ? [p.typeEtablissement, ...(p.specialties || [])].filter(Boolean) : (p.specialties || [])
         if (!values.some(v => specialties.has(normalizeText(v)))) return false
       }
 

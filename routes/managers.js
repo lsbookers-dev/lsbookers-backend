@@ -249,7 +249,7 @@ router.post('/create', requireAuth, requireManager, validate(managedCreateSchema
         emailVerified: false,
         pausedAt: new Date(), // invisible tant que non validé
         registrationStep: 3,
-        profile: { create: { location: city || null, country: 'France', specialties: specialties || [] } },
+        profile: { create: { location: city || null, country: 'France', specialties: specialties || [], ...(role === 'ORGANIZER' && specialties?.length ? { typeEtablissement: specialties[0] } : {}) } },
       },
       select: { id: true, profile: { select: { id: true } } },
     })
