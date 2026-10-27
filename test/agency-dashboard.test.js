@@ -45,6 +45,7 @@ test('espace agence : à traiter, relevé des cachets au taux convenu, une coule
       },
     },
     event: { findMany: async () => [] },
+    eventStaff: { findMany: async () => [] },
     offer: { findMany: async () => [] },
   }, async () => {
     const d = await agencyDashboard(1, { month: '2026-11' })
@@ -79,8 +80,16 @@ test('agenda de l’agence : options et dates confirmées des profils gérés', 
       ],
     },
     event: { findMany: async () => [] },
+    // Équipe d'un événement d'un autre organisateur, et jours marqués à la main dans l'agenda
+    eventStaff: { findMany: async () => [{ id: 3, profileId: 10, eventId: 77, status: 'BOOKED', event: { title: 'Gala', start: new Date('2026-11-20'), lieu: 'Cannes' } }] },
+    availability: { findMany: async () => [
+      { id: 4, profileId: 10, date: new Date('2026-11-25'), status: 'UNAVAILABLE' },
+      { id: 5, profileId: 10, date: new Date('2026-11-01'), status: 'UNAVAILABLE' }, // déjà un booking ce jour-là
+    ] },
   }, async () => {
     const a = await agencyAgenda(1, { from: '2026-11-01', to: '2026-12-01' })
-    assert.deepEqual(a.items.map(i => [i.title, i.status, i.awaitingArtist]), [['Festival', 'CONFIRMED', false], ['Le Rex', 'OPTION', true]])
+    assert.deepEqual(a.items.map(i => [i.title, i.status, i.awaitingArtist]), [
+      ['Festival', 'CONFIRMED', false], ['Le Rex', 'OPTION', true], ['Gala', 'CONFIRMED', false], ['Indisponible', 'CONFIRMED', false],
+    ])
   })
 })

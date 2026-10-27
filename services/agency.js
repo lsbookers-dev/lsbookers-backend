@@ -109,7 +109,7 @@ async function pauseOwnPro(userId, agencyName) {
   await prisma.subscription.update({ where: { id: sub.id }, data: { pausedByAgency: true } })
   await createNotif({
     userId,
-    type: 'SUBSCRIPTION_UPDATE',
+    type: 'PRO_PAUSED_BY_MANAGER',
     content: `Votre profil est Pro grâce à ${agencyName} : les prélèvements de votre abonnement Pro sont suspendus tant que vous travaillez ensemble. Ils reprendront automatiquement à la fin de la collaboration.`,
   })
 }
@@ -122,7 +122,7 @@ async function resumeOwnPro(userId) {
   await prisma.subscription.update({ where: { id: sub.id }, data: { pausedByAgency: false } })
   await createNotif({
     userId,
-    type: 'SUBSCRIPTION_UPDATE',
+    type: 'PRO_PAUSED_BY_MANAGER',
     content: 'Votre profil n’est plus géré par quelqu’un d’autre : votre abonnement Pro reprend normalement.',
   })
 }

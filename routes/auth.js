@@ -271,7 +271,8 @@ router.post('/login', validate(loginSchema), async (req, res) => {
     }
     // Mode « cookie uniquement » (site et API sur le même site) : le jeton n'est jamais
     // renvoyé au JavaScript de la page. Sinon (API sur railway.app), transition : jeton renvoyé.
-    const body = { message: 'Connexion reussie', user: toClientUser(user) }
+    // Formule Business : le site sait tout de suite qu'il peut afficher le sélecteur de profils
+    const body = { message: 'Connexion reussie', user: { ...toClientUser(user), hasAgency: await hasAgency(user).catch(() => false) } }
     if (!isSameSiteRequest(req)) body.token = token
     res.json(body);
   } catch (err) {

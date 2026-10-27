@@ -57,7 +57,8 @@ async function agencyDashboard(managerUserId, { month } = {}) {
   const now = new Date()
   const { from, to, label } = monthRange(month)
 
-  const [unread, pending, awaiting, upcomingBookings, upcomingEvents, monthBookings, invitations] = await Promise.all([
+  const soon = { gte: new Date(now.getTime() - DAY / 2), lte: new Date(now.getTime() + 14 * DAY) }
+  const [unread, pending, awaiting, upcomingBookings, upcomingEvents, upcomingStaff, monthBookings, invitations] = await Promise.all([
     unreadByProfile(profiles),
     ids.length ? prisma.bookingRequest.groupBy({ by: ['targetId'], where: { targetId: { in: ids }, status: 'PENDING', awaitingArtistSince: null }, _count: { _all: true } }) : [],
     ids.length ? prisma.bookingRequest.findMany({
@@ -67,7 +68,7 @@ async function agencyDashboard(managerUserId, { month } = {}) {
     }) : [],
     ids.length ? prisma.bookingRequest.findMany({
       where: { targetId: { in: ids }, status: 'ACCEPTED', startDate: { gte: new Date(now.getTime() - DAY / 2), lte: new Date(now.getTime() + 14 * DAY) } },
-      select: { id: true, targetId: true, startDate: true, event: { select: { title: true, lieu: true } }, requester: { select: PERSON_SELECT } },
+      select: { id: true, targetId: true, eventId: true, startDate: true, event: { select: { title: true, lieu: true } }, requester: { select: PERSON_SELECT } },
       orderBy: { startDate: 'asc' },
       take: 30,
     }) : [],
@@ -75,6 +76,12 @@ async function agencyDashboard(managerUserId, { month } = {}) {
       where: { profileId: { in: ids }, status: { not: 'CANCELLED' }, start: { gte: new Date(now.getTime() - DAY / 2), lte: new Date(now.getTime() + 14 * DAY) } },
       select: { id: true, profileId: true, title: true, start: true, lieu: true },
       orderBy: { start: 'asc' },
+      take: 30,
+    }) : [],
+    // Événements d'autres organisateurs où le profil est dans l'équipe (booké)
+    ids.length ? prisma.eventStaff.findMany({
+      where: { profileId: { in: ids }, status: 'BOOKED', event: { status: { not: 'CANCELLED' }, start: soon } },
+      select: { profileId: true, eventId: true, event: { select: { title: true, start: true, lieu: true } } },
       take: 30,
     }) : [],
     ids.length ? prisma.bookingRequest.findMany({
@@ -109,6 +116,9 @@ async function agencyDashboard(managerUserId, { month } = {}) {
   const upcoming = [
     ...upcomingBookings.map(b => ({ profileId: b.targetId, date: b.startDate, title: b.event?.title || publicName(b.requester), place: b.event?.lieu || null })),
     ...upcomingEvents.map(e => ({ profileId: e.profileId, date: e.start, title: e.title, place: e.lieu || null })),
+    ...upcomingStaff
+      .filter(st => !upcomingBookings.some(b => b.targetId === st.profileId && b.eventId === st.eventId))
+      .map(st => ({ profileId: st.profileId, date: st.event.start, title: st.event.title, place: st.event.lieu || null })),
   ].sort((a, b) => new Date(a.date) - new Date(b.date)).slice(0, 12)
 
   // Prochaine date et bookings du mois, par profil
@@ -180,16 +190,27 @@ async function agencyAgenda(managerUserId, { from, to }) {
   const profiles = await managedProfiles(managerUserId)
   const ids = profiles.map(p => p.profileId)
   if (!ids.length) return { profiles: [], items: [] }
-  const [bookings, events] = await Promise.all([
+  // Les mêmes sources que l'agenda de chaque profil : ses événements, les événements où il est
+  // booké (équipe), ses demandes de booking, et les jours qu'il a marqués (indisponible, booké, option)
+  const [bookings, events, staff, marks] = await Promise.all([
     prisma.bookingRequest.findMany({
       where: { targetId: { in: ids }, status: { in: ['PENDING', 'ACCEPTED', 'COMPLETED'] }, startDate: { gte: start, lt: end } },
-      select: { id: true, targetId: true, startDate: true, status: true, awaitingArtistSince: true, event: { select: { title: true, lieu: true } }, requester: { select: PERSON_SELECT } },
+      select: { id: true, targetId: true, eventId: true, startDate: true, status: true, awaitingArtistSince: true, event: { select: { title: true, lieu: true } }, requester: { select: PERSON_SELECT } },
     }),
     prisma.event.findMany({
       where: { profileId: { in: ids }, status: { not: 'CANCELLED' }, start: { gte: start, lt: end } },
       select: { id: true, profileId: true, title: true, start: true, lieu: true },
     }),
+    prisma.eventStaff.findMany({
+      where: { profileId: { in: ids }, status: { in: ['BOOKED', 'PENDING'] }, event: { status: { not: 'CANCELLED' }, start: { gte: start, lt: end } } },
+      select: { id: true, profileId: true, eventId: true, status: true, event: { select: { title: true, start: true, lieu: true } } },
+    }),
+    prisma.availability.findMany({
+      where: { profileId: { in: ids }, status: { in: ['UNAVAILABLE', 'BOOKED', 'TENTATIVE'] }, date: { gte: start, lt: end } },
+      select: { id: true, profileId: true, date: true, status: true },
+    }),
   ])
+  const bookedEvents = new Set(bookings.filter(b => b.eventId).map(b => `${b.targetId}:${b.eventId}`))
   const items = [
     ...bookings.map(b => ({
       id: `b${b.id}`, profileId: b.targetId, date: b.startDate,
@@ -199,7 +220,22 @@ async function agencyAgenda(managerUserId, { from, to }) {
       awaitingArtist: !!b.awaitingArtistSince,
     })),
     ...events.map(e => ({ id: `e${e.id}`, profileId: e.profileId, date: e.start, title: e.title, place: e.lieu || null, status: 'CONFIRMED', awaitingArtist: false })),
-  ].sort((a, b) => new Date(a.date) - new Date(b.date))
+    // Équipe d'un événement (sans doublon avec le booking qui l'a créée)
+    ...staff.filter(s => !bookedEvents.has(`${s.profileId}:${s.eventId}`)).map(s => ({
+      id: `s${s.id}`, profileId: s.profileId, date: s.event.start, title: s.event.title, place: s.event.lieu || null,
+      status: s.status === 'BOOKED' ? 'CONFIRMED' : 'OPTION', awaitingArtist: false,
+    })),
+  ]
+  // Jours marqués à la main dans l'agenda, s'il n'y a rien d'autre ce jour-là pour ce profil
+  const dayKey = (profileId, d) => `${profileId}:${new Date(d).toISOString().slice(0, 10)}`
+  const busy = new Set(items.map(i => dayKey(i.profileId, i.date)))
+  const MARK = { UNAVAILABLE: ['Indisponible', 'CONFIRMED'], BOOKED: ['Booké', 'CONFIRMED'], TENTATIVE: ['Option', 'OPTION'] }
+  for (const m of marks) {
+    if (busy.has(dayKey(m.profileId, m.date))) continue
+    const [title, status] = MARK[m.status]
+    items.push({ id: `a${m.id}`, profileId: m.profileId, date: m.date, title, place: null, status, awaitingArtist: false })
+  }
+  items.sort((a, b) => new Date(a.date) - new Date(b.date))
   return {
     profiles: profiles.map(p => ({ profileId: p.profileId, name: p.name, color: p.color, avatar: p.avatar, role: p.role })),
     items,
