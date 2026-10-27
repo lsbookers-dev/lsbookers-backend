@@ -178,7 +178,7 @@ async function opportunitiesFor(profiles) {
   return found.flat().sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0)).slice(0, 6)
 }
 
-/** Agenda de l'agence : dates de tous les profils gérés, sur une période (62 jours au plus) */
+/** Dates de tous les profils gérés (62 jours au plus), affichées dans l'agenda de la personne qui gère : un seul agenda (choix d'Antho) ; eventId = lien vers le détail */
 async function agencyAgenda(managerUserId, { from, to }) {
   const start = new Date(from)
   const end = new Date(to)
@@ -213,16 +213,16 @@ async function agencyAgenda(managerUserId, { from, to }) {
   const bookedEvents = new Set(bookings.filter(b => b.eventId).map(b => `${b.targetId}:${b.eventId}`))
   const items = [
     ...bookings.map(b => ({
-      id: `b${b.id}`, profileId: b.targetId, date: b.startDate,
+      id: `b${b.id}`, profileId: b.targetId, date: b.startDate, eventId: b.eventId || null,
       title: b.event?.title || publicName(b.requester), place: b.event?.lieu || null,
       // option = demande pas encore acceptée (ou en attente de l'accord de l'artiste)
       status: b.status === 'PENDING' ? 'OPTION' : 'CONFIRMED',
       awaitingArtist: !!b.awaitingArtistSince,
     })),
-    ...events.map(e => ({ id: `e${e.id}`, profileId: e.profileId, date: e.start, title: e.title, place: e.lieu || null, status: 'CONFIRMED', awaitingArtist: false })),
+    ...events.map(e => ({ id: `e${e.id}`, profileId: e.profileId, date: e.start, eventId: e.id, title: e.title, place: e.lieu || null, status: 'CONFIRMED', awaitingArtist: false })),
     // Équipe d'un événement (sans doublon avec le booking qui l'a créée)
     ...staff.filter(s => !bookedEvents.has(`${s.profileId}:${s.eventId}`)).map(s => ({
-      id: `s${s.id}`, profileId: s.profileId, date: s.event.start, title: s.event.title, place: s.event.lieu || null,
+      id: `s${s.id}`, profileId: s.profileId, date: s.event.start, eventId: s.eventId, title: s.event.title, place: s.event.lieu || null,
       status: s.status === 'BOOKED' ? 'CONFIRMED' : 'OPTION', awaitingArtist: false,
     })),
   ]
@@ -233,7 +233,7 @@ async function agencyAgenda(managerUserId, { from, to }) {
   for (const m of marks) {
     if (busy.has(dayKey(m.profileId, m.date))) continue
     const [title, status] = MARK[m.status]
-    items.push({ id: `a${m.id}`, profileId: m.profileId, date: m.date, title, place: null, status, awaitingArtist: false })
+    items.push({ id: `a${m.id}`, profileId: m.profileId, date: m.date, eventId: null, title, place: null, status, awaitingArtist: false })
   }
   items.sort((a, b) => new Date(a.date) - new Date(b.date))
   return {
