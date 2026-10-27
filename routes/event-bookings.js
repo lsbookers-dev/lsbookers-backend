@@ -3,7 +3,8 @@
 
 const express = require('express');
 const router = express.Router();
-const prisma = require('../prisma/client');
+const prisma = require('../prisma/client')
+const { sentByActor } = require('../lib/managedProfiles');
 const { requireAuth } = require('../middleware/auth');
 const { createNotif, displayName } = require('../services/notifications');
 const { checkLimit } = require('../lib/plan');
@@ -124,6 +125,7 @@ router.post('/booking-request', requireAuth, async (req, res) => {
 
     await prisma.message.create({
       data: {
+        ...sentByActor(req),
         content:          msgContent,
         senderId:         req.user.id,
         conversationId:   conversation.id,
@@ -395,7 +397,7 @@ router.post('/booking-request/:id/cancel-request', requireAuth, async (req, res)
       const conv = await prisma.message.findFirst({ where: { bookingRequestId: br.id, type: 'BOOKING_REQUEST' }, select: { id: true, conversationId: true } });
       if (conv) {
         await prisma.message.create({
-          data: { content: `Booking du ${dateLabel} annulé par ${whoName}${note ? `\n"${note.trim()}"` : ''}`, senderId: req.user.id, conversationId: conv.conversationId, type: 'TEXT', bookingRequestId: br.id },
+          data: { ...sentByActor(req), content: `Booking du ${dateLabel} annulé par ${whoName}${note ? `\n"${note.trim()}"` : ''}`, senderId: req.user.id, conversationId: conv.conversationId, type: 'TEXT', bookingRequestId: br.id },
         });
         await prisma.conversation.update({ where: { id: conv.conversationId }, data: { updatedAt: new Date() } });
       }
@@ -427,7 +429,7 @@ router.post('/booking-request/:id/cancel-request', requireAuth, async (req, res)
     const content   = `Demande d'annulation du booking du ${dateLabel}${note ? `\n"${note.trim()}"` : ''}`;
 
     await prisma.message.create({
-      data: { content, senderId: req.user.id, conversationId: linkedMsg.conversationId, type: 'CANCELLATION_REQUEST', bookingRequestId: br.id },
+      data: { ...sentByActor(req), content, senderId: req.user.id, conversationId: linkedMsg.conversationId, type: 'CANCELLATION_REQUEST', bookingRequestId: br.id },
     });
     await prisma.conversation.update({ where: { id: linkedMsg.conversationId }, data: { updatedAt: new Date() } });
 
@@ -492,7 +494,7 @@ router.post('/booking-request/:id/cancel-response', requireAuth, async (req, res
       });
       if (linkedMsg) {
         await prisma.message.create({
-          data: { content: `Annulation du booking du ${dateLabel} confirmée.`, senderId: req.user.id, conversationId: linkedMsg.conversationId, type: 'TEXT', bookingRequestId: br.id },
+          data: { ...sentByActor(req), content: `Annulation du booking du ${dateLabel} confirmée.`, senderId: req.user.id, conversationId: linkedMsg.conversationId, type: 'TEXT', bookingRequestId: br.id },
         });
         await prisma.conversation.update({ where: { id: linkedMsg.conversationId }, data: { updatedAt: new Date() } });
       }
@@ -511,7 +513,7 @@ router.post('/booking-request/:id/cancel-response', requireAuth, async (req, res
       });
       if (linkedMsg) {
         await prisma.message.create({
-          data: { content: `Demande d'annulation du booking du ${dateLabel} refusée.`, senderId: req.user.id, conversationId: linkedMsg.conversationId, type: 'TEXT', bookingRequestId: br.id },
+          data: { ...sentByActor(req), content: `Demande d'annulation du booking du ${dateLabel} refusée.`, senderId: req.user.id, conversationId: linkedMsg.conversationId, type: 'TEXT', bookingRequestId: br.id },
         });
         await prisma.conversation.update({ where: { id: linkedMsg.conversationId }, data: { updatedAt: new Date() } });
       }

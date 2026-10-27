@@ -27,7 +27,8 @@ function routeHandler(router, method, path) {
 // Comptes normaux : ni formule Agence, ni profil géré par une agence
 const NO_AGENCY = {
   agencySubscription: { findUnique: async () => null },
-  profileManager: { findMany: async () => [] },
+  profileManager: { findMany: async () => [], findFirst: async () => null },
+  user: { findFirst: async () => null },
 }
 
 async function withMocks(mocks, fn) {

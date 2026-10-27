@@ -34,6 +34,7 @@ const {
 const { hasAgency } = require('../lib/plan')
 const agency = require('../services/agency')
 const { agencyDashboard, agencyAgenda, managedProfiles, unreadByProfile } = require('../services/agencyDashboard')
+const { journal } = require('../lib/managerLog')
 
 // Refus lié à la formule Agence (places, profil en plus) : message clair pour le site
 function sendAgencyError(res, err) {
@@ -155,6 +156,20 @@ router.get('/agenda', requireAuth, requireManager, async (req, res) => {
   } catch (err) {
     if (err.status === 400) return res.status(400).json({ error: err.message })
     console.error('GET managers/agenda:', err)
+    res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
+// GET /api/managers/journal — ce que l'agence a fait pour ses profils (30 dernières actions)
+router.get('/journal', requireAuth, requireManager, async (req, res) => {
+  try {
+    const rows = await journal({ managerUserId: req.manager.id })
+    const ids = [...new Set(rows.map(r => r.profileId))]
+    const profiles = ids.length ? await prisma.profile.findMany({ where: { id: { in: ids } }, select: PROFILE_SUMMARY }) : []
+    const names = Object.fromEntries(profiles.map(p => [p.id, accountName(p.user)]))
+    res.json({ entries: rows.map(r => ({ ...r, profileName: names[r.profileId] || null })) })
+  } catch (err) {
+    console.error('GET managers/journal:', err)
     res.status(500).json({ error: 'Erreur serveur' })
   }
 })
@@ -437,6 +452,22 @@ router.get('/mine', requireAuth, requireOwner, async (req, res) => {
     res.json({ managements: list.filter(m => !isExpired(m)).map(ownerView) })
   } catch (err) {
     console.error('GET managers/mine:', err)
+    res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
+// GET /api/managers/mine/journal — ce que l'agence a fait pour mon profil
+router.get('/mine/journal', requireAuth, requireOwner, async (req, res) => {
+  try {
+    const profileId = req.user.profile?.id
+    if (!profileId) return res.json({ entries: [] })
+    const rows = await journal({ profileId })
+    const ids = [...new Set(rows.map(r => r.managerUserId))]
+    const managers = ids.length ? await prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, pseudo: true, firstName: true, lastName: true } }) : []
+    const names = Object.fromEntries(managers.map(m => [m.id, accountName(m)]))
+    res.json({ entries: rows.map(r => ({ ...r, managerName: names[r.managerUserId] || null })) })
+  } catch (err) {
+    console.error('GET managers/mine/journal:', err)
     res.status(500).json({ error: 'Erreur serveur' })
   }
 })

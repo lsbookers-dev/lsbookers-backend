@@ -1,6 +1,7 @@
 const express = require('express')
 const router = express.Router()
 const prisma = require('../prisma/client')
+const { sentByActor, accountName } = require('../lib/managedProfiles')
 const { Prisma } = require('@prisma/client')
 const { requireAuth, isAdminUser } = require('../middleware/auth')
 const { validate } = require('../middleware/validate')
@@ -91,8 +92,16 @@ function toMessagePayload(message, conversationId) {
       name: getUserDisplayName(message.sender),
       image: message.sender?.profile?.avatar || null,
     },
+    // Profil géré : message écrit par l'agence (« envoyé par … »)
+    sentBy: message.sentByName ? { name: message.sentByName } : null,
     ...(conversationId ? { conversationId } : {}),
   }
+}
+
+/** Message tout juste écrit par une agence pour un profil géré : on y joint le nom de l'agence */
+function withSentBy(message, req) {
+  if (req?.actor && message) message.sentByName = accountName(req.actor)
+  return message
 }
 
 /* Vrai si un blocage existe entre l'utilisateur et un autre participant de la conversation */
@@ -368,6 +377,23 @@ router.get('/messages/:conversationId', requireAuth, async (req, res) => {
     // Remettre en ordre chronologique (initial et before sont triés DESC)
     const messages = after ? rawMessages : [...rawMessages].reverse()
 
+    // Messages écrits par une agence pour un profil géré : nom de l'agence (« envoyé par … »)
+    const agencyIds = [...new Set(messages.map(m => m.sentByUserId).filter(Boolean))]
+    const agencies = agencyIds.length
+      ? await prisma.user.findMany({ where: { id: { in: agencyIds } }, select: { id: true, pseudo: true, firstName: true, lastName: true } })
+      : []
+    const agencyName = Object.fromEntries(agencies.map(a => [a.id, accountName(a)]))
+
+    // Demandes de booking vers un profil géré : nom de l'agence qui le gère
+    const targetIds = [...new Set(messages.map(m => m.bookingRequest?.targetId).filter(Boolean))]
+    const managedTargets = targetIds.length
+      ? await prisma.profileManager.findMany({
+          where: { profileId: { in: targetIds }, status: 'ACTIVE' },
+          select: { profileId: true, manager: { select: { pseudo: true, firstName: true, lastName: true } } },
+        })
+      : []
+    const managedByName = Object.fromEntries(managedTargets.map(t => [t.profileId, accountName(t.manager)]))
+
     const payload = messages.map((m) => {
       const br = m.bookingRequest
       // Résoudre l'userId de celui qui a demandé l'annulation
@@ -396,6 +422,7 @@ router.get('/messages/:conversationId', requireAuth, async (req, res) => {
         requesterUserId: br.requester?.userId ?? null,
         targetUserId: br.target?.userId ?? null,
         awaitingArtist: !!br.awaitingArtistSince, // profil géré : l'agence a accepté, l'artiste doit confirmer
+        targetManagedBy: managedByName[br.targetId] || null, // « Profil géré par … »
       } : null,
       // Candidature à une offre : de quoi proposer un booking pré-rempli
       offer: m.offer ? {
@@ -414,6 +441,7 @@ router.get('/messages/:conversationId', requireAuth, async (req, res) => {
         name: getUserDisplayName(m.sender),
         image: m.sender?.profile?.avatar || null,
       },
+      sentBy: m.sentByUserId && agencyName[m.sentByUserId] ? { name: agencyName[m.sentByUserId] } : null,
     }})
 
     return res.json(payload)
@@ -531,6 +559,7 @@ router.post('/send', requireAuth, validate(conversationCreateSchema), async (req
 
     const message = await prisma.message.create({
       data: {
+        ...sentByActor(req),
         content: String(content).trim(),
         senderId,
         conversationId: conversation.id,
@@ -548,7 +577,7 @@ router.post('/send', requireAuth, validate(conversationCreateSchema), async (req
     // ── Temps réel : pousser le message via WebSocket ──
     try {
       const io = getIO()
-      const msgPayload = toMessagePayload(message, conversation.id)
+      const msgPayload = toMessagePayload(withSentBy(message, req), conversation.id)
       io.to(`conv:${conversation.id}`).emit('new_message', msgPayload)
       io.to(`user:${senderId}`).emit('conversation_updated', { conversationId: conversation.id })
       io.to(`user:${Number(recipientId)}`).emit('conversation_updated', { conversationId: conversation.id })
@@ -559,7 +588,7 @@ router.post('/send', requireAuth, validate(conversationCreateSchema), async (req
 
     return res.json({
       conversationId: conversation.id,
-      message: toMessagePayload(message),
+      message: toMessagePayload(withSentBy(message, req)),
     })
   } catch (err) {
     console.error('❌ [POST /send]', err)
@@ -621,6 +650,7 @@ router.post('/send-file', requireAuth, (req, res) => {
 
     const message = await prisma.message.create({
       data: {
+        ...sentByActor(req),
         content: content?.trim() ? String(content).trim() : null,
         attachmentUrl,
         attachmentType,
@@ -643,7 +673,7 @@ router.post('/send-file', requireAuth, (req, res) => {
     try {
       const io = getIO()
       const convId = Number(conversationId)
-      const msgPayload = toMessagePayload(message, convId)
+      const msgPayload = toMessagePayload(withSentBy(message, req), convId)
       io.to(`conv:${convId}`).emit('new_message', msgPayload)
       const parts = await prisma.conversationParticipant.findMany({
         where: { conversationId: convId },
@@ -655,7 +685,7 @@ router.post('/send-file', requireAuth, (req, res) => {
 
     return res.json({
       conversationId: Number(conversationId),
-      message: toMessagePayload(message),
+      message: toMessagePayload(withSentBy(message, req)),
     })
   } catch (err) {
     console.error('❌ [POST /send-file]', err)
@@ -791,6 +821,7 @@ router.post('/share-profile', requireAuth, async (req, res) => {
 
     const message = await prisma.message.create({
       data: {
+        ...sentByActor(req),
         conversationId: Number(conversationId),
         senderId,
         content: sharedData,
@@ -810,12 +841,12 @@ router.post('/share-profile', requireAuth, async (req, res) => {
     try {
       const io = getIO()
       const convId = Number(conversationId)
-      io.to(`conv:${convId}`).emit('new_message', toMessagePayload(message, convId))
+      io.to(`conv:${convId}`).emit('new_message', toMessagePayload(withSentBy(message, req), convId))
       const parts = await prisma.conversationParticipant.findMany({ where: { conversationId: convId }, select: { userId: true } })
       parts.forEach(p => io.to(`user:${p.userId}`).emit('conversation_updated', { conversationId: convId }))
     } catch (_) {}
 
-    res.json(toMessagePayload(message, Number(conversationId)))
+    res.json(toMessagePayload(withSentBy(message, req), Number(conversationId)))
   } catch (err) {
     console.error('share-profile:', err)
     res.status(500).json({ error: 'Erreur serveur' })
@@ -901,6 +932,7 @@ router.post('/share-offer', requireAuth, async (req, res) => {
 
     const message = await prisma.message.create({
       data: {
+        ...sentByActor(req),
         conversationId: conversation.id,
         senderId,
         content: sharedData,
@@ -919,12 +951,12 @@ router.post('/share-offer', requireAuth, async (req, res) => {
     // Temps réel
     try {
       const io = getIO()
-      io.to(`conv:${conversation.id}`).emit('new_message', toMessagePayload(message, conversation.id))
+      io.to(`conv:${conversation.id}`).emit('new_message', toMessagePayload(withSentBy(message, req), conversation.id))
       io.to(`user:${senderId}`).emit('conversation_updated', { conversationId: conversation.id })
       io.to(`user:${Number(recipientId)}`).emit('conversation_updated', { conversationId: conversation.id })
     } catch (_) {}
 
-    res.json({ conversationId: conversation.id, message: toMessagePayload(message) })
+    res.json({ conversationId: conversation.id, message: toMessagePayload(withSentBy(message, req)) })
   } catch (err) {
     console.error('share-offer:', err)
     res.status(500).json({ error: 'Erreur serveur' })

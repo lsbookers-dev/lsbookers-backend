@@ -1,7 +1,8 @@
 // routes/offers.js
 const express = require('express');
 const router = express.Router();
-const prisma = require('../prisma/client');
+const prisma = require('../prisma/client')
+const { sentByActor } = require('../lib/managedProfiles');
 const { activeOfferWhere } = require('../services/offerCleanup');
 const { requireAuth } = require('../middleware/auth');
 const { checkLimit } = require('../lib/plan');
@@ -315,6 +316,7 @@ router.post('/:id/apply', requireAuth, async (req, res) => {
     // Message de candidature lié à l'offre : son auteur peut proposer un booking en un clic
     await prisma.message.create({
       data: {
+        ...sentByActor(req),
         conversationId: conversation.id,
         senderId:       applicantUserId,
         content,

@@ -155,6 +155,9 @@ app.use('/api/stripe/webhook', stripeWebhookRoutes);
 
 app.use(express.json({ limit: '10mb' }));
 
+// Journal de l'agence : actions faites pour un profil géré (voir lib/managerLog.js)
+app.use(require('./lib/managerLog').logManagedActions);
+
 // Logs (désactivés en production pour les performances)
 // Journal des requêtes SANS la partie « ?… » de l'URL (peut contenir jetons, emails, recherches)
 morgan.token('path-only', (req) => (req.originalUrl || req.url || '').split('?')[0]);

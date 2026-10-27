@@ -4,6 +4,7 @@ const router = express.Router();
 const prisma = require('../prisma/client');
 const { requireAuth, optionalAuth } = require('../middleware/auth');
 const { isProRow, managedProUserIds } = require('../lib/plan');
+const { publicAgencyLinks } = require('../services/agencyDashboard');
 const { isOwnMediaUrl } = require('../lib/mediaUrl');
 const { validate } = require('../middleware/validate');
 const { profileUpdateSchema, accountUpdateSchema } = require('../schemas');
@@ -248,6 +249,8 @@ router.get('/user/:userId', optionalAuth, async (req, res) => {
         ...rest,
         ...(profile.showAddress ? { address, postalCode, city } : {}),
         ...(await reviewStats(profile.id)),
+        // Formule Agence : « Géré par … » et rubrique « Artistes représentés / Nos lieux / Nos profils »
+        ...(await publicAgencyLinks(profile.id, profile.userId)),
       },
     });
   } catch (error) {

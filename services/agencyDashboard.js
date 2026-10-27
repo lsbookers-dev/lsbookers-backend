@@ -206,4 +206,45 @@ async function agencyAgenda(managerUserId, { from, to }) {
   }
 }
 
-module.exports = { PALETTE, managedProfiles, unreadByProfile, agencyDashboard, agencyAgenda, monthRange }
+/**
+ * Profil public : « Géré par … » (agence qui a la formule) et, pour une agence,
+ * la rubrique de ses profils (« Artistes représentés », « Nos lieux » ou « Nos profils »).
+ */
+async function publicAgencyLinks(profileId, userId) {
+  const { agencyManagerWhere, hasAgency } = require('../lib/plan')
+  const visible = { pausedAt: null, bannedAt: null, emailVerified: true }
+  const [managedBy, isAgency] = await Promise.all([
+    prisma.profileManager.findFirst({
+      where: { profileId, status: 'ACTIVE', manager: { ...agencyManagerWhere(), ...visible } },
+      select: { manager: { select: { id: true, role: true, profile: { select: PERSON_SELECT } } } },
+    }),
+    hasAgency(userId),
+  ])
+  const represented = isAgency
+    ? await prisma.profileManager.findMany({
+        where: { managerUserId: userId, status: 'ACTIVE', profile: { user: visible, hiddenFromSearch: false } },
+        orderBy: { id: 'asc' },
+        select: { profile: { select: { ...PERSON_SELECT, specialties: true, typeEtablissement: true, location: true } } },
+        take: 60,
+      })
+    : []
+  const list = represented.map(m => ({
+    profileId: m.profile.id,
+    userId: m.profile.user.id,
+    role: m.profile.user.role,
+    name: publicName(m.profile),
+    avatar: m.profile.avatar || null,
+    specialty: m.profile.user.role === 'ORGANIZER' ? (m.profile.typeEtablissement || m.profile.specialties?.[0] || null) : (m.profile.specialties?.[0] || null),
+    location: m.profile.location || null,
+  }))
+  const allArtists = list.length > 0 && list.every(p => p.role === 'ARTIST')
+  const allVenues = list.length > 0 && list.every(p => p.role === 'ORGANIZER')
+  return {
+    managedBy: managedBy?.manager?.profile
+      ? { userId: managedBy.manager.id, role: managedBy.manager.role, name: publicName(managedBy.manager.profile), avatar: managedBy.manager.profile.avatar || null }
+      : null,
+    represents: list.length ? { title: allArtists ? 'Artistes représentés' : allVenues ? 'Nos lieux' : 'Nos profils', profiles: list } : null,
+  }
+}
+
+module.exports = { PALETTE, managedProfiles, unreadByProfile, agencyDashboard, agencyAgenda, monthRange, publicAgencyLinks }

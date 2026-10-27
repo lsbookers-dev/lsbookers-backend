@@ -538,6 +538,7 @@ model Message {
   seenAt             DateTime?
   createdAt          DateTime         @default(now())
   type               String           @default("TEXT") // TEXT | BOOKING_REQUEST
+  sentByUserId       Int? // Profil géré : compte de l'agence qui a écrit à la place du titulaire
   bookingRequestId   Int?
   offerId            Int? // Candidature à une offre (bouton « Proposer un booking » pour son auteur)
 
@@ -1279,6 +1280,19 @@ model ProfileManager {
 
   @@index([managerUserId, status])
   @@index([profileId, status])
+}
+
+// Journal de l'agence : ce que l'agence a fait pour un profil géré (visible par l'agence et par l'artiste)
+model ManagerActionLog {
+  id            Int      @id @default(autoincrement())
+  managerUserId Int
+  profileId     Int
+  action        String // BOOKING_ACCEPTED, BOOKING_APPROVAL_REQUESTED, PUBLICATION, OFFER_APPLICATION…
+  detail        String?
+  createdAt     DateTime @default(now())
+
+  @@index([managerUserId, createdAt])
+  @@index([profileId, createdAt])
 }
 
 model ProfileView {
