@@ -168,6 +168,32 @@ router.get('/stats/series', requireAuth, requireAdmin, async (req, res) => {
 });
 
 /* =========================================================
+ *  HISTORIQUE — journal des actions admin
+ *  GET /api/admin/logs?action=USER_DELETE,USER_BAN&q=texte&before=<id>&limit=50
+ * =======================================================*/
+router.get('/logs', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const limRaw = parseInt(String(req.query.limit || ''), 10);
+    const limit = Number.isFinite(limRaw) ? Math.min(100, Math.max(1, limRaw)) : 50;
+    const before = parseInt(String(req.query.before || ''), 10);
+    const actions = String(req.query.action || '').split(',').map(a => a.trim()).filter(a => /^[A-Z_]{3,40}$/.test(a));
+    const q = String(req.query.q || '').trim().slice(0, 100);
+    const where = {
+      ...(Number.isFinite(before) ? { id: { lt: before } } : {}),
+      ...(actions.length ? { action: { in: actions } } : {}),
+      ...(q ? { targetLabel: { contains: q, mode: 'insensitive' } } : {}),
+    };
+    const logs = await prisma.adminLog.findMany({ where, orderBy: { id: 'desc' }, take: limit + 1 });
+    const hasMore = logs.length > limit;
+    const page = logs.slice(0, limit);
+    return res.json({ logs: page, nextBefore: hasMore ? page[page.length - 1].id : null });
+  } catch (err) {
+    console.error('❌ /admin/logs', err);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+/* =========================================================
  *  USERS — liste filtrée
  *  GET /api/admin/users?q=...&limit=50&offset=0
  * =======================================================*/

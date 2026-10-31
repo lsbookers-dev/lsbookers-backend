@@ -7,6 +7,7 @@ const { Server } = require('socket.io')
 const jwt = require('jsonwebtoken')
 const prisma = require('./prisma/client')
 const { tokenFromCookieHeader } = require('./lib/session')
+const { adminSessionProblem } = require('./lib/sessions')
 
 let io = null
 
@@ -64,8 +65,8 @@ function init(httpServer) {
       const user = await prisma.user.findUnique({
         where: { id: userId },
         select: {
-          id: true, emailVerified: true, requiresPasswordReset: true, tokenVersion: true,
-          ...(typeof decoded.sid === 'string' ? { sessions: { where: { sid: decoded.sid }, select: { revokedAt: true }, take: 1 } } : {}),
+          id: true, role: true, emailVerified: true, requiresPasswordReset: true, tokenVersion: true,
+          ...(typeof decoded.sid === 'string' ? { sessions: { where: { sid: decoded.sid }, select: { id: true, revokedAt: true, createdAt: true, lastUsedAt: true }, take: 1 } } : {}),
         },
       })
       if (!user) return next(new Error('Unauthorized: user not found'))
@@ -78,6 +79,10 @@ function init(httpServer) {
       // Appareil retiré dans les Réglages
       if (typeof decoded.sid === 'string' && (!user.sessions?.[0] || user.sessions[0].revokedAt)) {
         return next(new Error('Unauthorized: session revoked'))
+      }
+      // Compte admin : seulement avec une session admin valable (code reçu par e-mail)
+      if (String(user.role || '').toUpperCase() === 'ADMIN' && adminSessionProblem(decoded, user.sessions?.[0])) {
+        return next(new Error('Unauthorized: admin session'))
       }
 
       socket.userId = userId

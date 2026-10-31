@@ -19,7 +19,8 @@ const {
 const { deleteUserAccount } = require('../services/accountDeletion');
 const emailUtils = require('../utils/email');
 const { sendVerificationEmail } = emailUtils;
-const { issueSession } = require('../lib/sessions');
+const { issueSession, deviceNameFromUA } = require('../lib/sessions');
+const { logAdmin } = require('../lib/adminLog');
 const { createNotif } = require('../services/notifications');
 const { setSessionCookie, clearSessionCookie, isSameSiteRequest } = require('../lib/session');
 
@@ -245,6 +246,7 @@ router.post('/login', validate(loginSchema), async (req, res) => {
 
     const isValid = await bcrypt.compare(password, user.password);
     if (!isValid) {
+      if (isAdminUser(user)) logAdmin(req, 'ADMIN_PASSWORD_FAILED', { adminId: user.id, details: { device: deviceNameFromUA(req.headers['user-agent'] || '') } })
       return res.status(401).json({ error: 'Identifiants incorrects' });
     }
 
@@ -262,24 +264,106 @@ router.post('/login', validate(loginSchema), async (req, res) => {
       return res.status(403).json({ error: 'ACCOUNT_BANNED', message: 'Ce compte a été suspendu. Pour toute question : contact@lsbookers.com' })
     }
 
-    // Une session par appareil (listée et révocable dans Réglages › Connexion et sécurité)
-    const { token, isNewDevice, deviceName } = await issueSession(req, res, user)
-    if (isNewDevice && user.loginAlerts) {
-      const date = new Date().toLocaleString('fr-FR', { dateStyle: 'long', timeStyle: 'short', timeZone: 'Europe/Paris' })
-      createNotif({ userId: user.id, type: 'NEW_DEVICE_LOGIN', content: `Nouvelle connexion à votre compte : ${deviceName}, le ${date}.` })
-      emailUtils.sendLoginAlertEmail(user.email, { deviceName, date }).catch(err => console.error('❌ Alerte de connexion :', err.message))
+    // Compte admin : le mot de passe ne suffit pas, un code à 6 chiffres part par e-mail
+    if (isAdminUser(user)) {
+      const challenge = await sendAdminLoginCode(req, user)
+      return res.json({ twoFactorRequired: true, challenge, emailHint: maskEmail(user.email) })
     }
-    // Mode « cookie uniquement » (site et API sur le même site) : le jeton n'est jamais
-    // renvoyé au JavaScript de la page. Sinon (API sur railway.app), transition : jeton renvoyé.
-    // Formule Business : le site sait tout de suite qu'il peut afficher le sélecteur de profils
-    const body = { message: 'Connexion reussie', user: { ...toClientUser(user), hasAgency: await hasAgency(user).catch(() => false) } }
-    if (!isSameSiteRequest(req)) body.token = token
-    res.json(body);
+
+    await completeLogin(req, res, user)
   } catch (err) {
     console.error('Erreur serveur lors de la connexion :', err);
     res.status(500).json({ error: 'Erreur serveur' });
   }
 });
+
+/** Ouvre la session et répond au site (connexion normale, ou admin après le code) */
+async function completeLogin(req, res, user, { admin = false } = {}) {
+  // Une session par appareil (listée et révocable dans Réglages › Connexion et sécurité)
+  const { token, isNewDevice, deviceName } = await issueSession(req, res, user, { admin })
+  if (isNewDevice && user.loginAlerts && !admin) {
+    const date = new Date().toLocaleString('fr-FR', { dateStyle: 'long', timeStyle: 'short', timeZone: 'Europe/Paris' })
+    createNotif({ userId: user.id, type: 'NEW_DEVICE_LOGIN', content: `Nouvelle connexion à votre compte : ${deviceName}, le ${date}.` })
+    emailUtils.sendLoginAlertEmail(user.email, { deviceName, date }).catch(err => console.error('❌ Alerte de connexion :', err.message))
+  }
+  // Mode « cookie uniquement » (site et API sur le même site) : le jeton n'est jamais
+  // renvoyé au JavaScript de la page. Sinon (API sur railway.app), transition : jeton renvoyé.
+  // Formule Business : le site sait tout de suite qu'il peut afficher le sélecteur de profils
+  const body = { message: 'Connexion reussie', user: { ...toClientUser(user), hasAgency: await hasAgency(user).catch(() => false) } }
+  if (!isSameSiteRequest(req)) body.token = token
+  res.json(body);
+}
+
+// ─────────────────────────────────────────────
+// CONNEXION ADMIN : CODE DE SÉCURITÉ PAR E-MAIL (31/10/2026)
+// 1) /login (bon mot de passe) → code à 6 chiffres envoyé, valable 10 min, 5 essais
+// 2) /admin-code { challenge, code } → session admin (1 h sans activité, 6 h au plus)
+// ─────────────────────────────────────────────
+const ADMIN_CODE_TTL_MS = 10 * 60 * 1000
+const ADMIN_CODE_MAX_ATTEMPTS = 5
+
+const hashAdminCode = (challenge, code) =>
+  crypto.createHmac('sha256', process.env.JWT_SECRET || 'lsb').update(`${challenge}:${code}`).digest('hex')
+
+function maskEmail(email) {
+  const [name, domain] = String(email || '').split('@')
+  if (!domain) return ''
+  return `${name.slice(0, 2)}${'•'.repeat(Math.max(1, name.length - 2))}@${domain}`
+}
+
+async function sendAdminLoginCode(req, user) {
+  const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0')
+  const challenge = crypto.randomBytes(24).toString('hex')
+  // Un seul code valable à la fois : les précédents sont annulés
+  await prisma.adminLoginCode.updateMany({ where: { userId: user.id, usedAt: null }, data: { usedAt: new Date() } })
+  await prisma.adminLoginCode.create({
+    data: { userId: user.id, challenge, codeHash: hashAdminCode(challenge, code), expiresAt: new Date(Date.now() + ADMIN_CODE_TTL_MS) },
+  })
+  const deviceName = deviceNameFromUA(req.headers['user-agent'] || '')
+  const date = new Date().toLocaleString('fr-FR', { dateStyle: 'long', timeStyle: 'short', timeZone: 'Europe/Paris' })
+  await emailUtils.sendAdminLoginCodeEmail(user.email, { code, deviceName, date })
+  logAdmin(req, 'ADMIN_CODE_SENT', { adminId: user.id, details: { device: deviceName } })
+  return challenge
+}
+
+router.post('/admin-code', async (req, res) => {
+  const challenge = String(req.body?.challenge || '')
+  const code = String(req.body?.code || '').replace(/\s+/g, '')
+  if (!/^[a-f0-9]{48}$/.test(challenge) || !/^\d{6}$/.test(code)) {
+    return res.status(400).json({ error: 'ADMIN_CODE_INVALID' })
+  }
+  try {
+    const row = await prisma.adminLoginCode.findUnique({ where: { challenge } })
+    if (!row || row.usedAt || row.expiresAt < new Date() || row.attempts >= ADMIN_CODE_MAX_ATTEMPTS) {
+      return res.status(401).json({ error: 'ADMIN_CODE_EXPIRED' })
+    }
+    const expected = Buffer.from(row.codeHash, 'hex')
+    const given = Buffer.from(hashAdminCode(challenge, code), 'hex')
+    if (expected.length !== given.length || !crypto.timingSafeEqual(expected, given)) {
+      const attempts = row.attempts + 1
+      await prisma.adminLoginCode.update({
+        where: { id: row.id },
+        data: { attempts, ...(attempts >= ADMIN_CODE_MAX_ATTEMPTS ? { usedAt: new Date() } : {}) },
+      })
+      logAdmin(req, 'ADMIN_CODE_FAILED', { adminId: row.userId, details: { attempts } })
+      const left = ADMIN_CODE_MAX_ATTEMPTS - attempts
+      return res.status(401).json({ error: left > 0 ? 'ADMIN_CODE_WRONG' : 'ADMIN_CODE_EXPIRED', attemptsLeft: Math.max(0, left) })
+    }
+    // Code utilisé une seule fois (deux envois simultanés : un seul ouvre la session)
+    const claimed = await prisma.adminLoginCode.updateMany({ where: { id: row.id, usedAt: null }, data: { usedAt: new Date() } })
+    if (claimed.count !== 1) return res.status(401).json({ error: 'ADMIN_CODE_EXPIRED' })
+
+    const user = await prisma.user.findUnique({ where: { id: row.userId }, include: { profile: true } })
+    if (!user || !isAdminUser(user) || user.bannedAt || !user.emailVerified || user.requiresPasswordReset) {
+      return res.status(401).json({ error: 'ADMIN_CODE_EXPIRED' })
+    }
+    logAdmin(req, 'ADMIN_LOGIN', { adminId: user.id, details: { device: deviceNameFromUA(req.headers['user-agent'] || '') } })
+    await completeLogin(req, res, user, { admin: true })
+  } catch (err) {
+    console.error('Erreur code admin :', err)
+    res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
 
 // ─────────────────────────────────────────────
 // DÉCONNEXION

@@ -33,7 +33,13 @@ async function handleEvent(stripe, event) {
     case 'customer.subscription.created':
     case 'customer.subscription.updated':
     case 'customer.subscription.deleted':
-      await billing.syncStripeSubscription(obj)
+      try {
+        await billing.syncStripeSubscription(obj)
+      } catch (err) {
+        // Compte supprimé (son abonnement s'arrête à la fin de la période payée) : rien à mettre à jour
+        if (err.code !== 'P2003') throw err
+        console.warn('Abonnement Stripe d\'un compte supprimé :', obj.id)
+      }
       break
     case 'payment_intent.payment_failed': {
       if (obj.metadata?.kind === 'booking' && obj.metadata.paymentId) {

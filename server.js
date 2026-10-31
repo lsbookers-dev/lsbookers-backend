@@ -20,6 +20,7 @@ const followRoutes = require('./routes/follow');
 const blockRoutes  = require('./routes/block');
 const searchRoutes = require('./routes/search');
 const adminRoutes = require('./routes/admin');
+const { adminAudit } = require('./lib/adminAudit');
 const adminSettingsRoutes = require('./routes/adminSettings'); // paramètres du site
 const adminPostsRoutes = require('./routes/adminPosts'); // publications LSBookers
 const accountRoutes = require('./routes/account'); // Réglages du compte
@@ -193,7 +194,7 @@ app.get('/api/health', async (_req, res) => {
 
 /* ===================== Routes API ===================== */
 // Rate limiting uniquement sur login et register (pas sur /me)
-for (const path of ['login', 'register', 'register-complete', 'resend-verification', 'forgot-password', 'reset-password']) {
+for (const path of ['login', 'admin-code', 'register', 'register-complete', 'resend-verification', 'forgot-password', 'reset-password']) {
   app.use(`/api/auth/${path}`, authIpLimiter, authLimiter);
 }
 app.use('/api/auth', authRoutes);
@@ -208,6 +209,9 @@ app.use('/api/block',  blockRoutes);
 app.use('/api/search', searchRoutes);
 
 // ⚠️ IMPORTANT : monter /api/admin/settings, /posts et /featured AVANT /api/admin
+// Journal admin : chaque action réussie de l'admin est enregistrée (onglet « Historique »)
+app.use('/api/admin', adminAudit());
+app.use('/api/contact/admin', adminAudit('/contact'));
 app.use('/api/admin/settings', adminSettingsRoutes);
 app.use('/api/admin/posts', adminPostsRoutes);
 app.use('/api/admin/featured', adminFeaturedRoutes);

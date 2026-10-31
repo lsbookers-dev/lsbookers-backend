@@ -4,6 +4,33 @@
 
 const prisma = require('../prisma/client');
 const { deleteR2Object } = require('../lib/r2');
+const stripeLib = require('../lib/stripe');
+
+/**
+ * Abonnements Stripe (Pro, Business) arrêtés à la fin de la période déjà payée : plus aucun
+ * prélèvement, pas de remboursement. Fait AVANT d'effacer le compte : si Stripe ne répond pas,
+ * la suppression échoue plutôt que de laisser un abonnement prélevé sans compte.
+ */
+async function stopStripeSubscriptions(userId) {
+  const [pro, agency] = await Promise.all([
+    prisma.subscription.findUnique({ where: { userId }, select: { stripeSubId: true, status: true } }),
+    prisma.agencySubscription.findUnique({ where: { userId }, select: { stripeSubId: true, status: true } }),
+  ]);
+  const ids = [pro, agency].filter(s => s?.stripeSubId && !['CANCELLED', 'EXPIRED'].includes(s.status)).map(s => s.stripeSubId);
+  if (!ids.length) return 0;
+  const stripe = stripeLib.getStripe();
+  if (!stripe) throw new Error('Stripe indisponible : impossible d\'arrêter l\'abonnement avant la suppression');
+  for (const id of ids) {
+    try {
+      await stripe.subscriptions.update(id, { cancel_at_period_end: true });
+    } catch (err) {
+      // Abonnement déjà terminé chez Stripe : rien à arrêter
+      if (err?.code === 'resource_missing' || /canceled subscription/i.test(err?.message || '')) continue;
+      throw err;
+    }
+  }
+  return ids.length;
+}
 
 /** Liste les fichiers (URLs) appartenant au compte, à effacer du stockage après suppression */
 async function collectFileUrls(tx, userId, profileId, eventIds, bookingIds) {
@@ -13,6 +40,9 @@ async function collectFileUrls(tx, userId, profileId, eventIds, bookingIds) {
   if (profileId) {
     const profile = await tx.profile.findUnique({ where: { id: profileId }, select: { avatar: true, banner: true } });
     push(profile?.avatar, profile?.banner);
+
+    const albums = await tx.album.findMany({ where: { profileId }, select: { coverUrl: true } });
+    albums.forEach(a => push(a.coverUrl));
 
     const pubs = await tx.publication.findMany({
       where: { profileId },
@@ -68,6 +98,8 @@ async function deleteUserAccount(id) {
 
   const profileId = user.profile?.id ?? null;
   let fileUrls = [];
+
+  await stopStripeSubscriptions(id);
 
   await prisma.$transaction(async (tx) => {
 
@@ -177,4 +209,4 @@ async function deleteUserAccount(id) {
   return { deletedFiles: fileUrls.length };
 }
 
-module.exports = { deleteUserAccount };
+module.exports = { deleteUserAccount, stopStripeSubscriptions };

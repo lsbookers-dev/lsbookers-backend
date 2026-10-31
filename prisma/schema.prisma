@@ -204,6 +204,9 @@ model User {
   canManageProfiles  Boolean             @default(false) // Formule Agence offerte par l'admin (sans paiement)
   managedProfiles    ProfileManager[]    @relation("ProfileManagerUser")
   agencySubscription AgencySubscription?
+
+  // Code de sécurité envoyé par e-mail à chaque connexion admin (31/10/2026)
+  adminLoginCodes AdminLoginCode[]
 }
 
 model Profile {
@@ -1434,4 +1437,36 @@ model UserSession {
 
   @@index([userId, revokedAt])
   @@index([userId, deviceId])
+}
+
+// Connexion admin en deux temps : mot de passe, puis code à 6 chiffres reçu par e-mail (31/10/2026)
+model AdminLoginCode {
+  id        Int       @id @default(autoincrement())
+  userId    Int
+  challenge String    @unique // Identifiant aléatoire renvoyé au site entre les deux étapes
+  codeHash  String // Empreinte du code (le code lui-même n'est jamais gardé)
+  attempts  Int       @default(0)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// Journal des actions admin (onglet « Historique » de l'admin). Pas de lien vers le compte visé :
+// la ligne reste après la suppression du compte.
+model AdminLog {
+  id           Int      @id @default(autoincrement())
+  adminId      Int?
+  action       String // Ex. USER_DELETE, USER_BAN, GIFT_PRO, SETTINGS_UPDATE, ADMIN_LOGIN
+  targetUserId Int?
+  targetLabel  String? // Nom ou e-mail du compte (ou de l'élément) visé, gardé tel quel
+  details      Json?
+  ip           String?
+  createdAt    DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([action])
 }

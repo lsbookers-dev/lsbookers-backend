@@ -199,6 +199,24 @@ async function sendLoginAlertEmail(to, { deviceName, date }) {
   })
 }
 
+/** Code de sécurité à 6 chiffres demandé à chaque connexion au compte admin */
+async function sendAdminLoginCodeEmail(to, { code, deviceName, date }) {
+  await deliverEmail({
+    from: FROM, to,
+    subject: `${code} — votre code de connexion admin LS Bookers`,
+    html: emailLayout({
+      title: 'Votre code de connexion admin',
+      paragraphs: [
+        `Voici le code à saisir pour ouvrir l'admin LS Bookers :`,
+        `<span style="display:block;text-align:center;font-size:34px;font-weight:900;letter-spacing:10px;color:#fff;margin:8px 0">${escapeHtml(code)}</span>`,
+        `Il est valable <strong style="color:#fff">10 minutes</strong>. Demande faite depuis : ${escapeHtml(deviceName)}, le ${escapeHtml(date)}.`,
+        `Si ce n'était <strong style="color:#f87171">pas vous</strong>, quelqu'un connaît votre mot de passe : changez-le tout de suite.`,
+      ],
+      footer: 'E-mail de sécurité envoyé à chaque connexion au compte admin.',
+    }),
+  })
+}
+
 /** Confirmation d'une nouvelle adresse e-mail (envoyé à la nouvelle adresse) */
 async function sendEmailChangeConfirmation(to, token) {
   await deliverEmail({
@@ -330,6 +348,6 @@ async function sendManagedProfileInviteEmail(to, { managerName, profileName, cre
 module.exports = {
   sendManagedProfileInviteEmail,
   deliverEmail, FROM, APP_URL, sendVerificationEmail, sendPasswordResetEmail, sendNewDeviceEmail,
-  emailLayout, sendLoginAlertEmail, sendEmailChangeConfirmation, sendEmailChangedNotice,
+  emailLayout, sendLoginAlertEmail, sendAdminLoginCodeEmail, sendEmailChangeConfirmation, sendEmailChangedNotice,
   sendNotificationEmail, sendNotificationEmails, sendNewMessageEmail,
 };

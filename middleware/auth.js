@@ -11,7 +11,7 @@
 
 const jwt = require('jsonwebtoken');
 const prisma = require('../prisma/client');
-const { touchSession } = require('../lib/sessions');
+const { touchSession, adminSessionProblem, revokeSession, ADMIN_TOUCH_EVERY_MS } = require('../lib/sessions');
 const { requestedProfileId, findActiveManagement, isBlockedWhileActing } = require('../lib/managedProfiles');
 const { hasAgency } = require('../lib/plan');
 
@@ -81,7 +81,7 @@ async function authenticate(req) {
         ...USER_SELECT,
         // Session de l'appareil (jetons émis depuis le 21/10/2026) : refusée si retirée dans les Réglages
         ...(typeof decoded.sid === 'string'
-          ? { sessions: { where: { sid: decoded.sid }, select: { id: true, revokedAt: true, lastUsedAt: true }, take: 1 } }
+          ? { sessions: { where: { sid: decoded.sid }, select: { id: true, revokedAt: true, lastUsedAt: true, createdAt: true }, take: 1 } }
           : {}),
       },
     });
@@ -106,15 +106,26 @@ async function authenticate(req) {
     }
 
     let sessionSid = null;
+    const session = typeof decoded.sid === 'string' ? user.sessions?.[0] : null;
     if (typeof decoded.sid === 'string') {
-      const session = user.sessions?.[0];
       if (!session || session.revokedAt) {
         return { status: 401, error: 'Session fermée, veuillez vous reconnecter' };
       }
-      touchSession(session);
       sessionSid = decoded.sid;
     }
     delete user.sessions;
+
+    // Compte admin : session ouverte avec le code reçu par e-mail, 1 h sans activité, 6 h au plus
+    if (isAdminUser(user)) {
+      const problem = adminSessionProblem(decoded, session);
+      if (problem) {
+        await revokeSession(session);
+        return { status: 401, error: problem };
+      }
+      touchSession(session, ADMIN_TOUCH_EVERY_MS);
+    } else if (session) {
+      touchSession(session);
+    }
 
     // « Vous agissez en tant que » : le compte du profil géré remplace celui de l'agent
     const actAs = requestedProfileId(req);
