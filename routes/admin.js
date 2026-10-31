@@ -3,166 +3,54 @@ const express = require('express');
 const router = express.Router();
 const prisma = require('../prisma/client');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
-const { validate } = require('../middleware/validate');
-const { adminRoleUpdateSchema } = require('../schemas');
 const { deleteUserAccount } = require('../services/accountDeletion');
+const { overviewNumbers } = require('../services/adminStats');
+const { lateCancellationReport } = require('../services/adminWatch');
+const { isProSubscription } = require('../lib/plan');
 
 /* =========================================================
- *  STATS — Récapitulatif
- *  GET /api/admin/stats/summary
+ *  ACCUEIL — à traiter + chiffres clés + 30 derniers jours
+ *  GET /api/admin/overview
  * =======================================================*/
-router.get('/stats/summary', requireAuth, requireAdmin, async (_req, res) => {
+router.get('/overview', requireAuth, requireAdmin, async (_req, res) => {
   try {
-    const usersTotal  = await prisma.user.count({ where: { role: { not: 'ADMIN' } } });
-    const artists     = await prisma.user.count({ where: { role: 'ARTIST' } });
-    const organizers  = await prisma.user.count({ where: { role: 'ORGANIZER' } });
-    const providers   = await prisma.user.count({ where: { role: 'PROVIDER' } });
-
-    // Inscriptions aujourd'hui
-    const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
-    const signupsToday = await prisma.user.count({
-      where: { role: { not: 'ADMIN' }, createdAt: { gte: todayStart } },
-    });
-
-    let conversations = 0, messages = 0;
-    try {
-      conversations = await prisma.conversation.count();
-      messages      = await prisma.message.count();
-    } catch { /* tables absentes */ }
-
-    // Abonnements / paiements (tables optionnelles)
-    let payingUsers = 0, mrrCents = 0, revenueMonthCents = 0, revenueOffersCents = 0;
-    try {
-      const monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0);
-      const activeSubs = await prisma.subscription.findMany({
-        where: { status: 'ACTIVE' }, select: { priceCents: true },
-      });
-      payingUsers = activeSubs.length;
-      mrrCents    = activeSubs.reduce((s, x) => s + (x.priceCents || 0), 0);
-      const payments = await prisma.payment.findMany({
-        where: { createdAt: { gte: monthStart } }, select: { amountCents: true, kind: true },
-      });
-      revenueMonthCents  = payments.reduce((s, p) => s + (p.amountCents || 0), 0);
-      revenueOffersCents = payments.filter(p => p.kind === 'OFFER').reduce((s, p) => s + (p.amountCents || 0), 0);
-    } catch { /* tables absentes */ }
-
-    // Connexions aujourd'hui
-    let loginsToday = 0;
-    try {
-      loginsToday = await prisma.loginEvent.count({
-        where: { createdAt: { gte: todayStart } },
-      });
-    } catch { /* table absente */ }
-
-    // Utilisateurs connectés en ce moment (actifs dans les 2 dernières minutes)
-    const twoMinAgo = new Date(Date.now() - 2 * 60 * 1000);
-    const onlineNow = await prisma.user.count({
-      where: { role: { not: 'ADMIN' }, lastActiveAt: { gte: twoMinAgo } },
-    });
-
+    const [numbers, carousel, otherOrders, unreadContact, watch] = await Promise.all([
+      overviewNumbers(),
+      prisma.extraOrder.count({ where: { status: 'PAID', kind: 'CAROUSEL' } }),
+      prisma.extraOrder.count({ where: { status: 'PAID', kind: { not: 'CAROUSEL' } } }),
+      prisma.contactMessage.count({ where: { isRead: false, isArchived: false } }),
+      lateCancellationReport(),
+    ]);
+    const toWatch = watch.alerts.filter(a => a.needsDecision);
     return res.json({
-      summary: {
-        usersTotal, artists, organizers, providers,
-        signupsToday, loginsToday,
-        conversations, messages,
-        payingUsers, mrrCents, revenueMonthCents, revenueOffersCents,
-        onlineNow,
+      todo: {
+        carouselOrders: carousel,
+        otherOrders,
+        unreadContact,
+        watchMembers: toWatch.map(a => ({ userId: a.userId, name: a.name, count: a.count })),
       },
+      ...numbers,
     });
   } catch (err) {
-    console.error('❌ /stats/summary', err);
+    console.error('❌ /admin/overview', err);
     return res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 
 /* =========================================================
- *  STATS — Connexions avec filtre période
- *  GET /api/admin/stats/logins?period=day|week|month|year
+ *  PASTILLES DU MENU — Membres (à surveiller), Ventes (à valider), Messages (non lus)
+ *  GET /api/admin/badges
  * =======================================================*/
-router.get('/stats/logins', requireAuth, requireAdmin, async (req, res) => {
+router.get('/badges', requireAuth, requireAdmin, async (_req, res) => {
   try {
-    const period = String(req.query.period || 'day');
-    const now    = new Date();
-    let start;
-
-    switch (period) {
-      case 'week':
-        start = new Date(now);
-        start.setDate(now.getDate() - 7);
-        start.setHours(0, 0, 0, 0);
-        break;
-      case 'month':
-        start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
-        break;
-      case 'year':
-        start = new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0);
-        break;
-      default: // day
-        start = new Date(now);
-        start.setHours(0, 0, 0, 0);
-    }
-
-    const count = await prisma.loginEvent.count({
-      where: { createdAt: { gte: start } },
-    });
-
-    return res.json({ count, period });
+    const [orders, unreadContact, watch] = await Promise.all([
+      prisma.extraOrder.count({ where: { status: 'PAID' } }),
+      prisma.contactMessage.count({ where: { isRead: false, isArchived: false } }),
+      lateCancellationReport(),
+    ]);
+    return res.json({ members: watch.alerts.filter(a => a.needsDecision).length, sales: orders, messages: unreadContact });
   } catch (err) {
-    console.error('❌ /stats/logins', err);
-    return res.status(500).json({ error: 'Erreur serveur' });
-  }
-});
-
-/* =========================================================
- *  STATS — Séries temporelles
- *  GET /api/admin/stats/series?days=30
- *  Retourne pour chaque jour : { date, users, revenueCents, logins }
- * =======================================================*/
-router.get('/stats/series', requireAuth, requireAdmin, async (req, res) => {
-  try {
-    const daysRaw = parseInt(String(req.query.days || '30'), 10);
-    const days    = Number.isFinite(daysRaw) ? Math.min(365, Math.max(1, daysRaw)) : 30;
-
-    const series = [];
-    const now = new Date();
-
-    for (let i = days - 1; i >= 0; i--) {
-      const dayStart = new Date(now);
-      dayStart.setDate(now.getDate() - i);
-      dayStart.setHours(0, 0, 0, 0);
-
-      const dayEnd = new Date(dayStart);
-      dayEnd.setHours(23, 59, 59, 999);
-
-      // Nouveaux utilisateurs ce jour (hors ADMIN)
-      const users = await prisma.user.count({
-        where: { role: { not: 'ADMIN' }, createdAt: { gte: dayStart, lte: dayEnd } },
-      });
-
-      // Revenus LS Bookers ce jour : commissions des bookings payés en ligne + services achetés
-      // (l'ancienne table Payment n'a pas de montant en centimes : la requête échouait à chaque appel)
-      let revenueCents = 0;
-      try {
-        const [commissions, extras] = await Promise.all([
-          prisma.bookingPayment.aggregate({ _sum: { commissionCents: true }, where: { paidAt: { gte: dayStart, lte: dayEnd } } }),
-          prisma.extraOrder.aggregate({ _sum: { amountCents: true }, where: { paidAt: { gte: dayStart, lte: dayEnd }, status: { in: ['PAID', 'ACTIVE', 'DONE'] } } }),
-        ]);
-        revenueCents = (commissions._sum.commissionCents || 0) + (extras._sum.amountCents || 0);
-      } catch (err) {
-        console.error('stats/series revenus :', err.message);
-      }
-
-      series.push({
-        date: dayStart.toISOString().split('T')[0],
-        users,
-        revenueCents,
-        logins: 0, // non tracké pour l'instant
-      });
-    }
-
-    return res.json({ series });
-  } catch (err) {
-    console.error('❌ /stats/series', err);
+    console.error('❌ /admin/badges', err);
     return res.status(500).json({ error: 'Erreur serveur' });
   }
 });
@@ -194,9 +82,17 @@ router.get('/logs', requireAuth, requireAdmin, async (req, res) => {
 });
 
 /* =========================================================
- *  USERS — liste filtrée
- *  GET /api/admin/users?q=...&limit=50&offset=0
+ *  MEMBRES — liste filtrée
+ *  GET /api/admin/users?q=&role=ARTIST|ORGANIZER|PROVIDER&plan=free|pro|business&status=banned|unverified|watch&limit=50&offset=0
  * =======================================================*/
+const PRO_ACTIVE = (now) => ({
+  OR: [
+    { status: { in: ['TRIAL', 'ACTIVE', 'PAST_DUE'] } },
+    { status: 'CANCELLED', currentPeriodEnd: { gt: now } },
+  ],
+  AND: [{ OR: [{ endDate: null }, { endDate: { gt: now } }] }],
+});
+
 router.get('/users', requireAuth, requireAdmin, async (req, res) => {
   try {
     const qRaw  = (req.query.q || '').toString().trim();
@@ -204,18 +100,30 @@ router.get('/users', requireAuth, requireAdmin, async (req, res) => {
     const offRaw = parseInt(String(req.query.offset || ''), 10);
     const limit  = Number.isFinite(limRaw) ? Math.min(100, Math.max(1, limRaw)) : 50;
     const offset = Number.isFinite(offRaw) ? Math.max(0, offRaw) : 0;
+    const role = ['ARTIST', 'ORGANIZER', 'PROVIDER'].includes(String(req.query.role)) ? String(req.query.role) : null;
+    const plan = String(req.query.plan || '');
+    const status = String(req.query.status || '');
+    const now = new Date();
 
-    const where = {
-      role: { not: 'ADMIN' },
-      ...(qRaw ? {
-        OR: [
-          { pseudo:     { contains: qRaw, mode: 'insensitive' } },
-          { firstName:  { contains: qRaw, mode: 'insensitive' } },
-          { lastName:   { contains: qRaw, mode: 'insensitive' } },
-          { email:      { contains: qRaw, mode: 'insensitive' } },
-        ],
-      } : {}),
-    };
+    const and = [{ role: role || { not: 'ADMIN' } }];
+    if (qRaw) {
+      and.push({ OR: [
+        { pseudo:     { contains: qRaw, mode: 'insensitive' } },
+        { firstName:  { contains: qRaw, mode: 'insensitive' } },
+        { lastName:   { contains: qRaw, mode: 'insensitive' } },
+        { email:      { contains: qRaw, mode: 'insensitive' } },
+      ] });
+    }
+    if (plan === 'business') and.push({ OR: [{ canManageProfiles: true }, { agencySubscription: PRO_ACTIVE(now) }] });
+    if (plan === 'pro') and.push({ subscription: PRO_ACTIVE(now) });
+    if (plan === 'free') and.push({ canManageProfiles: false }, { NOT: { subscription: PRO_ACTIVE(now) } }, { NOT: { agencySubscription: PRO_ACTIVE(now) } });
+    if (status === 'banned') and.push({ bannedAt: { not: null } });
+    if (status === 'unverified') and.push({ emailVerified: false });
+    if (status === 'watch') {
+      const report = await lateCancellationReport();
+      and.push({ id: { in: report.alerts.map(a => a.userId) } });
+    }
+    const where = { AND: and };
 
     const [total, users] = await Promise.all([
       prisma.user.count({ where }),
@@ -233,13 +141,25 @@ router.get('/users', requireAuth, requireAdmin, async (req, res) => {
           role: true,
           emailVerified: true,
           canManageProfiles: true,
+          bannedAt: true,
+          pausedAt: true,
           createdAt: true,
-          profile: { select: { id: true, avatar: true } },
+          lastActiveAt: true,
+          profile: { select: { id: true, avatar: true, city: true, location: true } },
+          subscription: { select: { status: true, source: true, endDate: true, currentPeriodEnd: true } },
+          agencySubscription: { select: { status: true, endDate: true, currentPeriodEnd: true } },
         },
       }),
     ]);
 
-    return res.json({ total, users });
+    return res.json({
+      total,
+      users: users.map(({ subscription, agencySubscription, ...u }) => ({
+        ...u,
+        plan: u.canManageProfiles || isProSubscription(agencySubscription) ? 'BUSINESS' : isProSubscription(subscription) ? 'PRO' : 'FREE',
+        planSource: u.canManageProfiles && !isProSubscription(agencySubscription) ? 'ADMIN' : (isProSubscription(subscription) ? subscription.source : null),
+      })),
+    });
   } catch (err) {
     console.error('❌ /admin/users', err);
     return res.status(500).json({ error: 'Erreur serveur' });
@@ -247,9 +167,11 @@ router.get('/users', requireAuth, requireAdmin, async (req, res) => {
 });
 
 /* =========================================================
- *  USERS — fiche détail complète
+ *  MEMBRES — fiche complète (toutes les informations du compte, sauf les secrets)
  *  GET /api/admin/users/:id
  * =======================================================*/
+const USER_SECRETS = { password: true, emailVerificationToken: true, pendingEmailTokenHash: true, tokenVersion: true };
+
 router.get('/users/:id', requireAuth, requireAdmin, async (req, res) => {
   const id = parseInt(String(req.params.id || ''), 10);
   if (!Number.isFinite(id)) return res.status(400).json({ error: 'ID invalide' });
@@ -257,84 +179,51 @@ router.get('/users/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
     const user = await prisma.user.findUnique({
       where: { id },
-      select: {
-        id: true,
-        email: true,
-        role: true,
-        isAdmin: true,
-        createdAt: true,
-        pseudo: true,
-        firstName: true,
-        lastName: true,
-        dateOfBirth: true,
-        phone: true,
-        countryOfResidence: true,
-        emailVerified: true,
-        isIdentityVerified: true,
-        isPaymentEnabled: true,
-        registrationStep: true,
-        stripeAccountId: true,
-        canManageProfiles: true,
+      omit: USER_SECRETS,
+      include: {
         profile: {
-          select: {
-            id: true,
-            bio: true,
-            profession: true,
-            location: true,
-            country: true,
-            radiusKm: true,
-            specialties: true,
-            styles: true,
-            typeEtablissement: true,
-            avatar: true,
-            banner: true,
-            soundcloudUrl: true,
-            youtubeUrl: true,
-            showRealName: true,
-            legalStatus: true,
-            siret: true,
-            organizerType: true,
-            establishmentName: true,
-            address: true,
-            postalCode: true,
-            city: true,
+          include: {
+            _count: {
+              select: {
+                publications: true, events: true, offers: true, albums: true,
+                bookingRequestsSent: true, bookingRequestsReceived: true,
+                reviewsGiven: true, reviewsReceived: true, applicationsSubmitted: true,
+              },
+            },
+            managers: {
+              where: { status: { in: ['PENDING', 'ACTIVE'] } },
+              select: { status: true, manager: { select: { id: true, email: true, pseudo: true, firstName: true, lastName: true } } },
+            },
           },
         },
+        subscription: true,
+        agencySubscription: true,
+        managedProfiles: {
+          where: { status: { in: ['PENDING', 'ACTIVE'] } },
+          select: { id: true, status: true, profile: { select: { id: true, user: { select: { id: true, pseudo: true, firstName: true, lastName: true, email: true } } } } },
+        },
+        sessions: { orderBy: { lastUsedAt: 'desc' }, take: 5, select: { name: true, createdAt: true, lastUsedAt: true, revokedAt: true } },
+        extraOrders: { orderBy: { createdAt: 'desc' }, take: 10, select: { id: true, label: true, status: true, amountCents: true, paidAt: true, createdAt: true } },
+        promoRedemptions: { select: { createdAt: true, code: { select: { code: true, kind: true } } } },
+        _count: { select: { followers: true, following: true, messages: true, loginEvents: true } },
       },
     });
-
     if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
-    return res.json({ user });
+
+    const [adminLogs, watch] = await Promise.all([
+      prisma.adminLog.findMany({ where: { targetUserId: id }, orderBy: { id: 'desc' }, take: 20 }),
+      lateCancellationReport().then(r => r.alerts.find(a => a.userId === id) || null).catch(() => null),
+    ]);
+    return res.json({
+      user: {
+        ...user,
+        plan: user.canManageProfiles || isProSubscription(user.agencySubscription) ? 'BUSINESS' : isProSubscription(user.subscription) ? 'PRO' : 'FREE',
+      },
+      lateCancellations: watch,
+      adminLogs,
+    });
   } catch (err) {
     console.error('❌ GET /admin/users/:id', err);
-    return res.status(500).json({ error: 'Erreur serveur' });
-  }
-});
-
-/* =========================================================
- *  USERS — changer le rôle
- *  PATCH /api/admin/users/:id/role
- * =======================================================*/
-router.patch('/users/:id/role', requireAuth, requireAdmin, validate(adminRoleUpdateSchema), async (req, res) => {
-  const id = parseInt(String(req.params.id || ''), 10);
-  if (!Number.isFinite(id)) return res.status(400).json({ error: 'ID invalide' });
-
-  const { role } = req.body;
-
-  try {
-    const user = await prisma.user.findUnique({ where: { id }, select: { role: true } });
-    if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
-    if (user.role === 'ADMIN') return res.status(403).json({ error: 'Impossible de modifier un compte admin' });
-
-    const updated = await prisma.user.update({
-      where: { id },
-      data: { role },
-      select: { id: true, pseudo: true, email: true, role: true },
-    });
-
-    return res.json({ ok: true, user: updated });
-  } catch (err) {
-    console.error('❌ patch role', err);
     return res.status(500).json({ error: 'Erreur serveur' });
   }
 });

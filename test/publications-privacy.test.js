@@ -112,9 +112,9 @@ test('publication refusée si le média ne vient pas de notre stockage', async (
   }
 })
 
-test('isOwnMediaUrl : R2 et Vercel Blob acceptés, le reste refusé', () => {
+test('isOwnMediaUrl : R2 accepté, le reste refusé (Vercel Blob compris)', () => {
   assert.equal(isOwnMediaUrl('https://pub-test.r2.dev/lsbookers/a.jpg'), true)
-  assert.equal(isOwnMediaUrl('https://abc.public.blob.vercel-storage.com/a.png'), true)
+  assert.equal(isOwnMediaUrl('https://abc.public.blob.vercel-storage.com/a.png'), false)
   assert.equal(isOwnMediaUrl('https://pub-test.r2.dev.evil.com/a.jpg'), false)
   assert.equal(isOwnMediaUrl('http://abc.public.blob.vercel-storage.com/a.png'), false)
   assert.equal(isOwnMediaUrl('javascript:alert(1)'), false)

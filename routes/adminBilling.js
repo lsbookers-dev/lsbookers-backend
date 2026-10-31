@@ -13,6 +13,8 @@ const extras = require('../services/extras')
 const { BillingError, normalizeCode } = require('../services/billing')
 const { createNotif } = require('../services/notifications')
 const { sendError } = require('./billing')
+const { lateCancellationReport } = require('../services/adminWatch')
+const { subscriptionOverview } = require('../services/adminStats')
 
 router.use(requireAuth, requireAdmin)
 
@@ -231,24 +233,8 @@ router.post('/orders/:id(\\d+)/refuse', async (req, res) => {
 
 router.get('/subscriptions', async (_req, res) => {
   try {
-    const subs = await prisma.subscription.findMany({ orderBy: { updatedAt: 'desc' }, include: { user: { select: USER_SELECT } }, take: 500 })
-    const list = subs.map(s => ({
-      id: s.id, status: s.status, interval: s.interval, source: s.source, priceCents: s.priceCents, promoCode: s.promoCode,
-      trialEndsAt: s.trialEndsAt, currentPeriodEnd: s.currentPeriodEnd, cancelAtPeriodEnd: s.cancelAtPeriodEnd, startDate: s.startDate,
-      isPro: isProSubscription(s), user: { id: s.user.id, name: userName(s.user), email: s.user.email, role: s.user.role },
-    }))
-    const paying = list.filter(s => s.isPro && s.source === 'STRIPE' && s.status === 'ACTIVE')
-    const mrrCents = paying.reduce((sum, s) => sum + (s.interval === 'YEAR' ? Math.round(s.priceCents / 12) : s.priceCents), 0)
-    res.json({
-      subscriptions: list,
-      totals: {
-        pro: list.filter(s => s.isPro).length,
-        trial: list.filter(s => s.isPro && s.status === 'TRIAL').length,
-        paying: paying.length,
-        gifted: list.filter(s => s.isPro && s.source !== 'STRIPE').length,
-        mrrCents,
-      },
-    })
+    const { list, totals } = await subscriptionOverview()
+    res.json({ subscriptions: list, totals })
   } catch (err) { sendError(res, err, 'GET admin/billing/subscriptions') }
 })
 
@@ -282,32 +268,7 @@ router.delete('/users/:id(\\d+)/gift-pro', async (req, res) => {
 
 router.get('/late-cancellations', async (_req, res) => {
   try {
-    const settings = await getPlanSettings()
-    const since = new Date(Date.now() - settings.lateCancellations.windowDays * 24 * 60 * 60 * 1000)
-    const groups = await prisma.bookingRequest.groupBy({
-      by: ['targetId'],
-      where: { lateCancellation: true, cancelledAt: { gte: since } },
-      _count: { _all: true },
-    })
-    const relevant = groups.filter(g => g._count._all >= settings.lateCancellations.warnAt)
-    const profiles = await prisma.profile.findMany({
-      where: { id: { in: relevant.map(g => g.targetId) } },
-      select: { id: true, avatar: true, user: { select: { ...USER_SELECT, bannedAt: true, banReason: true, lateCancelWarnedAt: true } } },
-    })
-    // Seules les annulations faites par la personne bookée elle-même comptent
-    const counts = await Promise.all(profiles.map(p => prisma.bookingRequest.findMany({
-      where: { targetId: p.id, cancelledById: p.id, lateCancellation: true, cancelledAt: { gte: since } },
-      select: { id: true, startDate: true, cancelledAt: true }, orderBy: { cancelledAt: 'desc' },
-    })))
-    const list = profiles.map((p, i) => ({
-      userId: p.user.id, name: userName(p.user), email: p.user.email, role: p.user.role, avatar: p.avatar,
-      count: counts[i].length, cancellations: counts[i],
-      warnedAt: p.user.lateCancelWarnedAt, bannedAt: p.user.bannedAt, banReason: p.user.banReason,
-      needsDecision: counts[i].length >= settings.lateCancellations.alertAt && !p.user.bannedAt,
-    })).filter(x => x.count >= settings.lateCancellations.warnAt || x.bannedAt)
-    list.sort((a, b) => Number(b.needsDecision) - Number(a.needsDecision) || b.count - a.count)
-    const banned = await prisma.user.findMany({ where: { bannedAt: { not: null } }, select: { ...USER_SELECT, bannedAt: true, banReason: true } })
-    res.json({ alerts: list, banned: banned.map(u => ({ userId: u.id, name: userName(u), email: u.email, bannedAt: u.bannedAt, banReason: u.banReason })), rules: settings.lateCancellations })
+    res.json(await lateCancellationReport())
   } catch (err) { sendError(res, err, 'GET admin/billing/late-cancellations') }
 })
 

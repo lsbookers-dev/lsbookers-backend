@@ -295,10 +295,6 @@ const mediaCreateSchema = z.object({
    ADMIN
 ───────────────────────────────────────── */
 
-const adminRoleUpdateSchema = z.object({
-  role: z.enum(['ARTIST', 'ORGANIZER', 'PROVIDER'], { message: 'Rôle invalide. Valeurs acceptées : ARTIST, ORGANIZER, PROVIDER' }),
-});
-
 const adminSettingsUpdateSchema = z.object({
   welcomeText:     z.string().max(500).trim().transform(stripHtml).optional(),
   landingBgUrl:    z.string().max(2000).trim().optional(),
@@ -394,7 +390,6 @@ module.exports = {
   // Media
   mediaCreateSchema,
   // Admin
-  adminRoleUpdateSchema,
   adminSettingsUpdateSchema,
   // Contact
   contactCreateSchema,

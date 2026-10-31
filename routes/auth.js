@@ -281,6 +281,11 @@ router.post('/login', validate(loginSchema), async (req, res) => {
 async function completeLogin(req, res, user, { admin = false } = {}) {
   // Une session par appareil (listée et révocable dans Réglages › Connexion et sécurité)
   const { token, isNewDevice, deviceName } = await issueSession(req, res, user, { admin })
+  // Compteur « Connexions » de l'admin (les connexions admin sont dans l'Historique)
+  if (!admin) {
+    prisma.loginEvent.create({ data: { userId: user.id, userAgent: String(req.headers['user-agent'] || '').slice(0, 300) || null } })
+      .catch(err => console.error('Connexion non comptée :', err.message))
+  }
   if (isNewDevice && user.loginAlerts && !admin) {
     const date = new Date().toLocaleString('fr-FR', { dateStyle: 'long', timeStyle: 'short', timeZone: 'Europe/Paris' })
     createNotif({ userId: user.id, type: 'NEW_DEVICE_LOGIN', content: `Nouvelle connexion à votre compte : ${deviceName}, le ${date}.` })
