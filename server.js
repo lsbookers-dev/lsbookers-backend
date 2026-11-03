@@ -274,6 +274,8 @@ initSocket(httpServer);
 httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ Serveur lancé sur http://0.0.0.0:${PORT} (WebSocket activé)`);
   if (process.env.NODE_ENV !== 'test') startScheduledJobs();
+  // Test de charge (projet Railway séparé, LOADTEST=1) : fausses données au démarrage. Jamais en production.
+  if (process.env.LOADTEST === '1') require('./scripts/loadtest/seed');
 });
 
 // Arrêt propre (mise à jour Railway, redémarrage) : on finit les requêtes en cours, puis on rend
