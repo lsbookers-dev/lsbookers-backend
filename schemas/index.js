@@ -172,10 +172,13 @@ const offerUpdateSchema = offerCreateSchema.partial().extend({
    EVENTS
 ───────────────────────────────────────── */
 
+// Date lisible par le serveur (sinon « Invalid Date » et erreur 500 à l'enregistrement)
+const isValidDate = (v) => !Number.isNaN(new Date(v).getTime())
+
 const eventCreateSchema = z.object({
   title:       z.string().min(1, 'Titre requis').max(200).trim().transform(stripHtml),
-  start:       z.string().min(1, 'Date de début requise'),
-  end:         z.string().optional().nullable(),
+  start:       z.string().min(1, 'Date de début requise').refine(isValidDate, 'Date ou heure de début invalide'),
+  end:         z.string().refine(isValidDate, 'Date ou heure de fin invalide').optional().nullable(),
   allDay:      z.boolean().optional(),
   lieu:        z.string().max(200).trim().transform(stripHtml).optional().nullable(),
   category:    z.string().max(100).trim().transform(stripHtml).optional().nullable(),
