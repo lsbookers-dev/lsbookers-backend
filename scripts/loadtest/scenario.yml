@@ -1,0 +1,87 @@
+# scripts/loadtest/scenario.yml — Test de charge (étape 7) : membres virtuels qui naviguent comme de vraies personnes.
+# Cible : UNIQUEMENT le serveur du projet Railway « lsbookers-test-charge », jamais la production.
+#   npx artillery run --target https://<serveur de test> --output resultat.json scenario.yml
+# tokens.csv (id,token) vient de seed.js (ligne TOKENS:…).
+config:
+  processor: "./processor.js"
+  http:
+    timeout: 20
+  payload:
+    path: "./tokens.csv"
+    fields: ["id", "token"]
+    order: random
+    skipHeader: true
+  defaults:
+    headers:
+      Origin: "https://lsbookers.com"
+      Content-Type: "application/json"
+      Authorization: "Bearer {{ token }}"
+  # Une visite dure ~3 min : au rythme d'arrivée × 180 s ≈ nombre de membres connectés en même temps
+  phases:
+    - name: "100 membres"
+      duration: 120
+      arrivalRate: 1
+    - name: "montée vers 500"
+      duration: 120
+      arrivalRate: 1
+      rampTo: 3
+    - name: "500 membres"
+      duration: 120
+      arrivalRate: 3
+    - name: "montée vers 1000"
+      duration: 120
+      arrivalRate: 3
+      rampTo: 6
+    - name: "1000 membres"
+      duration: 180
+      arrivalRate: 6
+    - name: "au-delà : 1500"
+      duration: 120
+      arrivalRate: 9
+  ensure:
+    maxErrorRate: 1
+
+scenarios:
+  - name: "Visite d'un membre"
+    flow:
+      - function: "authHeader"
+      # Ouverture du site
+      - get: { url: "/api/auth/me", name: "connexion (moi)" }
+      - get: { url: "/api/notifications/counts", name: "pastilles" }
+      - get: { url: "/api/home/feed", name: "fil d'accueil" }
+      - think: 8
+      # Recherche
+      - function: "randomSearch"
+      - get: { url: "/api/search?{{ searchQuery }}", name: "recherche" }
+      - think: 6
+      - get: { url: "/api/profile/user/{{ otherId }}", name: "profil d'un membre" }
+      - think: 10
+      # Offres
+      - get: { url: "/api/offers?paged=1", name: "opportunités" }
+      - think: 8
+      # Messagerie
+      - get:
+          url: "/api/messages/conversations"
+          name: "conversations"
+          afterResponse: "pickConversation"
+      - think: 4
+      - get: { url: "/api/messages/messages/{{ conversationId }}", name: "ouvrir une conversation", ifTrue: "conversationId" }
+      - think: 12
+      - post:
+          url: "/api/messages/send"
+          name: "envoyer un message"
+          ifTrue: "recipientId"
+          beforeRequest: "messageBody"
+      - think: 10
+      # Retour à l'accueil, notifications
+      - get: { url: "/api/home/nearby", name: "à proximité" }
+      - think: 10
+      - get: { url: "/api/notifications?limit=20", name: "notifications" }
+      - think: 15
+      - get: { url: "/api/home/trends", name: "tendances" }
+      - think: 20
+      - get: { url: "/api/notifications/counts", name: "pastilles" }
+      - think: 30
+      - get: { url: "/api/search?role=ARTIST&cursor=24", name: "recherche (suite)" }
+      - think: 30
+      - get: { url: "/api/notifications/counts", name: "pastilles" }

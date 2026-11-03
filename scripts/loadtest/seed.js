@@ -1,9 +1,9 @@
 // scripts/loadtest/seed.js — Fausses données pour le TEST DE CHARGE (étape 7 de la roadmap).
 // Ne tourne QUE sur le serveur du projet Railway séparé « lsbookers-test-charge » (LOADTEST=1),
-// jamais sur la production : railway ssh -p <projet de test> -s backend-test -- node scripts/loadtest/seed.js
-// Affiche les jetons de connexion des membres virtuels (ligne TOKENS:…), signés avec le secret du serveur de TEST.
+// jamais sur la production. Lancé au démarrage du serveur de test (commande de démarrage du projet de test),
+// il ne fait rien si la base contient déjà des membres.
+// Sessions : sid = HMAC(JWT_SECRET du serveur de TEST, « loadtest-<id> ») → jetons recalculables par tokens.js.
 const crypto = require('crypto')
-const jwt = require('jsonwebtoken')
 const { PrismaClient } = require('@prisma/client')
 
 if (process.env.LOADTEST !== '1' || process.env.RAILWAY_PROJECT_NAME !== 'lsbookers-test-charge') {
@@ -11,6 +11,7 @@ if (process.env.LOADTEST !== '1' || process.env.RAILWAY_PROJECT_NAME !== 'lsbook
 }
 const prisma = new PrismaClient()
 const SECRET = process.env.JWT_SECRET
+const loadtestSid = (id) => crypto.createHmac('sha256', SECRET).update(`loadtest-${id}`).digest('hex').slice(0, 48)
 
 const N = 1000
 const CITIES = [
@@ -30,7 +31,7 @@ const chunks = async (rows, size, fn) => { for (let i = 0; i < rows.length; i +=
 
 ;(async () => {
   console.time('remplissage')
-  if (await prisma.user.count()) throw new Error('La base de test n\'est pas vide : arrêt')
+  if (await prisma.user.count()) { console.log('Base de test déjà remplie : rien à faire'); return }
   const password = '$2b$10$CwTycUXWue0Thq9StjUM0uJ8.Gx4W7tOQhH8o2D3/JZ1QpZr2l9yK' // empreinte factice, connexion par mot de passe impossible
 
   // 1. Membres + profils
@@ -100,14 +101,8 @@ const chunks = async (rows, size, fn) => { for (let i = 0; i < rows.length; i +=
   console.log(`${notifs.length} notifications`)
 
   // 7. Sessions + jetons de connexion des membres virtuels
-  const tokens = []
-  const sessions = dbUsers.map((u) => {
-    const sid = crypto.randomBytes(24).toString('hex')
-    tokens.push({ id: u.id, role: u.role, token: jwt.sign({ id: u.id, email: u.email, role: u.role, isAdmin: u.isAdmin, tokenVersion: u.tokenVersion, sid }, SECRET, { expiresIn: '3d' }) })
-    return { userId: u.id, sid, name: 'Test de charge' }
-  })
+  const sessions = dbUsers.map((u) => ({ userId: u.id, sid: loadtestSid(u.id), name: 'Test de charge' }))
   await chunks(sessions, 1000, (rows) => prisma.userSession.createMany({ data: rows }))
-  console.log(`TOKENS:${JSON.stringify(tokens)}`)
-  console.log(`${tokens.length} jetons de connexion affichés`)
+  console.log(`${sessions.length} sessions de test créées`)
   console.timeEnd('remplissage')
 })().catch((e) => { console.error('ERREUR', e.message); process.exitCode = 1 }).finally(() => prisma.$disconnect())
