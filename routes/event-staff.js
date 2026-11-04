@@ -100,6 +100,7 @@ router.patch('/:id/staff/:staffId/respond', requireAuth, async (req, res) => {
           ? `${myName} a accepté votre invitation pour "${staffEntry.event.title}".`
           : `${myName} a refusé votre invitation pour "${staffEntry.event.title}".`,
         actorId: req.user.id,
+        eventId: staffEntry.eventId, // le clic ouvre l'événement dans l'agenda
       });
     }
 

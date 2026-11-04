@@ -227,7 +227,7 @@ async function notifyPaid(paymentId) {
   if (!payment) return
   const b = payment.booking
   const dateLabel = new Date(b.startDate).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })
-  await createNotif({ userId: b.target.userId, type: 'BOOKING_PAYMENT', content: `Le booking du ${dateLabel} est payé en ligne par ${displayName(b.requester.user)}. Votre part vous sera versée 24 h après la prestation.`, actorId: b.requester.userId })
+  await createNotif({ userId: b.target.userId, type: 'BOOKING_PAYMENT', content: `Le booking du ${dateLabel} est payé en ligne par ${displayName(b.requester.user)}. Votre part vous sera versée 24 h après la prestation.`, actorId: b.requester.userId, eventId: b.eventId })
 }
 
 // Fin de la page Stripe (webhook checkout.session.completed)
@@ -251,7 +251,7 @@ async function onCheckoutCompleted(session) {
     const booking = await loadBooking(payment.bookingId)
     if (booking) {
       const when = payment.chargeAt?.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })
-      await createNotif({ userId: booking.target.userId, type: 'BOOKING_PAYMENT', content: `${displayName(booking.requester.user)} a choisi le paiement en ligne pour votre booking : sa carte sera débitée le ${when}.`, actorId: booking.requester.userId })
+      await createNotif({ userId: booking.target.userId, type: 'BOOKING_PAYMENT', content: `${displayName(booking.requester.user)} a choisi le paiement en ligne pour votre booking : sa carte sera débitée le ${when}.`, actorId: booking.requester.userId, eventId: booking.eventId })
     }
   }
 }
@@ -303,8 +303,8 @@ async function markFailed(paymentId, reason) {
   const booking = await loadBooking(p.bookingId)
   if (!booking) return
   const dateLabel = new Date(booking.startDate).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })
-  await createNotif({ userId: booking.requester.userId, type: 'BOOKING_PAYMENT_FAILED', content: `Le paiement du booking du ${dateLabel} n'a pas pu être débité. Ouvrez le booking pour payer avec une autre carte.` })
-  await createNotif({ userId: booking.target.userId, type: 'BOOKING_PAYMENT_FAILED', content: `Le paiement en ligne du booking du ${dateLabel} a échoué : l'organisateur a été prévenu.` })
+  await createNotif({ userId: booking.requester.userId, type: 'BOOKING_PAYMENT_FAILED', content: `Le paiement du booking du ${dateLabel} n'a pas pu être débité. Ouvrez le booking pour payer avec une autre carte.`, eventId: booking.eventId })
+  await createNotif({ userId: booking.target.userId, type: 'BOOKING_PAYMENT_FAILED', content: `Le paiement en ligne du booking du ${dateLabel} a échoué : l'organisateur a été prévenu.`, eventId: booking.eventId })
 }
 
 // Versement à la personne bookée 24 h après la prestation (tâche planifiée)
@@ -338,7 +338,7 @@ async function releaseDuePayouts(now = new Date()) {
         data: { status: 'RELEASED', releasedAt: now, transferId: transfer?.id || p.transferId, transferredCents: p.transferredCents + Math.max(0, amount) },
       })
       const dateLabel = new Date(b.startDate).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })
-      await createNotif({ userId: b.target.userId, type: 'PAYOUT_RELEASED', content: `${euros(Math.max(0, amount))} pour le booking du ${dateLabel} ont été versés sur votre compte de paiement.` })
+      await createNotif({ userId: b.target.userId, type: 'PAYOUT_RELEASED', content: `${euros(Math.max(0, amount))} pour le booking du ${dateLabel} ont été versés sur votre compte de paiement.`, eventId: b.eventId })
       released++
     } catch (err) {
       console.error(`Versement booking ${b.id} impossible :`, err.message)
@@ -400,9 +400,9 @@ async function onBookingCancelled(bookingId, cancelledByProfileId, now = new Dat
       }
     }
     const dateLabel = new Date(booking.startDate).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })
-    await createNotif({ userId: booking.requester.userId, type: 'BOOKING_PAYMENT', content: `Booking du ${dateLabel} annulé : ${euros(outcome.refundCents)} vous sont remboursés${outcome.transferCents ? ` (${euros(outcome.transferCents)} versés à ${displayName(booking.target.user)} pour l'annulation tardive)` : ' (frais bancaires retenus)'}.` })
+    await createNotif({ userId: booking.requester.userId, type: 'BOOKING_PAYMENT', content: `Booking du ${dateLabel} annulé : ${euros(outcome.refundCents)} vous sont remboursés${outcome.transferCents ? ` (${euros(outcome.transferCents)} versés à ${displayName(booking.target.user)} pour l'annulation tardive)` : ' (frais bancaires retenus)'}.`, eventId: booking.eventId })
     if (outcome.transferCents) {
-      await createNotif({ userId: booking.target.userId, type: 'PAYOUT_RELEASED', content: `Annulation tardive du booking du ${dateLabel} : ${euros(outcome.transferCents)} vous sont versés.` })
+      await createNotif({ userId: booking.target.userId, type: 'PAYOUT_RELEASED', content: `Annulation tardive du booking du ${dateLabel} : ${euros(outcome.transferCents)} vous sont versés.`, eventId: booking.eventId })
     }
   }
 

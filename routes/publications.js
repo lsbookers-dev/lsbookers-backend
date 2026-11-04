@@ -497,7 +497,8 @@ router.post('/comments/:id/like', requireAuth, async (req, res) => {
         await createNotif({
           userId:        comment.profile.userId,
           type:          'NEW_COMMENT_LIKE',
-          content:       `${displayName(liker)} a aimé votre commentaire.`,
+          // Début du commentaire cité : on sait duquel il s'agit (et deux commentaires = deux notifications)
+          content:       `${displayName(liker)} a aimé votre commentaire « ${comment.content.length > 60 ? `${comment.content.slice(0, 57).trim()}…` : comment.content} ».`,
           actorId:       req.user.id,
           publicationId: comment.publicationId,
         })

@@ -102,6 +102,27 @@ router.patch('/mark-all-read', requireAuth, async (req, res) => {
 })
 
 /* =========================================================
+   PATCH /api/notifications/mark-read  { ids: [...] }
+   ➜ Marquer comme lues seulement les notifications affichées à l'écran
+     (cloche ouverte, page Notifications) : celles qu'on n'a pas encore vues restent « nouvelles »
+   ⚠️  Doit être défini AVANT /:id
+========================================================= */
+router.patch('/mark-read', requireAuth, async (req, res) => {
+  try {
+    const userId = Number(req.user?.id)
+    const ids = Array.isArray(req.body?.ids)
+      ? [...new Set(req.body.ids.map(Number).filter(n => Number.isInteger(n) && n > 0))].slice(0, 200)
+      : []
+    if (!ids.length) return res.json({ ok: true, count: 0 })
+    const { count } = await prisma.notification.updateMany({ where: { userId, id: { in: ids }, read: false }, data: { read: true } })
+    res.json({ ok: true, count })
+  } catch (err) {
+    console.error('❌ [PATCH /notifications/mark-read] Error:', err)
+    res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
+/* =========================================================
    PATCH /api/notifications/:id
    ➜ Marquer une notification comme lue
 ========================================================= */

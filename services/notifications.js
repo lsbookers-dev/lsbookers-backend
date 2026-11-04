@@ -18,6 +18,30 @@ async function recipientPrefs(userId) {
   }
 }
 
+// Gestes qu'on peut défaire puis refaire (J'aime, abonnement…) : une seule notification par personne
+// et par publication sur 30 jours. Aimer, ne plus aimer puis aimer à nouveau ne prévient pas deux fois.
+const ONCE_TYPES = new Set(['NEW_LIKE', 'NEW_FOLLOW', 'NEW_COMMENT_LIKE', 'TAG_ON_PUBLICATION'])
+const ONCE_WINDOW_MS = 30 * 24 * 3600 * 1000
+
+async function alreadyNotified({ userId, type, actorId, publicationId, content }) {
+  if (!ONCE_TYPES.has(type) || !actorId) return false
+  try {
+    const existing = await prisma.notification.findFirst({
+      where: {
+        userId: Number(userId), type, actorId: Number(actorId),
+        publicationId: publicationId != null ? Number(publicationId) : null,
+        // J'aime sur un commentaire : le texte cite le commentaire, deux commentaires différents = deux notifications
+        ...(type === 'NEW_COMMENT_LIKE' ? { content } : {}),
+        createdAt: { gte: new Date(Date.now() - ONCE_WINDOW_MS) },
+      },
+      select: { id: true },
+    })
+    return !!existing
+  } catch {
+    return false
+  }
+}
+
 /**
  * Crée une notification de façon sécurisée.
  * Ne crée pas de notification si actorId === userId (pas d'auto-notif).
@@ -37,6 +61,8 @@ async function createNotif({ userId, type, content, actorId, messageId, offerId,
     if (!userId || !type || !content) return
     // Pas d'auto-notification
     if (actorId && Number(actorId) === Number(userId)) return
+    // Déjà prévenu de ce geste récemment (J'aime défait puis refait…) : ni cloche ni e-mail
+    if (await alreadyNotified({ userId, type, actorId, publicationId, content })) return
 
     // Choix du membre (Réglages › Notifications et e-mails)
     const { email, prefs } = await recipientPrefs(userId)
