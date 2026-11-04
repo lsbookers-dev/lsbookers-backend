@@ -160,6 +160,26 @@ router.patch('/mark-read', requireAuth, async (req, res) => {
 })
 
 /* =========================================================
+   POST /api/notifications/delete  { ids: [...] }
+   ➜ Le membre supprime une notification (ou un groupe : « Mika et 4 autres… »).
+     Seulement les siennes, 200 au plus. ⚠️  Doit être défini AVANT /:id
+========================================================= */
+router.post('/delete', requireAuth, async (req, res) => {
+  try {
+    const userId = Number(req.user?.id)
+    const ids = Array.isArray(req.body?.ids)
+      ? [...new Set(req.body.ids.map(Number).filter(n => Number.isInteger(n) && n > 0))].slice(0, 200)
+      : []
+    if (!ids.length) return res.json({ ok: true, count: 0 })
+    const { count } = await prisma.notification.deleteMany({ where: { userId, id: { in: ids }, ...NOT_MESSAGE } })
+    res.json({ ok: true, count })
+  } catch (err) {
+    console.error('❌ [POST /notifications/delete] Error:', err)
+    res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
+/* =========================================================
    PATCH /api/notifications/:id
    ➜ Marquer une notification comme lue
 ========================================================= */

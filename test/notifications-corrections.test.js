@@ -90,3 +90,13 @@ test('compteurs par sujet : seulement les non lues, messages exclus', async () =
   assert.deepEqual(where.NOT, { type: 'NEW_MESSAGE' })
   assert.deepEqual(res.body, { total: 5, bookings: 1, offers: 0, events: 0, reviews: 0, network: 3, account: 1 })
 })
+
+test('supprimer : seulement ses propres notifications, jamais les messages', async () => {
+  let where
+  const res = responseRecorder()
+  await withMocks({
+    notification: { deleteMany: async (a) => { where = a.where; return { count: 1 } } },
+  }, () => routeHandler(notificationsRouter, 'post', '/delete')({ user: { id: 5 }, body: { ids: [8, 'x', 8] } }, res))
+  assert.deepEqual(where, { userId: 5, id: { in: [8] }, NOT: { type: 'NEW_MESSAGE' } })
+  assert.equal(res.body.count, 1)
+})
