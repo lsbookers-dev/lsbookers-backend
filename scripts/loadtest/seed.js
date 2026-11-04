@@ -1,7 +1,9 @@
 // scripts/loadtest/seed.js — Fausses données pour le TEST DE CHARGE (étape 7 de la roadmap).
 // Ne tourne QUE sur le serveur du projet Railway séparé « lsbookers-test-charge » (LOADTEST=1),
-// jamais sur la production. Lancé au démarrage du serveur de test (commande de démarrage du projet de test),
-// il ne fait rien si la base contient déjà des membres.
+// jamais sur la production. Pour un nouveau test : ajouter temporairement dans server.js, après le démarrage,
+// `if (process.env.LOADTEST === '1') require('./scripts/loadtest/seed')` (Railway ignorait la commande de
+// démarrage personnalisée le 04/11/2026). Ne fait rien si la base contient déjà des membres.
+// Résultats du 04/11/2026 : voir la roadmap (étape 7) et le tracker.
 // Sessions : sid = HMAC(JWT_SECRET du serveur de TEST, « loadtest-<id> ») → jetons recalculables par tokens.js.
 const crypto = require('crypto')
 const { PrismaClient } = require('@prisma/client')

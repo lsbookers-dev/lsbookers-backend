@@ -39,4 +39,10 @@ function messageBody(req, context, events, done) {
   done()
 }
 
-module.exports = { authHeader, randomSearch, pickConversation, messageBody }
+// Chaque demande part connectée avec le jeton du membre virtuel
+function addAuth(req, context, events, done) {
+  req.headers = { ...(req.headers || {}), Authorization: `Bearer ${context.vars.token}` }
+  done()
+}
+
+module.exports = { authHeader, randomSearch, pickConversation, messageBody, addAuth }

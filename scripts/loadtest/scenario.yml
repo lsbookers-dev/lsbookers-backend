@@ -15,7 +15,6 @@ config:
     headers:
       Origin: "https://lsbookers.com"
       Content-Type: "application/json"
-      Authorization: "Bearer {{ token }}"
   # Une visite dure ~3 min : au rythme d'arrivée × 180 s ≈ nombre de membres connectés en même temps
   phases:
     - name: "100 membres"
@@ -43,6 +42,8 @@ config:
 
 scenarios:
   - name: "Visite d'un membre"
+    # Jeton de connexion du membre virtuel ajouté à chaque demande
+    beforeRequest: "addAuth"
     flow:
       - function: "authHeader"
       # Ouverture du site
