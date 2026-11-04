@@ -8,6 +8,42 @@ const { requireAuth } = require('../middleware/auth');
    ➜ Lister les notifications d’un utilisateur
 ========================================================= */
 const { NOT_MESSAGE, countUnreadMessages, countUnreadNotifications } = require('../lib/unreadCounts');
+const { CATEGORIES } = require('../lib/notifPrefs');
+
+// Sujets du menu de la page Notifications (04/11/2026). « Compte » regroupe tout le reste :
+// abonnement, options, gestion par une agence, sécurité, messages de l'équipe LS Bookers.
+const PAGE_CATEGORIES = ['bookings', 'offers', 'events', 'reviews', 'network'];
+const LISTED_TYPES = PAGE_CATEGORIES.flatMap(key => CATEGORIES[key].types);
+const pageCategoryOf = (type) => PAGE_CATEGORIES.find(key => CATEGORIES[key].types.includes(type)) || 'account';
+function categoryWhere(category) {
+  if (PAGE_CATEGORIES.includes(category)) return { type: { in: CATEGORIES[category].types } };
+  if (category === 'account') return { type: { notIn: LISTED_TYPES } };
+  return {};
+}
+
+/* =========================================================
+   GET /api/notifications/summary
+   ➜ Non lues par sujet, pour les compteurs du menu de la page : { total, bookings, offers, … }
+========================================================= */
+router.get('/summary', requireAuth, async (req, res) => {
+  try {
+    const userId = Number(req.user?.id);
+    const groups = await prisma.notification.groupBy({
+      by: ['type'],
+      where: { userId, read: false, ...NOT_MESSAGE },
+      _count: { _all: true },
+    });
+    const counts = { total: 0, bookings: 0, offers: 0, events: 0, reviews: 0, network: 0, account: 0 };
+    for (const g of groups) {
+      counts[pageCategoryOf(g.type)] += g._count._all;
+      counts.total += g._count._all;
+    }
+    res.set('Cache-Control', 'no-store').json(counts);
+  } catch (err) {
+    console.error('❌ [GET /notifications/summary] Error:', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
 
 router.get('/', requireAuth, async (req, res) => {
   try {
@@ -24,7 +60,8 @@ router.get('/', requireAuth, async (req, res) => {
       olderThan = { OR: [{ createdAt: { lt: ref.createdAt } }, { createdAt: ref.createdAt, id: { lt: before } }] };
     }
     const rows = await prisma.notification.findMany({
-      where: { userId, ...NOT_MESSAGE, ...olderThan },
+      // ?category= : un sujet du menu de la page (bookings, offers, events, reviews, network, account)
+      where: { userId, AND: [NOT_MESSAGE, categoryWhere(String(req.query?.category || ''))], ...olderThan },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: limit + 1,
       include: {
@@ -185,3 +222,5 @@ router.get('/counts', requireAuth, async (req, res) => {
 })
 
 module.exports = router;
+module.exports.pageCategoryOf = pageCategoryOf;
+module.exports.categoryWhere = categoryWhere;

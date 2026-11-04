@@ -68,3 +68,25 @@ test('notifications Business et abonnement : réglables dans les Réglages', () 
   assert.equal(categoryOf('EXTRA_ORDER_UPDATE'), 'account')
   assert.equal(categoryOf('BOOKING_APPROVAL_NEEDED'), 'bookings')
 })
+
+test('page Notifications : chaque type tombe dans un sujet du menu, le reste dans « Compte »', () => {
+  const { pageCategoryOf, categoryWhere } = notificationsRouter
+  assert.equal(pageCategoryOf('NEW_LIKE'), 'network')
+  assert.equal(pageCategoryOf('BOOKING_REQUEST'), 'bookings')
+  assert.equal(pageCategoryOf('NEW_DEVICE_LOGIN'), 'account')
+  assert.equal(pageCategoryOf('MANAGEMENT_INVITE'), 'account')
+  assert.ok(categoryWhere('account').type.notIn.includes('NEW_LIKE'))
+  assert.deepEqual(categoryWhere('nimporte'), {})
+})
+
+test('compteurs par sujet : seulement les non lues, messages exclus', async () => {
+  let where
+  const res = responseRecorder()
+  res.set = function () { return this }
+  await withMocks({
+    notification: { groupBy: async (a) => { where = a.where; return [{ type: 'NEW_LIKE', _count: { _all: 3 } }, { type: 'BOOKING_REQUEST', _count: { _all: 1 } }, { type: 'NEW_DEVICE_LOGIN', _count: { _all: 1 } }] } },
+  }, () => routeHandler(notificationsRouter, 'get', '/summary')({ user: { id: 5 } }, res))
+  assert.equal(where.read, false)
+  assert.deepEqual(where.NOT, { type: 'NEW_MESSAGE' })
+  assert.deepEqual(res.body, { total: 5, bookings: 1, offers: 0, events: 0, reviews: 0, network: 3, account: 1 })
+})
