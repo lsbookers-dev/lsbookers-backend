@@ -177,7 +177,8 @@ function emailLayout({ title, paragraphs = [], ctaLabel, ctaUrl, footer }) {
 }
 
 /** Alerte : un nouvel appareil s'est connecté au compte */
-async function sendLoginAlertEmail(to, { deviceName, date }) {
+async function sendLoginAlertEmail(to, { deviceName, date, secureToken }) {
+  const secureUrl = secureToken ? `${APP_URL}/securiser-mon-compte?token=${encodeURIComponent(secureToken)}` : `${APP_URL}/settings/security`
   await deliverEmail({
     from: FROM, to,
     subject: 'Nouvelle connexion à votre compte — LS Bookers',
@@ -186,10 +187,11 @@ async function sendLoginAlertEmail(to, { deviceName, date }) {
       paragraphs: [
         `Un appareil s'est connecté à votre compte : <strong style="color:#fff">${escapeHtml(deviceName)}</strong>, le ${escapeHtml(date)}.`,
         `Si c'était vous, il n'y a rien à faire.`,
-        `Si ce n'était <strong style="color:#f87171">pas vous</strong>, retirez cet appareil et changez votre mot de passe depuis vos Réglages.`,
+        `Si ce n'était <strong style="color:#f87171">pas vous</strong>, cliquez sur le bouton ci-dessous : tous les appareils seront déconnectés et vous recevrez un e-mail pour choisir un nouveau mot de passe. Pas besoin d'être connecté.`,
+        `Vous pouvez aussi voir la liste de vos appareils dans <a href="${APP_URL}/settings/security" style="color:#c4b5fd">Réglages › Connexion et sécurité</a>.`,
       ],
-      ctaLabel: 'Voir mes appareils',
-      ctaUrl: `${APP_URL}/settings/security`,
+      ctaLabel: "Ce n'était pas moi",
+      ctaUrl: secureUrl,
       footer: 'Alerte de sécurité : elle se désactive dans Réglages › Connexion et sécurité.',
     }),
   })

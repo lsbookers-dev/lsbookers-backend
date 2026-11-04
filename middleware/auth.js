@@ -11,7 +11,7 @@
 
 const jwt = require('jsonwebtoken');
 const prisma = require('../prisma/client');
-const { touchSession, adminSessionProblem, revokeSession, ADMIN_TOUCH_EVERY_MS } = require('../lib/sessions');
+const { touchSession, adminSessionProblem, revokeSession, renewSessionIfDue, ADMIN_TOUCH_EVERY_MS } = require('../lib/sessions');
 const { requestedProfileId, findActiveManagement, isBlockedWhileActing } = require('../lib/managedProfiles');
 const { hasAgency } = require('../lib/plan');
 
@@ -64,6 +64,7 @@ async function authenticate(req) {
     : null;
 
   // 2. Fallback : cookie httpOnly (Safari / sessions sans localStorage)
+  const fromCookie = !token && !!req.cookies?.token;
   if (!token) {
     token = req.cookies?.token || null;
   }
@@ -132,10 +133,10 @@ async function authenticate(req) {
     if (actAs && actAs !== user.profile?.id) {
       const acting = await resolveActing(user, actAs);
       if (!acting.user) return acting;
-      return { user: acting.user, actor: user, management: acting.management, sessionSid };
+      return { user: acting.user, actor: user, management: acting.management, sessionSid, renewal: { decoded, user, sid: sessionSid, fromCookie } };
     }
 
-    return { user, sessionSid };
+    return { user, sessionSid, renewal: { decoded, user, sid: sessionSid, fromCookie } };
   } catch (err) {
     if (err.name === 'TokenExpiredError') {
       return { status: 401, error: 'Session expiree, veuillez vous reconnecter' };
@@ -156,6 +157,8 @@ const requireAuth = async (req, res, next) => {
   }
   req.user = result.user;
   req.sessionSid = result.sessionSid || null;
+  // Connexion prolongée de 30 jours quand on utilise le site (au plus une fois par jour)
+  if (result.renewal) renewSessionIfDue(req, res, result.renewal);
   if (result.actor) {
     req.actor = result.actor;
     req.management = result.management;
@@ -175,6 +178,7 @@ const requireAuth = async (req, res, next) => {
 const optionalAuth = async (req, res, next) => {
   const result = await authenticate(req);
   if (result.user) req.user = result.user;
+  if (result.renewal) renewSessionIfDue(req, res, result.renewal);
   if (result.actor) { req.actor = result.actor; req.management = result.management; }
   next();
 };

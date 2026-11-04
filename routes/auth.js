@@ -19,6 +19,7 @@ const {
 const { deleteUserAccount } = require('../services/accountDeletion');
 const emailUtils = require('../utils/email');
 const { sendVerificationEmail } = emailUtils;
+const { signSecureAccountToken } = require('../lib/secureAccount');
 const { issueSession, deviceNameFromUA } = require('../lib/sessions');
 const { logAdmin } = require('../lib/adminLog');
 const { createNotif } = require('../services/notifications');
@@ -296,7 +297,11 @@ router.post('/login', validate(loginSchema), async (req, res) => {
 /** Ouvre la session et répond au site (connexion normale, ou admin après le code) */
 async function completeLogin(req, res, user, { admin = false } = {}) {
   // Une session par appareil (listée et révocable dans Réglages › Connexion et sécurité)
-  const { token, isNewDevice, deviceName } = await issueSession(req, res, user, { admin })
+  const { token, isNewDevice, deviceName } = await issueSession(req, res, user, {
+    admin,
+    deviceHint: req.headers['x-device-token'] || null,
+    standalone: req.body?.standalone === true,
+  })
   // Compteur « Connexions » de l'admin (les connexions admin sont dans l'Historique)
   if (!admin) {
     prisma.loginEvent.create({ data: { userId: user.id, userAgent: String(req.headers['user-agent'] || '').slice(0, 300) || null } })
@@ -305,7 +310,9 @@ async function completeLogin(req, res, user, { admin = false } = {}) {
   if (isNewDevice && user.loginAlerts && !admin) {
     const date = new Date().toLocaleString('fr-FR', { dateStyle: 'long', timeStyle: 'short', timeZone: 'Europe/Paris' })
     createNotif({ userId: user.id, type: 'NEW_DEVICE_LOGIN', content: `Nouvelle connexion à votre compte : ${deviceName}, le ${date}.` })
-    emailUtils.sendLoginAlertEmail(user.email, { deviceName, date }).catch(err => console.error('❌ Alerte de connexion :', err.message))
+    // « Ce n'était pas moi » : lien valable 7 jours, utilisable sans être connecté
+    emailUtils.sendLoginAlertEmail(user.email, { deviceName, date, secureToken: signSecureAccountToken(user) })
+      .catch(err => console.error('❌ Alerte de connexion :', err.message))
   }
   // Mode « cookie uniquement » (site et API sur le même site) : le jeton n'est jamais
   // renvoyé au JavaScript de la page. Sinon (API sur railway.app), transition : jeton renvoyé.

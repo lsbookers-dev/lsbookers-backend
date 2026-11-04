@@ -25,6 +25,7 @@ const { validate } = require('../middleware/validate')
 const { issueSession } = require('../lib/sessions')
 const { isSameSiteRequest } = require('../lib/session')
 const { resolvePrefs, sanitizePrefs } = require('../lib/notifPrefs')
+const { userFromSecureToken, secureAccount } = require('../lib/secureAccount')
 
 const router = express.Router()
 const emails = () => require('../utils/email')
@@ -238,7 +239,9 @@ router.post('/email/confirm', sensitiveLimiter, validate(tokenSchema), async (re
 router.get('/sessions', requireAuth, async (req, res) => {
   try {
     const sessions = await prisma.userSession.findMany({
-      where: { userId: req.user.id, revokedAt: null, lastUsedAt: { gte: new Date(Date.now() - 30 * 24 * 3600 * 1000) } },
+      // Connexion encore valable : utilisée il y a moins de 29 jours (le jeton de 30 jours est renouvelé
+      // au plus une fois par jour quand on utilise le site ; au-delà, l'appareil est déconnecté)
+      where: { userId: req.user.id, revokedAt: null, lastUsedAt: { gte: new Date(Date.now() - 29 * 24 * 3600 * 1000) } },
       orderBy: { lastUsedAt: 'desc' },
       select: { id: true, sid: true, name: true, createdAt: true, lastUsedAt: true },
     })
@@ -297,6 +300,21 @@ router.post('/welcome-seen', requireAuth, async (req, res) => {
 })
 
 // ── Pause du compte ────────────────────────────────────────
+// ── « Ce n'était pas moi » (lien de l'e-mail d'alerte, sans être connecté) ──
+// Le site n'appelle cette route qu'après un clic sur « Sécuriser mon compte » : les logiciels qui
+// ouvrent les liens des e-mails tout seuls (antivirus, messageries) ne déclenchent donc rien.
+router.post('/secure', sensitiveLimiter, async (req, res) => {
+  try {
+    const user = await userFromSecureToken(req.body?.token)
+    if (!user) return res.status(400).json({ error: 'Ce lien n’est plus valable (déjà utilisé ou expiré). Si vous pensez que quelqu’un utilise votre compte, faites « Mot de passe oublié » depuis la page de connexion.' })
+    await secureAccount(user)
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('❌ POST /account/secure', err)
+    res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
 router.post('/pause', requireAuth, async (req, res) => {
   if (isAdminUser(req.user)) return res.status(403).json({ error: 'Un compte admin ne peut pas être mis en pause' })
   try {

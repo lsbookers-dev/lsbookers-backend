@@ -43,6 +43,8 @@ const registerSchema = z.object({
 const loginSchema = z.object({
   email:    z.string().email('Adresse email invalide').toLowerCase().trim(),
   password: z.string().min(1, 'Mot de passe requis'),
+  // Connexion depuis l'application installée (écran d'accueil) : nom d'appareil distinct, pas de fausse alerte
+  standalone: z.boolean().optional(),
 });
 
 const step2Schema = z.object({
