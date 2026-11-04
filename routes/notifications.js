@@ -79,6 +79,7 @@ router.get('/', requireAuth, async (req, res) => {
           select: {
             id: true,
             conversationId: true,
+            bookingRequestId: true,
           },
         },
         staff: {
@@ -105,6 +106,7 @@ router.get('/', requireAuth, async (req, res) => {
         : null,
       conversationId: n.message?.conversationId || null,
       messageId:      n.message?.id || null,
+      bookingRequestId: n.message?.bookingRequestId || null,
       offerId:        n.offerId || null,
       publicationId:  n.publicationId || null,
       staffId:        n.staffId || null,

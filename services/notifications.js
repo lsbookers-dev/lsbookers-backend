@@ -5,8 +5,8 @@
 const prisma = require('../prisma/client')
 const { resolvePrefs, wantsBell, wantsEmail } = require('../lib/notifPrefs')
 
-// Module e-mail chargé à la demande (il exige la clé Resend, absente des tests)
-const emails = () => require('../utils/email')
+// E-mails : mis en attente 10 min puis groupés (services/pendingEmails.js)
+const { queueNotificationEmail, queueNotificationEmails } = require('./pendingEmails')
 
 /** Choix du destinataire (cloche / e-mail) ; en cas d'erreur, réglages par défaut */
 async function recipientPrefs(userId) {
@@ -55,8 +55,9 @@ async function alreadyNotified({ userId, type, actorId, publicationId, content }
  * @param {number} [opts.offerId]       — offre liée (permet le lien vers /offers)
  * @param {number} [opts.publicationId] — publication liée (permet le lien vers la publication)
  * @param {number} [opts.eventId]       — événement lié (lien direct vers l'agenda)
+ * @param {object} [opts.email]         — e-mail plus précis : { subject, title, rows: [[libellé, valeur]], quote, ctaLabel }
  */
-async function createNotif({ userId, type, content, actorId, messageId, offerId, publicationId, deviceToken, staffId, eventId } = {}) {
+async function createNotif({ userId, type, content, actorId, messageId, offerId, publicationId, deviceToken, staffId, eventId, email: emailDetails } = {}) {
   try {
     if (!userId || !type || !content) return
     // Pas d'auto-notification
@@ -66,14 +67,13 @@ async function createNotif({ userId, type, content, actorId, messageId, offerId,
 
     // Choix du membre (Réglages › Notifications et e-mails)
     const { email, prefs } = await recipientPrefs(userId)
-    if (email && wantsEmail(prefs, type)) {
-      // Sans attendre : l'e-mail ne doit jamais ralentir ni bloquer l'action
-      emails().sendNotificationEmail(email, { content })
-        .catch(err => console.error(`❌ [createNotif] e-mail type=${type} :`, err.message))
-    }
-    if (!wantsBell(prefs, type)) return
+    const sendEmail = !!email && wantsEmail(prefs, type)
+    const queue = (notificationId) => sendEmail && queueNotificationEmail({
+      userId, type, content, actorId, messageId, offerId, eventId, notificationId, email: emailDetails,
+    })
+    if (!wantsBell(prefs, type)) { await queue(null); return }
 
-    await prisma.notification.create({
+    const notification = await prisma.notification.create({
       data: {
         userId:    Number(userId),
         type,
@@ -86,7 +86,10 @@ async function createNotif({ userId, type, content, actorId, messageId, offerId,
         ...(staffId       != null ? { staffId:       Number(staffId)       } : {}),
         ...(eventId       != null ? { eventId:       Number(eventId)       } : {}),
       },
+      select: { id: true },
     })
+    // E-mail 10 min plus tard, seulement si la notification n'a pas été vue sur le site entre-temps
+    await queue(notification?.id)
     // Pastille de la cloche mise à jour tout de suite sur le site ouvert
     try { require('../socket').getIO().to(`user:${Number(userId)}`).emit('notifications_changed') } catch { /* temps réel indisponible */ }
   } catch (err) {
@@ -99,10 +102,10 @@ async function createNotif({ userId, type, content, actorId, messageId, offerId,
  * Même notification pour beaucoup de membres (ex. nouvelle offre pour les abonnés) :
  * réglages lus en une requête, cloches créées par paquets, e-mails envoyés groupés.
  * À lancer sans attendre (la personne à l'origine de l'action n'attend pas l'envoi).
- * Renvoie { bell, email } : nombre de cloches créées et d'e-mails acceptés.
+ * Renvoie { bell, email } : nombre de cloches créées et d'e-mails mis en attente.
  */
 const NOTIFY_CHUNK = 500
-async function notifyMany({ userIds, type, content, actorId, offerId, publicationId, eventId } = {}) {
+async function notifyMany({ userIds, type, content, actorId, offerId, publicationId, eventId, email: emailDetails } = {}) {
   const ids = [...new Set((userIds || []).map(Number).filter(id => id && id !== Number(actorId)))]
   if (!ids.length || !type || !content) return { bell: 0, email: 0 }
 
@@ -116,7 +119,7 @@ async function notifyMany({ userIds, type, content, actorId, offerId, publicatio
     for (const u of users) {
       const prefs = resolvePrefs(u.notifPrefs)
       if (wantsBell(prefs, type)) bellIds.push(u.id)
-      if (u.email && wantsEmail(prefs, type)) emailTo.push(u.email)
+      if (u.email && wantsEmail(prefs, type)) emailTo.push(u.id)
     }
   }
 
@@ -138,7 +141,8 @@ async function notifyMany({ userIds, type, content, actorId, offerId, publicatio
     if (bellIds.length) require('../socket').getIO().to(bellIds.map(id => `user:${id}`)).emit('notifications_changed')
   } catch { /* temps réel indisponible */ }
 
-  const email = emailTo.length ? await emails().sendNotificationEmails(emailTo, { content }) : 0
+  // E-mails mis en attente (10 min, groupés avec les autres nouveautés de chaque membre)
+  const email = await queueNotificationEmails(emailTo, { type, content, actorId, offerId, eventId, email: emailDetails })
   return { bell: bellIds.length, email }
 }
 

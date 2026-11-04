@@ -142,12 +142,28 @@ router.post('/booking-request', requireAuth, async (req, res) => {
       where: { bookingRequestId: bookingRequest.id, type: 'BOOKING_REQUEST' },
       select: { id: true },
     });
+    // E-mail détaillé : date, lieu, cachet et message de l'organisateur
+    const linkedEvent = bookingRequest.eventId
+      ? await prisma.event.findUnique({ where: { id: bookingRequest.eventId }, select: { title: true, lieu: true } }).catch(() => null)
+      : null;
+    const shortDate = new Date(date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
     await createNotif({
       userId:    targetProfile.userId,
       type:      'BOOKING_REQUEST',
       content:   `Nouvelle proposition de booking du ${dateLabel} de ${senderName}.`,
       actorId:   req.user.id,
       messageId: linkedMessage?.id,
+      email: {
+        subject: `Proposition de booking · ${shortDate}${linkedEvent?.lieu ? ` · ${linkedEvent.lieu}` : ''} · ${senderName}`,
+        title:   `${senderName} vous propose une date`,
+        quote:   bookingRequest.message || null,
+        rows: [
+          ['Date', dateLabel],
+          ...(linkedEvent?.title ? [['Événement', linkedEvent.title]] : []),
+          ...(linkedEvent?.lieu ? [['Lieu', linkedEvent.lieu]] : []),
+          ['Cachet proposé', bookingRequest.fee != null ? `${Number(bookingRequest.fee).toLocaleString('fr-FR')} €` : 'À définir'],
+        ],
+      },
     });
 
     res.status(201).json({ request: bookingRequest, conversationId: conversation.id });
@@ -192,6 +208,48 @@ router.get('/booking-requests', requireAuth, async (req, res) => {
     });
   } catch (err) {
     console.error('GET booking-requests:', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// GET /api/events/booking-request/:id — résumé d'une demande (fenêtre ouverte depuis une notification)
+// Seulement pour les deux profils concernés.
+router.get('/booking-request/:id', requireAuth, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!id) return res.status(400).json({ error: 'Demande introuvable' });
+    const profile = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
+    const br = await prisma.bookingRequest.findUnique({
+      where: { id },
+      include: {
+        requester: { select: { id: true, avatar: true, city: true, user: { select: { id: true, pseudo: true, firstName: true, lastName: true, role: true } } } },
+        event: { select: { title: true, lieu: true } },
+      },
+    });
+    if (!br || !profile || ![br.requesterId, br.targetId].includes(profile.id)) return res.status(404).json({ error: 'Demande introuvable' });
+    const linked = await prisma.message.findFirst({ where: { bookingRequestId: br.id, type: 'BOOKING_REQUEST' }, select: { conversationId: true } });
+    const u = br.requester.user;
+    res.json({
+      id: br.id,
+      status: br.status,
+      startDate: br.startDate,
+      endDate: br.endDate,
+      fee: br.fee,
+      message: br.message,
+      awaitingArtist: !!br.awaitingArtistSince,
+      event: br.event ? { title: br.event.title, lieu: br.event.lieu } : null,
+      requester: {
+        userId: u?.id ?? null,
+        name: u?.pseudo || [u?.firstName, u?.lastName].filter(Boolean).join(' ') || 'Organisateur',
+        role: u?.role || null,
+        avatar: br.requester.avatar || null,
+        city: br.requester.city || null,
+      },
+      conversationId: linked?.conversationId ?? null,
+      canAnswer: br.targetId === profile.id && br.status === 'PENDING',
+    });
+  } catch (err) {
+    console.error('GET booking-request/:id:', err);
     res.status(500).json({ error: 'Erreur serveur' });
   }
 });
@@ -280,6 +338,12 @@ router.patch('/booking-request/:id', requireAuth, async (req, res) => {
         content:   `Votre proposition de booking du ${dateLabel} a été acceptée par ${targetName}.`,
         actorId:   br.target.userId,
         messageId: linkedMsgId,
+        email: {
+          subject: `Booking accepté · ${dateLabel} · ${targetName}`,
+          title:   `${targetName} a accepté votre booking`,
+          rows: [['Date', dateLabel], ...(br.fee != null ? [['Cachet', `${Number(br.fee).toLocaleString('fr-FR')} €`]] : [])],
+          ctaLabel: 'Voir la conversation',
+        },
       });
 
       // Booking proposé depuis une offre avec « clôturer à l'acceptation » : l'offre est clôturée
@@ -328,6 +392,12 @@ router.patch('/booking-request/:id', requireAuth, async (req, res) => {
         content:   `Votre proposition de booking du ${dateLabel} a été refusée par ${targetName}.`,
         actorId:   br.target.userId,
         messageId: linkedMsgId,
+        email: {
+          subject: `Booking refusé · ${dateLabel} · ${targetName}`,
+          title:   `${targetName} a refusé votre proposition`,
+          rows: [['Date', dateLabel]],
+          ctaLabel: 'Voir la conversation',
+        },
       });
     }
 

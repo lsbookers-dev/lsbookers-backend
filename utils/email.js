@@ -156,7 +156,7 @@ async function sendNewDeviceEmail(to, { deviceName, date, trustLink, rejectLink 
 // ─────────────────────────────────────────────
 const escapeHtml = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
 
-function emailLayout({ title, paragraphs = [], ctaLabel, ctaUrl, footer }) {
+function emailLayout({ title, paragraphs = [], ctaLabel, ctaUrl, footer, detailsHtml = '', unsubscribe = null }) {
   const body = paragraphs.map(p => `<p style="color:#b8b2c8;line-height:1.6;margin:0 0 14px">${p}</p>`).join('')
   const cta = ctaUrl
     ? `<div style="text-align:center;margin:28px 0"><a href="${ctaUrl}" style="display:inline-block;background:#7c3aed;color:#fff;padding:14px 28px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px">${escapeHtml(ctaLabel)}</a></div>`
@@ -167,11 +167,11 @@ function emailLayout({ title, paragraphs = [], ctaLabel, ctaUrl, footer }) {
         ${LOGO_HTML}
       </div>
       <h2 style="color:#ffffff;margin:0 0 16px;font-size:20px">${escapeHtml(title)}</h2>
-      ${body}${cta}
+      ${body}${detailsHtml}${cta}
       <hr style="border:none;border-top:1px solid #24212f;margin:24px 0"/>
       <p style="color:#6b6680;font-size:11px;text-align:center;line-height:1.6">
         ${footer || 'Vous recevez cet e-mail car vous avez un compte LS Bookers.'}<br/>
-        <a href="${APP_URL}/settings/notifications" style="color:#c4b5fd">Choisir mes e-mails</a> · © ${new Date().getFullYear()} LS Bookers
+        ${unsubscribe ? `<a href="${unsubscribe.pageUrl}" style="color:#c4b5fd">${escapeHtml(unsubscribe.label)}</a> · ` : ''}<a href="${APP_URL}/settings/notifications" style="color:#c4b5fd">Choisir mes e-mails</a> · © ${new Date().getFullYear()} LS Bookers
       </p>
     </div>`
 }
@@ -252,49 +252,79 @@ async function sendEmailChangedNotice(to, newEmail) {
   })
 }
 
-/** E-mail d'une notification (booking, offre, avis, événement…) choisie dans les Réglages */
-async function sendNotificationEmail(to, { content }) {
-  await deliverEmail({
-    from: FROM, to,
-    subject: `${String(content).slice(0, 90)} — LS Bookers`,
+/* ─────────────────────────────────────────────
+   E-mails de notification (04/11/2026) : construits par la file d'attente (services/pendingEmails.js)
+   Une seule notification → e-mail détaillé ; plusieurs → un seul e-mail qui les liste.
+───────────────────────────────────────────── */
+const DETAIL_ROW = (label, value) =>
+  `<tr><td style="color:#8a84a0;padding:9px 0;border-top:1px solid #24212f;font-size:13px">${escapeHtml(label)}</td><td style="color:#f5f2fb;padding:9px 0;border-top:1px solid #24212f;font-size:13px;text-align:right">${escapeHtml(value)}</td></tr>`
+
+function detailsBlock(details) {
+  if (!details) return ''
+  const quote = details.quote ? `<p style="color:#b8b2c8;line-height:1.6;margin:0 0 14px;font-style:italic">« ${escapeHtml(details.quote)} »</p>` : ''
+  const rows = Array.isArray(details.rows) && details.rows.length
+    ? `<table role="presentation" style="width:100%;border-collapse:collapse;margin:4px 0 8px">${details.rows.map(([l, v]) => DETAIL_ROW(l, v)).join('')}</table>`
+    : ''
+  return quote + rows
+}
+
+/** Prépare l'e-mail (sans l'envoyer) pour les notifications en attente d'un membre */
+function buildNotificationEmail(to, items, unsubscribe) {
+  const headers = unsubscribe
+    ? { 'List-Unsubscribe': `<${unsubscribe.oneClickUrl}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' }
+    : undefined
+  if (items.length === 1) {
+    const n = items[0]
+    return {
+      from: FROM, to, headers,
+      subject: n.subject,
+      html: emailLayout({
+        title: n.title,
+        paragraphs: n.title === n.content ? [] : [escapeHtml(n.content)],
+        detailsHtml: detailsBlock(n.details),
+        ctaLabel: n.ctaLabel,
+        ctaUrl: n.link,
+        unsubscribe,
+      }),
+    }
+  }
+  const list = items.map(n => `
+    <tr><td style="padding:11px 0;border-top:1px solid #24212f;font-size:13px;line-height:1.5;color:#e9e5f3">
+      <span style="color:#a98cff;font-size:11px;text-transform:uppercase;letter-spacing:.05em">${escapeHtml(n.label)}</span><br/>
+      ${escapeHtml(n.content)} <a href="${n.link}" style="color:#c4b5fd;white-space:nowrap">Voir</a>
+    </td></tr>`).join('')
+  return {
+    from: FROM, to, headers,
+    subject: `${items.length} nouveautés sur LS Bookers`,
     html: emailLayout({
-      title: 'Du nouveau sur LS Bookers',
-      paragraphs: [escapeHtml(content)],
-      ctaLabel: 'Voir sur LS Bookers',
+      title: `${items.length} nouveautés pendant votre absence`,
+      detailsHtml: `<table role="presentation" style="width:100%;border-collapse:collapse">${list}</table>`,
+      ctaLabel: 'Tout voir sur LS Bookers',
       ctaUrl: `${APP_URL}/notifications`,
+      unsubscribe,
     }),
-  })
+  }
 }
 
 /**
- * Même e-mail de notification à beaucoup de membres (ex. nouvelle offre pour tous les abonnés).
- * Envoi par paquets de 100 (un seul appel à Resend par paquet), espacés pour rester
- * sous la limite de Resend (2 appels par seconde). Renvoie le nombre d'e-mails acceptés.
+ * Envoie des e-mails déjà préparés, par paquets de 100 (un appel à Resend par paquet),
+ * espacés pour rester sous la limite de Resend (2 appels par seconde). Renvoie le nombre accepté.
  */
 const BATCH_SIZE = 100
 const BATCH_GAP_MS = 600
-async function sendNotificationEmails(recipients, { content }) {
-  const to = [...new Set(recipients.filter(Boolean))]
-  if (!to.length) return 0
-  const html = emailLayout({
-    title: 'Du nouveau sur LS Bookers',
-    paragraphs: [escapeHtml(content)],
-    ctaLabel: 'Voir sur LS Bookers',
-    ctaUrl: `${APP_URL}/notifications`,
-  })
-  const subject = `${String(content).slice(0, 90)} — LS Bookers`
+async function sendPreparedEmails(payloads) {
   let sent = 0
-  for (let i = 0; i < to.length; i += BATCH_SIZE) {
+  for (let i = 0; i < payloads.length; i += BATCH_SIZE) {
     if (i > 0) await new Promise(resolve => setTimeout(resolve, BATCH_GAP_MS))
-    const chunk = to.slice(i, i + BATCH_SIZE)
+    const chunk = payloads.slice(i, i + BATCH_SIZE)
     // Tests automatiques : aucun e-mail réel n'est jamais envoyé
     if (process.env.LSB_DISABLE_EMAILS === '1') { sent += chunk.length; continue }
     try {
-      const result = await resend.batch.send(chunk.map(email => ({ from: FROM, to: email, subject, html })))
+      const result = await resend.batch.send(chunk)
       if (result?.error) throw new Error(result.error.message || 'Envoi groupé refusé')
       sent += chunk.length
     } catch (err) {
-      console.error(`❌ [sendNotificationEmails] paquet ${i / BATCH_SIZE + 1} :`, err.message)
+      console.error(`❌ [sendPreparedEmails] paquet ${i / BATCH_SIZE + 1} :`, err.message)
     }
   }
   return sent
@@ -347,5 +377,5 @@ module.exports = {
   sendManagedProfileInviteEmail,
   deliverEmail, FROM, APP_URL, sendVerificationEmail, sendPasswordResetEmail, sendNewDeviceEmail,
   emailLayout, sendLoginAlertEmail, sendAdminLoginCodeEmail, sendEmailChangeConfirmation, sendEmailChangedNotice,
-  sendNotificationEmail, sendNotificationEmails, sendNewMessageEmail,
+  buildNotificationEmail, sendPreparedEmails, sendNewMessageEmail,
 };

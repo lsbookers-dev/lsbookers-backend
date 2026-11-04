@@ -127,14 +127,15 @@ enum LogisticType {
 // ─────────────────────────────────────────────
 
 model User {
-  id           Int       @id @default(autoincrement())
+  id            Int            @id @default(autoincrement())
+  pendingEmails PendingEmail[]
   // Identifiants
-  email        String    @unique
-  password     String
-  role         Role
-  isAdmin      Boolean   @default(false)
-  createdAt    DateTime  @default(now())
-  lastActiveAt DateTime?
+  email         String         @unique
+  password      String
+  role          Role
+  isAdmin       Boolean        @default(false)
+  createdAt     DateTime       @default(now())
+  lastActiveAt  DateTime?
 
   // Identite (collectee a l'etape 2 de l'inscription)
   pseudo             String?   @unique
@@ -1472,4 +1473,25 @@ model AdminLog {
 
   @@index([createdAt])
   @@index([action])
+}
+
+/// E-mails de notification en attente (04/11/2026) : envoyés 10 min après la notification,
+/// seulement si elle n'a pas été vue sur le site entre-temps, et groupés en un seul e-mail.
+model PendingEmail {
+  id             Int      @id @default(autoincrement())
+  userId         Int
+  type           String
+  subject        String
+  title          String
+  content        String
+  link           String
+  ctaLabel       String
+  details        Json? // { rows: [[libellé, valeur]], quote }
+  notificationId Int? // Notification de la cloche : si elle est lue avant l'envoi, pas d'e-mail
+  createdAt      DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
+  @@index([userId])
 }

@@ -8,8 +8,10 @@ const prisma = require('../prisma/client')
 const { notifyMany } = require('../services/notifications')
 
 test('envoi groupé : cloches en une fois, e-mails selon les réglages, jamais à l\'auteur', async () => {
-  const originals = { findMany: prisma.user.findMany, createMany: prisma.notification.createMany }
+  const originals = { findMany: prisma.user.findMany, createMany: prisma.notification.createMany, queue: prisma.pendingEmail.createMany }
   const created = []
+  const queued = []
+  prisma.pendingEmail.createMany = async ({ data }) => { queued.push(...data); return { count: data.length } }
   let lookups = 0
   prisma.user.findMany = async ({ where }) => {
     lookups++
@@ -34,9 +36,13 @@ test('envoi groupé : cloches en une fois, e-mails selon les réglages, jamais �
     assert.deepEqual(created.map(n => n.userId).sort(), [2, 4, 5])
     assert.ok(created.every(n => n.type === 'NEW_OFFER' && n.offerId === 12 && n.actorId === 9))
     assert.deepEqual(result, { bell: 3, email: 3 }) // e-mails : 2, 3, 5
+    // E-mails mis en attente (10 min), avec le bon lien vers l'offre
+    assert.deepEqual(queued.map(q => q.userId).sort(), [2, 3, 5])
+    assert.ok(queued.every(q => q.link.endsWith('/offers?offer=12') && q.ctaLabel === 'Voir l’offre'))
   } finally {
     prisma.user.findMany = originals.findMany
     prisma.notification.createMany = originals.createMany
+    prisma.pendingEmail.createMany = originals.queue
   }
 })
 

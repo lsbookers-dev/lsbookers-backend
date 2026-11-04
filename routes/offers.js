@@ -133,6 +133,16 @@ async function notifyFollowersOfOffer(offer, organizerUserId) {
     content: `${displayName(organizer)} a publié une nouvelle offre : "${offer.title}".`,
     actorId: organizerUserId,
     offerId: offer.id,
+    email: {
+      subject: `Nouvelle offre · ${offer.title} · ${displayName(organizer)}`,
+      title: offer.title,
+      rows: [
+        ['Publiée par', displayName(organizer)],
+        ...(offer.location ? [['Lieu', offer.location]] : []),
+        ...(offer.date ? [['Date', new Date(offer.date).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })]] : []),
+        ...(offer.fee ? [['Tarif proposé', `${Number(offer.fee).toLocaleString('fr-FR')} €`]] : []),
+      ],
+    },
   })
 }
 

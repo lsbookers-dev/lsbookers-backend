@@ -229,6 +229,7 @@ app.use('/api/publications', publicationRoutes);
 app.use('/api/albums', albumsRoutes);
 app.use('/api/offers', offersRoutes);
 app.use('/api/notifications', notificationsRoutes);
+app.use('/api/email', require('./routes/emailPrefs'));
 app.use('/api/reviews', reviewsRoutes);
 app.use('/api/home', homeRoutes);
 app.use('/api/contact', contactRoutes);

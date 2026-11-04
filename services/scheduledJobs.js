@@ -1,5 +1,5 @@
 // services/scheduledJobs.js — Tâches automatiques lancées au démarrage puis toutes les heures
-// (les paiements de bookings, eux, sont vérifiés tous les quarts d'heure)
+// (les paiements de bookings, eux, sont vérifiés tous les quarts d'heure, les e-mails en attente chaque minute)
 
 const prisma = require('../prisma/client')
 const { deleteExpiredOffers } = require('./offerCleanup')
@@ -9,9 +9,11 @@ const { sendWeeklyRecaps } = require('./weeklyRecap')
 const { chargeDuePayments, releaseDuePayouts } = require('./bookingPayments')
 const { dailyBackupIfDue } = require('./dbBackup')
 const { endLapsedManagements } = require('./agency')
+const { sendPendingEmails } = require('./pendingEmails')
 
 const INTERVAL_MS = 60 * 60 * 1000
 const PAYMENTS_INTERVAL_MS = 15 * 60 * 1000
+const EMAILS_INTERVAL_MS = 60 * 1000
 
 // Mises en avant payantes terminées : la commande passe en « réalisée »
 async function closeFinishedFeatures() {
@@ -49,9 +51,15 @@ function every(jobs, intervalMs) {
   setInterval(run, intervalMs).unref()
 }
 
+// E-mails de notification en attente depuis 10 min (groupés par membre)
+const EMAIL_JOBS = [
+  ['E-mails de notification en attente', () => sendPendingEmails()],
+]
+
 function startScheduledJobs() {
   every(JOBS, INTERVAL_MS)
   every(PAYMENT_JOBS, PAYMENTS_INTERVAL_MS)
+  every(EMAIL_JOBS, EMAILS_INTERVAL_MS)
 }
 
 module.exports = { startScheduledJobs, closeFinishedFeatures }
