@@ -193,6 +193,7 @@ model User {
   newsletterOptInAt     DateTime?
   loginAlerts           Boolean          @default(true) // E-mail + notif quand un nouvel appareil se connecte
   pausedAt              DateTime? // Compte en pause : invisible des autres membres
+  welcomeSeenAt         DateTime? // Fenêtre de bienvenue vue (elle ne s'ouvre qu'une fois, à la 1re connexion)
   passwordChangedAt     DateTime?
   pendingEmail          String? // Nouvelle adresse en attente de confirmation
   pendingEmailTokenHash String?          @unique

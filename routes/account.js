@@ -10,6 +10,7 @@
 //   DELETE /api/account/sessions/:id        retirer un appareil
 //   POST   /api/account/sessions/revoke-others   se déconnecter de tous les autres appareils
 //   POST   /api/account/pause | /resume     mettre le compte en pause / le réactiver
+//   POST   /api/account/welcome-seen        fenêtre de bienvenue vue (elle ne s'ouvre plus)
 //   GET    /api/account/export              télécharger mes données (RGPD)
 
 const express = require('express')
@@ -279,6 +280,18 @@ router.post('/sessions/revoke-others', sensitiveLimiter, requireAuth, async (req
     res.json({ ok: true, ...(isSameSiteRequest(req) ? {} : { token }) })
   } catch (err) {
     console.error('❌ POST /account/sessions/revoke-others', err)
+    res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
+// ── Fenêtre de bienvenue ───────────────────────────────────
+// Elle ne s'ouvre qu'une fois par compte, quel que soit l'appareil
+router.post('/welcome-seen', requireAuth, async (req, res) => {
+  try {
+    await prisma.user.updateMany({ where: { id: req.user.id, welcomeSeenAt: null }, data: { welcomeSeenAt: new Date() } })
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('❌ POST /account/welcome-seen', err)
     res.status(500).json({ error: 'Erreur serveur' })
   }
 })
