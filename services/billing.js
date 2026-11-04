@@ -40,9 +40,7 @@ async function checkPromoCode(rawCode, userId, expectedKind) {
   const promo = await prisma.promoCode.findUnique({ where: { code } })
   if (!promo || !promo.active) throw new BillingError('PROMO_INVALID', 'Ce code promo n’existe pas ou n’est plus actif.')
   if (expectedKind && promo.kind !== expectedKind) {
-    throw new BillingError('PROMO_WRONG_KIND', promo.kind === 'FOUNDER'
-      ? 'Ce code Fondateur s’utilise avec le bouton « J’ai un code Fondateur ».'
-      : 'Ce code ne peut pas être utilisé ici.')
+    throw new BillingError('PROMO_WRONG_KIND', 'Ce code ne peut pas être utilisé ici.')
   }
   if (promo.reservedUserId && promo.reservedUserId !== userId) throw new BillingError('PROMO_RESERVED', 'Ce code est réservé à un autre membre.')
   if (promo.expiresAt && promo.expiresAt <= new Date()) throw new BillingError('PROMO_EXPIRED', 'Ce code promo a expiré.')
@@ -134,7 +132,7 @@ async function createSubscriptionCheckout({ user, interval, promoCode, plan = 'P
  * Page de paiement Stripe pour la formule Agence.
  * Un abonné Pro (payant) qui passe à l'Agence : son abonnement Pro est arrêté quand l'Agence
  * démarre, et Stripe déduit la partie non utilisée de la prochaine facture (voir syncAgencySubscription).
- * Un Pro offert (Fondateur, admin) n'est pas touché : il le retrouve si l'Agence s'arrête.
+ * Un Pro offert par l'admin n'est pas touché : il le retrouve si l'Agence s'arrête.
  */
 async function createAgencyCheckout({ stripe, user, interval, promoCode }) {
   const existing = await prisma.agencySubscription.findUnique({ where: { userId: user.id } })
@@ -228,29 +226,6 @@ async function syncAgencySubscription(stripeSub, userId) {
   return saved
 }
 
-// Code Fondateur : Pro offert à vie, sans carte
-async function applyFounderCode({ user, code }) {
-  const promo = await checkPromoCode(code, user.id, 'FOUNDER')
-  const existing = await prisma.subscription.findUnique({ where: { userId: user.id } })
-
-  // Un abonnement payant en cours est arrêté tout de suite : le Pro est désormais offert
-  if (existing?.stripeSubId && isProSubscription(existing) && existing.status !== 'CANCELLED') {
-    const stripe = getStripe()
-    if (stripe) await stripe.subscriptions.cancel(existing.stripeSubId).catch(err => console.error('Fondateur : arrêt abonnement Stripe', err.message))
-  }
-
-  const ok = await redeemPromoCode(promo.id, user.id)
-  if (!ok) throw new BillingError('PROMO_USED', 'Ce code promo a déjà été utilisé.')
-
-  const data = {
-    status: 'ACTIVE', plan: 'PRO', interval: 'LIFETIME', source: 'FOUNDER', priceCents: 0,
-    stripeSubId: null, promoCode: promo.code, trialEndsAt: null, currentPeriodEnd: null,
-    cancelAtPeriodEnd: false, endDate: null, startDate: new Date(),
-  }
-  await prisma.user.update({ where: { id: user.id }, data: { signupPlan: null } }).catch(() => {})
-  return prisma.subscription.upsert({ where: { userId: user.id }, create: { userId: user.id, ...data }, update: data })
-}
-
 const STRIPE_STATUS = {
   trialing: 'TRIAL', active: 'ACTIVE', past_due: 'PAST_DUE', unpaid: 'PAST_DUE',
   canceled: 'CANCELLED', incomplete_expired: 'EXPIRED', paused: 'EXPIRED',
@@ -269,7 +244,7 @@ async function syncStripeSubscription(stripeSub) {
   if (!status) return null // incomplete : paiement pas encore fait
 
   const existing = await prisma.subscription.findUnique({ where: { userId } })
-  // Un Pro offert (Fondateur / admin) n'est jamais écrasé par un ancien abonnement Stripe
+  // Un Pro offert par l'admin n'est jamais écrasé par un ancien abonnement Stripe
   if (existing && existing.source !== 'STRIPE' && isProSubscription(existing)) return existing
   // Un ancien abonnement Stripe ne remplace pas un plus récent
   if (existing?.stripeSubId && existing.stripeSubId !== stripeSub.id && isProSubscription(existing) && status === 'CANCELLED') return existing
@@ -321,5 +296,5 @@ async function createPortalSession(user) {
 module.exports = {
   syncAgencySubscription, createAgencyCheckout,
   BillingError, ROLE_LABELS, normalizeCode, getOrCreateCustomer, priceFor, checkPromoCode, redeemPromoCode,
-  createSubscriptionCheckout, applyFounderCode, syncStripeSubscription, createPortalSession,
+  createSubscriptionCheckout, syncStripeSubscription, createPortalSession,
 }

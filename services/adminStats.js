@@ -6,7 +6,7 @@ const { isProSubscription } = require('../lib/plan')
 const userName = (u) => u?.pseudo || [u?.firstName, u?.lastName].filter(Boolean).join(' ') || u?.email || 'Utilisateur'
 const USER_SELECT = { id: true, email: true, pseudo: true, firstName: true, lastName: true, role: true }
 
-/** Abonnés Pro et Business (un Pro offert ou Fondateur compte comme Pro, sans revenu) */
+/** Abonnés Pro et Business (un Pro offert compte comme Pro, sans revenu) */
 async function subscriptionOverview({ take = 500 } = {}) {
   const [subs, agencies] = await Promise.all([
     prisma.subscription.findMany({ orderBy: { updatedAt: 'desc' }, include: { user: { select: USER_SELECT } }, take }),

@@ -50,19 +50,11 @@ router.get('/prices', async (_req, res) => {
 // GET /api/billing/me — statut Pro, prix selon le rôle, limites et utilisation
 router.get('/me', requireAuth, async (req, res) => {
   try {
-    const [settings, plan, profile, account] = await Promise.all([
+    const [settings, plan, profile] = await Promise.all([
       getPlanSettings(),
       getPlan(req.user),
       prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } }),
-      prisma.user.findUnique({ where: { id: req.user.id }, select: { signupPlan: true } }),
     ])
-    // Code Fondateur réservé à ce membre et pas encore utilisé : activable en un clic
-    const founder = plan.isPro ? null : await prisma.promoCode.findFirst({
-      where: { kind: 'FOUNDER', active: true, reservedUserId: req.user.id, usedCount: 0, OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] },
-      select: { code: true },
-    })
-    // Formule choisie à l'inscription, pas encore finalisée
-    const [signupChoice, signupInterval, signupPromo] = String(account?.signupPlan || '').split('|')
     const sub = plan.subscription
     const role = String(req.user.role || '').toUpperCase()
     res.json({
@@ -81,7 +73,6 @@ router.get('/me', requireAuth, async (req, res) => {
       commission: settings.commission,
       limits: settings.limits,
       usage: await usage(profile?.id),
-      founderCode: founder?.code || null,
       // Formule Agence : payée, offerte par l'admin, ou profil Pro grâce à son agence
       agency: (() => {
         const a = plan.agency
@@ -98,22 +89,9 @@ router.get('/me', requireAuth, async (req, res) => {
       agencyPrices: settings.agency,
       managedPro: plan.managedPro,
       proPausedByAgency: !!sub?.pausedByAgency,
-      signupPlan: account?.signupPlan && !plan.isPro
-        ? { plan: signupChoice === 'PRO' || signupChoice === 'AGENCY' ? signupChoice : 'FREE', interval: signupInterval === 'MONTH' ? 'MONTH' : 'YEAR', promoCode: signupPromo || null }
-        : null,
     })
   } catch (err) {
     sendError(res, err, 'GET /billing/me')
-  }
-})
-
-// POST /api/billing/signup-plan/clear — le choix fait à l'inscription a été traité (ou écarté)
-router.post('/signup-plan/clear', requireAuth, async (req, res) => {
-  try {
-    await prisma.user.update({ where: { id: req.user.id }, data: { signupPlan: null } })
-    res.json({ ok: true })
-  } catch (err) {
-    sendError(res, err, 'POST /billing/signup-plan/clear')
   }
 })
 
@@ -132,21 +110,10 @@ router.post('/checkout', requireAuth, async (req, res) => {
 // POST /api/billing/promo/check { code } — vérifier un code avant de payer (affiche les mois offerts)
 router.post('/promo/check', requireAuth, async (req, res) => {
   try {
-    const promo = await billing.checkPromoCode(req.body?.code, req.user.id)
+    const promo = await billing.checkPromoCode(req.body?.code, req.user.id, 'LAUNCH')
     res.json({ code: promo.code, kind: promo.kind, freeMonths: promo.freeMonths })
   } catch (err) {
     sendError(res, err, 'POST /billing/promo/check')
-  }
-})
-
-// POST /api/billing/founder { code } — code Fondateur : Pro offert à vie, sans carte
-router.post('/founder', requireAuth, async (req, res) => {
-  try {
-    if (!MEMBER_ROLES.includes(String(req.user.role || '').toUpperCase())) return res.status(403).json({ error: 'ROLE_NOT_ELIGIBLE' })
-    await billing.applyFounderCode({ user: req.user, code: req.body?.code })
-    res.json({ ok: true })
-  } catch (err) {
-    sendError(res, err, 'POST /billing/founder')
   }
 })
 

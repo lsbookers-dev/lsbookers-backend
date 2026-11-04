@@ -68,10 +68,10 @@ const randomCode = (prefix) => `${prefix}-${crypto.randomBytes(4).toString('hex'
 router.get('/promo-codes', async (_req, res) => {
   try {
     const codes = await prisma.promoCode.findMany({
+      where: { kind: 'LAUNCH' },
       orderBy: { createdAt: 'desc' },
       include: {
         redemptions: { include: { user: { select: USER_SELECT } }, orderBy: { createdAt: 'desc' } },
-        reservedUser: { select: USER_SELECT },
       },
     })
     res.json({
@@ -79,7 +79,6 @@ router.get('/promo-codes', async (_req, res) => {
         id: c.id, code: c.code, kind: c.kind, freeMonths: c.freeMonths, maxUses: c.maxUses, usedCount: c.usedCount,
         active: c.active, expiresAt: c.expiresAt, note: c.note, createdAt: c.createdAt,
         usedBy: c.redemptions.map(r => ({ id: r.user.id, name: userName(r.user), at: r.createdAt })),
-        reservedFor: c.reservedUser ? { id: c.reservedUser.id, name: userName(c.reservedUser), email: c.reservedUser.email, role: c.reservedUser.role } : null,
       })),
     })
   } catch (err) { sendError(res, err, 'GET admin/billing/promo-codes') }
@@ -87,8 +86,6 @@ router.get('/promo-codes', async (_req, res) => {
 
 /**
  * POST /promo-codes
- * - Fondateur : { kind: 'FOUNDER', userIds: [12, 34] } → un code par membre, réservé à lui, usage unique ;
- *   le membre reçoit son code dans ses notifications
  * - Lancement : { kind: 'LAUNCH', code?, freeMonths, maxUses?, expiresAt? } → un code partagé
  */
 router.post('/promo-codes', async (req, res) => {
@@ -96,22 +93,6 @@ router.post('/promo-codes', async (req, res) => {
     const kind = String(req.body?.kind || '').toUpperCase()
     const expiresAt = req.body?.expiresAt ? new Date(req.body.expiresAt) : null
     if (expiresAt && Number.isNaN(expiresAt.getTime())) throw new BillingError('DATE_INVALID', 'Date invalide.')
-    if (kind === 'FOUNDER') {
-      const ids = [...new Set((Array.isArray(req.body?.userIds) ? req.body.userIds : []).map(Number).filter(Number.isInteger))]
-      if (!ids.length || ids.length > 100) throw new BillingError('USERS_INVALID', 'Choisissez au moins un membre (100 au maximum).')
-      const users = await prisma.user.findMany({ where: { id: { in: ids }, role: { in: ['ARTIST', 'ORGANIZER', 'PROVIDER'] } }, select: USER_SELECT })
-      if (users.length !== ids.length) throw new BillingError('USERS_INVALID', 'Un des membres choisis est introuvable.')
-      // Un membre qui a déjà un code Fondateur encore valable n'en reçoit pas un second
-      const already = await prisma.promoCode.findMany({ where: { kind: 'FOUNDER', active: true, reservedUserId: { in: ids }, usedCount: 0 }, select: { reservedUserId: true } })
-      const skip = new Set(already.map(c => c.reservedUserId))
-      const created = []
-      for (const u of users.filter(u => !skip.has(u.id))) {
-        const code = await prisma.promoCode.create({ data: { code: randomCode('FONDATEUR'), kind, maxUses: 1, note: userName(u), reservedUserId: u.id, expiresAt } })
-        created.push(code)
-        await createNotif({ userId: u.id, type: 'SUBSCRIPTION_UPDATE', content: `Merci d'être membre fondateur ! LS Bookers vous offre la version Pro à vie : cliquez ici pour l'activer en un clic.` })
-      }
-      return res.status(201).json({ codes: created, skipped: users.filter(u => skip.has(u.id)).map(userName) })
-    }
     if (kind === 'LAUNCH') {
       const freeMonths = Math.round(Number(req.body?.freeMonths))
       if (!Number.isFinite(freeMonths) || freeMonths < 1 || freeMonths > 24) throw new BillingError('MONTHS_INVALID', 'Nombre de mois offerts invalide (1 à 24).')

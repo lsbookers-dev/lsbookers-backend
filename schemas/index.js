@@ -74,13 +74,8 @@ const step3Schema = z.object({
   city:               z.string().max(100).trim().transform(stripHtml).optional(),
 });
 
-// Choix de formule à l'inscription (compte gratuit par défaut, Pro finalisé après la première connexion)
-const signupPlanSchema = z.object({
-  plan:            z.enum(['FREE', 'PRO', 'AGENCY']).optional(),
-  billingInterval: z.enum(['MONTH', 'YEAR']).optional(),
-  promoCode:       z.string().trim().max(40).regex(/^[A-Za-z0-9 -]*$/).optional(),
-});
-const registerCompleteSchema = registerSchema.merge(step2Schema).merge(step3Schema).merge(signupPlanSchema);
+// Tout le monde s'inscrit en gratuit : la formule se choisit ensuite sur « Offres et abonnements »
+const registerCompleteSchema = registerSchema.merge(step2Schema).merge(step3Schema);
 
 const deleteAccountSchema = z.object({
   password: z.string().min(1, 'Mot de passe requis').max(200),

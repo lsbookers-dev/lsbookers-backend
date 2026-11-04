@@ -44,16 +44,21 @@ const siretCheckLimiter = rateLimit({
 
 // Ne jamais exposer les secrets et compteurs internes du compte au navigateur.
 /** Supprime le profil préparé par une agence pour cette adresse si son invitation a expiré */
-async function releaseExpiredDraft(email) {
+// Profil créé par une agence, jamais réclamé et dont l'invitation a expiré : son e-mail est libre
+async function expiredDraftProfileId(email) {
   const draft = await prisma.user.findUnique({
     where: { email },
     select: { emailVerified: true, profile: { select: { id: true, managers: { select: { origin: true, status: true, expiresAt: true } } } } },
   });
   const managers = draft?.profile?.managers || [];
-  if (!draft || draft.emailVerified || !managers.length) return;
+  if (!draft || draft.emailVerified || !managers.length) return null;
   const stillValid = managers.some(m => m.origin !== 'CREATED' || m.status === 'ACTIVE' || (m.status === 'PENDING' && m.expiresAt && m.expiresAt > new Date()));
-  if (stillValid) return;
-  await require('./managers').removeUnclaimedDraft(draft.profile.id);
+  return stillValid ? null : draft.profile.id;
+}
+
+async function releaseExpiredDraft(email) {
+  const profileId = await expiredDraftProfileId(email);
+  if (profileId) await require('./managers').removeUnclaimedDraft(profileId);
 }
 
 function toClientUser(user) {
@@ -115,6 +120,22 @@ router.get('/check-pseudo', pseudoCheckLimiter, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────
+// GET /api/auth/check-email?email=xxx — e-mail déjà inscrit ? (dès l'étape 1 de l'inscription)
+// ─────────────────────────────────────────────
+router.get('/check-email', pseudoCheckLimiter, async (req, res) => {
+  const email = String(req.query.email || '').toLowerCase().trim();
+  if (!email || email.length > 254) return res.json({ available: true });
+  try {
+    const existing = await prisma.user.findUnique({ where: { email }, select: { id: true } });
+    const available = !existing || !!(await expiredDraftProfileId(email));
+    return res.json({ available });
+  } catch (err) {
+    console.error('Erreur dans /check-email :', err);
+    return res.status(500).json({ available: true });
+  }
+});
+
+// ─────────────────────────────────────────────
 // INSCRIPTION COMPLETE (toutes les données d'un coup)
 // POST /api/auth/register-complete
 // Collecte : email, password, role,
@@ -126,7 +147,7 @@ router.post('/register-complete', validate(registerCompleteSchema), async (req, 
     email, password, role,
     pseudo, firstName, lastName, dateOfBirth, phone, countryOfResidence,
     legalStatus, organizerType, establishmentName, typeEtablissement, siret, city,
-    specialties, plan, billingInterval, promoCode,
+    specialties,
   } = req.body;
 
   try {
@@ -203,11 +224,6 @@ router.post('/register-complete', validate(registerCompleteSchema), async (req, 
     if (countryOfResidence) userData.countryOfResidence = countryOfResidence.trim();
     // Intermittent payé en cachet : ses bookings se règlent en direct (déclaration GUSO)
     if (legalStatus === 'INTERMITTENT') userData.payoutMode = 'INTERMITTENT';
-    // Formule choisie : Pro (et/ou un code promo) à finaliser sur « Offres et abonnements » après connexion
-    const cleanPromo = String(promoCode || '').trim().toUpperCase().replace(/\s+/g, '');
-    if (plan === 'PRO' || plan === 'AGENCY' || cleanPromo) {
-      userData.signupPlan = [plan === 'PRO' || plan === 'AGENCY' ? plan : 'FREE', billingInterval === 'MONTH' ? 'MONTH' : 'YEAR', cleanPromo].join('|');
-    }
 
     const user = await prisma.user.create({
       data: userData,

@@ -8,6 +8,8 @@ const { Resend } = require('resend');
 const resend = new Resend(process.env.RESEND_API_KEY);
 const FROM = 'LSBookers <noreply@lsbookers.com>';
 const APP_URL = (process.env.APP_URL || 'https://lsbookers.com').replace(/\/+$/, '');
+// Logo en tête de chaque e-mail (image hébergée sur le site : les messageries n'affichent pas le SVG)
+const LOGO_HTML = `<img src="${APP_URL}/email-logo.png" alt="LS Bookers" width="96" height="96" style="display:inline-block;width:96px;height:96px;border-radius:16px;border:0">`;
 
 async function deliverEmail(payload) {
   // Tests automatiques : aucun e-mail réel n'est jamais envoyé (voir « test » dans package.json)
@@ -32,9 +34,7 @@ async function sendVerificationEmail(to, token) {
     html: `
       <div style="font-family:Arial,sans-serif;background:#0f0f13;color:#e8e8f0;padding:40px;border-radius:12px;max-width:560px;margin:0 auto">
         <div style="text-align:center;margin-bottom:32px">
-          <div style="display:inline-block;background:linear-gradient(135deg,#10b981,#6366f1);border-radius:12px;padding:12px 20px">
-            <span style="font-weight:900;font-size:18px;letter-spacing:2px;color:white">LS Bookers</span>
-          </div>
+          ${LOGO_HTML}
         </div>
         <h2 style="color:#ffffff;margin-bottom:12px">Confirme ton adresse email</h2>
         <p style="color:#9090b0;line-height:1.6">
@@ -70,9 +70,7 @@ async function sendPasswordResetEmail(to, token) {
     html: `
       <div style="font-family:Arial,sans-serif;background:#0f0f13;color:#e8e8f0;padding:40px;border-radius:12px;max-width:560px;margin:0 auto">
         <div style="text-align:center;margin-bottom:32px">
-          <div style="display:inline-block;background:linear-gradient(135deg,#10b981,#6366f1);border-radius:12px;padding:12px 20px">
-            <span style="font-weight:900;font-size:18px;letter-spacing:2px;color:white">LS Bookers</span>
-          </div>
+          ${LOGO_HTML}
         </div>
         <h2 style="color:#ffffff;margin-bottom:12px">Réinitialise ton mot de passe</h2>
         <p style="color:#9090b0;line-height:1.6">
@@ -107,9 +105,7 @@ async function sendNewDeviceEmail(to, { deviceName, date, trustLink, rejectLink 
       <div style="font-family:Arial,sans-serif;background:#0f0f13;color:#e8e8f0;padding:40px;border-radius:12px;max-width:560px;margin:0 auto">
 
         <div style="text-align:center;margin-bottom:32px">
-          <div style="display:inline-block;background:linear-gradient(135deg,#7c3aed,#a855f7);border-radius:12px;padding:12px 24px">
-            <span style="font-weight:900;font-size:18px;letter-spacing:2px;color:white">LS Bookers</span>
-          </div>
+          ${LOGO_HTML}
         </div>
 
         <div style="background:#1a1a2e;border:1px solid #2a2a4a;border-radius:12px;padding:24px;margin-bottom:24px">
@@ -168,7 +164,7 @@ function emailLayout({ title, paragraphs = [], ctaLabel, ctaUrl, footer }) {
   return `
     <div style="font-family:Arial,sans-serif;background:#0b0a10;color:#f5f2fb;padding:40px;border-radius:12px;max-width:560px;margin:0 auto">
       <div style="text-align:center;margin-bottom:28px">
-        <span style="display:inline-block;background:#7c3aed;border-radius:10px;padding:10px 18px;font-weight:900;font-size:16px;letter-spacing:2px;color:#fff">LS Bookers</span>
+        ${LOGO_HTML}
       </div>
       <h2 style="color:#ffffff;margin:0 0 16px;font-size:20px">${escapeHtml(title)}</h2>
       ${body}${cta}

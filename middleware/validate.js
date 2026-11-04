@@ -28,11 +28,14 @@ function validate(schema) {
           field: e.path.join('.'),
           message: e.message,
         }));
+        // Message lisible pour le premier champ en erreur, aussi dans « error » :
+        // beaucoup d'écrans du site affichent directement ce champ
+        const message = errors[0]?.message || 'Données invalides';
         return res.status(400).json({
-          error: 'VALIDATION_ERROR',
+          error: message,
+          code: 'VALIDATION_ERROR',
           details: errors,
-          // Message lisible pour le premier champ en erreur
-          message: errors[0]?.message || 'Données invalides',
+          message,
         });
       }
       next(err);
