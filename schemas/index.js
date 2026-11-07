@@ -319,6 +319,13 @@ const adminSettingsUpdateSchema = z.object({
    CONTACT
 ───────────────────────────────────────── */
 
+// Demande de changement de prénom / nom (après le délai de 7 jours)
+const nameChangeRequestSchema = z.object({
+  firstName: step2Schema.shape.firstName,
+  lastName:  step2Schema.shape.lastName,
+  reason:    z.string().min(5, 'Expliquez brièvement la raison').max(1000, 'Message trop long').trim().transform(stripHtml),
+});
+
 const contactCreateSchema = z.object({
   name:    z.string().min(1, 'Nom requis').max(100).trim().transform(stripHtml),
   email:   z.string().email('Email invalide').toLowerCase().trim(),
@@ -367,6 +374,7 @@ module.exports = {
   // Profile
   profileUpdateSchema,
   accountUpdateSchema,
+  nameChangeRequestSchema,
   // Offers
   offerCreateSchema,
   offerUpdateSchema,

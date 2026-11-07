@@ -7,6 +7,8 @@ const { deleteUserAccount } = require('../services/accountDeletion');
 const { overviewNumbers } = require('../services/adminStats');
 const { lateCancellationReport } = require('../services/adminWatch');
 const { isProSubscription } = require('../lib/plan');
+const { nameChangeRequestSchema } = require('../schemas');
+const nameFieldsSchema = nameChangeRequestSchema.pick({ firstName: true, lastName: true });
 
 /* =========================================================
  *  ACCUEIL — à traiter + chiffres clés + 30 derniers jours
@@ -249,6 +251,30 @@ router.patch('/users/:id/manage-profiles', requireAuth, requireAdmin, async (req
   } catch (err) {
     if (err.code === 'P2025') return res.status(404).json({ error: 'Utilisateur introuvable' });
     console.error('❌ patch manage-profiles', err);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+/* =========================================================
+ *  USERS — corriger le prénom / nom (après une demande du membre)
+ *  PATCH /api/admin/users/:id/name { firstName, lastName }
+ * =======================================================*/
+router.patch('/users/:id/name', requireAuth, requireAdmin, async (req, res) => {
+  const id = parseInt(String(req.params.id || ''), 10);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'ID invalide' });
+  const parsed = nameFieldsSchema.safeParse(req.body || {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message || 'Prénom ou nom invalide' });
+  try {
+    const updated = await prisma.user.update({
+      where: { id },
+      data: parsed.data,
+      select: { id: true, firstName: true, lastName: true },
+    });
+    console.log(`[admin] prénom/nom du membre ${id} corrigé par l'admin ${req.user.id}`);
+    return res.json({ ok: true, user: updated });
+  } catch (err) {
+    if (err.code === 'P2025') return res.status(404).json({ error: 'Utilisateur introuvable' });
+    console.error('❌ patch users/:id/name', err);
     return res.status(500).json({ error: 'Erreur serveur' });
   }
 });

@@ -7,7 +7,20 @@ const { isProRow, managedProUserIds } = require('../lib/plan');
 const { publicAgencyLinks } = require('../services/agencyDashboard');
 const { isOwnMediaUrl } = require('../lib/mediaUrl');
 const { validate } = require('../middleware/validate');
-const { profileUpdateSchema, accountUpdateSchema } = require('../schemas');
+const { profileUpdateSchema, accountUpdateSchema, nameChangeRequestSchema } = require('../schemas');
+const { nameStatus } = require('../services/nameLock');
+const rateLimit = require('express-rate-limit');
+const { memberOrIp } = require('../lib/rateLimitKeys');
+
+// 3 demandes de changement de nom par jour, pas plus
+const nameRequestLimiter = rateLimit({
+  windowMs: 24 * 60 * 60 * 1000,
+  max: 3,
+  keyGenerator: memberOrIp,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Demande déjà envoyée, réessayez demain.' },
+});
 
 // Import fetch (CommonJS compatible)
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
@@ -92,6 +105,8 @@ router.get('/me', requireAuth, async (req, res) => {
             dateOfBirth: true,
             phone: true,
             countryOfResidence: true,
+            createdAt: true,
+            isIdentityVerified: true,
             _count: {
               select: {
                 followers: true,
@@ -109,11 +124,12 @@ router.get('/me', requireAuth, async (req, res) => {
     }
 
     res.set('Cache-Control', 'private, no-store');
-    const { _count: userCounts, ...user } = profile.user;
+    const { _count: userCounts, createdAt, isIdentityVerified, ...user } = profile.user;
+    const names = nameStatus({ createdAt, isIdentityVerified });
     return res.json({
       profile: {
         ...profile,
-        user,
+        user: { ...user, nameLocked: names.locked, nameLockReason: names.reason, nameEditableUntil: names.editableUntil },
         followersCount: userCounts.followers,
         followingCount: userCounts.following,
         ...(await reviewStats(profile.id)),
@@ -286,6 +302,19 @@ router.put('/me/account', requireAuth, validate(accountUpdateSchema), async (req
       if (taken) return res.status(409).json({ error: 'Ce pseudo est déjà utilisé' });
     }
 
+    // Prénom et nom : figés après 7 jours (ou dès que Stripe a vérifié l'identité)
+    if (firstName !== undefined || lastName !== undefined) {
+      const me = await prisma.user.findUnique({
+        where: { id: req.user.id },
+        select: { firstName: true, lastName: true, createdAt: true, isIdentityVerified: true },
+      });
+      const changed = (firstName !== undefined && firstName.trim() !== (me.firstName || ''))
+        || (lastName !== undefined && lastName.trim() !== (me.lastName || ''));
+      if (changed && nameStatus(me).locked) {
+        return res.status(403).json({ error: 'Le prénom et le nom ne se modifient plus directement. Faites une demande à l’équipe depuis votre profil.' });
+      }
+    }
+
     // SIRET vérifié dans le registre officiel pour une société (comme à l'inscription)
     const nextStatus = legalStatus !== undefined ? legalStatus : current.legalStatus;
     const nextSiret = siret !== undefined ? (siret || '').replace(/\s/g, '') : current.siret;
@@ -333,6 +362,42 @@ router.put('/me/account', requireAuth, validate(accountUpdateSchema), async (req
   } catch (error) {
     if (error.code === 'P2002') return res.status(409).json({ error: 'Ce pseudo est déjà utilisé' });
     console.error('❌ Erreur mise à jour compte PUT /me/account :', error);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+/**
+ * POST /api/profile/me/name-change-request
+ * Prénom / nom figés : la demande arrive dans les messages de l'espace admin,
+ * l'équipe vérifie (pièce d'identité demandée par e-mail si besoin) puis corrige depuis la fiche du membre.
+ */
+router.post('/me/name-change-request', requireAuth, nameRequestLimiter, validate(nameChangeRequestSchema), async (req, res) => {
+  const { firstName, lastName, reason } = req.body;
+  try {
+    const me = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: { id: true, email: true, pseudo: true, firstName: true, lastName: true, isIdentityVerified: true },
+    });
+    if (!me) return res.status(404).json({ error: 'Compte introuvable' });
+    const current = [me.firstName, me.lastName].filter(Boolean).join(' ') || me.pseudo || 'Membre';
+    await prisma.contactMessage.create({
+      data: {
+        name: current.slice(0, 100),
+        email: me.email,
+        subject: `Changement de prénom / nom — compte n°${me.id}`,
+        message: [
+          `Compte n°${me.id}${me.pseudo ? ` (${me.pseudo})` : ''}`,
+          `Actuel : ${current}`,
+          `Demandé : ${firstName} ${lastName}`,
+          me.isIdentityVerified ? 'Attention : identité déjà vérifiée par Stripe (paiements).' : null,
+          '',
+          `Raison : ${reason}`,
+        ].filter(line => line !== null).join('\n'),
+      },
+    });
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error('❌ POST /profile/me/name-change-request :', error);
     return res.status(500).json({ error: 'Erreur serveur' });
   }
 });
