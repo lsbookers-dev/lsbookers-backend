@@ -175,3 +175,19 @@ test('notifications : jamais toute la liste d’un coup', async () => {
   }, () => routeHandler(notificationsRouter, 'get', '/')({ user: { id: 1 }, query: { limit: '5000' } }, responseRecorder()))
   assert.equal(take, 201) // 200 au plus + 1 pour savoir s'il en reste
 })
+
+test('facture envoyée : nom et coordonnées de l’émetteur figés au jour de l’envoi', async () => {
+  const issuer = { id: 1, siret: '12345678900011', address: '1 rue A', postalCode: '13000', city: 'Marseille', showRealName: false, user: { id: 10, pseudo: 'ALBA', firstName: 'Alba', lastName: 'Martin' } }
+  let saved
+  const res = responseRecorder()
+  await withMocks({
+    profile: { findUnique: async () => issuer },
+    invoice: {
+      findUnique: async () => ({ issuerId: 1, kind: 'INVOICE', status: 'DRAFT' }),
+      update: async ({ data }) => { saved = data; return { id: 5, kind: 'INVOICE', items: [], vatRate: 0, ...data, issuer: { ...issuer, user: { ...issuer.user, lastName: 'Durand' } }, client: null } },
+    },
+  }, () => routeHandler(invoicesRouter, 'patch', '/:id/status')({ user: { id: 10 }, params: { id: '5' }, body: { status: 'SENT' } }, res))
+  assert.equal(saved.issuerSnapshot.legalName, 'Alba Martin')
+  assert.equal(res.body.invoice.issuer.legalName, 'Alba Martin')
+  assert.equal(res.body.invoice.issuerSnapshot, undefined)
+})

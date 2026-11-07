@@ -31,23 +31,29 @@ function totals(items, vatRate) {
   return { ht: Math.round(ht * 100) / 100, vat, ttc: Math.round((ht + vat) * 100) / 100 }
 }
 
+/** Coordonnées de l'émetteur telles qu'imprimées sur le document. */
+function issuerInfo(issuer) {
+  return issuer ? {
+    profileId: issuer.id,
+    name: publicName(issuer),
+    legalName: [issuer.user?.firstName, issuer.user?.lastName].filter(Boolean).join(' ') || null,
+    establishmentName: issuer.establishmentName || null,
+    siret: issuer.siret || null,
+    legalStatus: issuer.legalStatus || null,
+    address: [issuer.address, [issuer.postalCode, issuer.city].filter(Boolean).join(' ')].filter(Boolean).join(', ') || null,
+    city: issuer.city || issuer.location || null,
+  } : null
+}
+
 function format(invoice) {
   const items = Array.isArray(invoice.items) ? invoice.items : []
-  const issuer = invoice.issuer
+  const { issuerSnapshot, ...rest } = invoice
   return {
-    ...invoice,
+    ...rest,
     items,
     totals: totals(items, invoice.vatRate),
-    issuer: issuer ? {
-      profileId: issuer.id,
-      name: publicName(issuer),
-      legalName: [issuer.user?.firstName, issuer.user?.lastName].filter(Boolean).join(' ') || null,
-      establishmentName: issuer.establishmentName || null,
-      siret: issuer.siret || null,
-      legalStatus: issuer.legalStatus || null,
-      address: [issuer.address, [issuer.postalCode, issuer.city].filter(Boolean).join(' ')].filter(Boolean).join(', ') || null,
-      city: issuer.city || issuer.location || null,
-    } : null,
+    // Document envoyé : coordonnées du jour de l'envoi, même si le profil a changé depuis
+    issuer: issuerSnapshot || issuerInfo(invoice.issuer),
     client: invoice.client ? { profileId: invoice.client.id, userId: invoice.client.user?.id ?? null, name: publicName(invoice.client) } : null,
   }
 }
@@ -200,9 +206,15 @@ router.patch('/:id/status', requireAuth, requirePro, validate(invoiceStatusSchem
     const { status } = req.body
     if (!STATUS_FLOW[current.kind].includes(status)) return res.status(400).json({ error: 'Statut impossible pour ce document' })
     if (status === 'DRAFT' && current.status !== 'DRAFT') return res.status(409).json({ error: 'Un document envoyé ne redevient pas brouillon.' })
+    // Premier envoi : on fige les coordonnées de l'émetteur
+    let issuerSnapshot
+    if (current.status === 'DRAFT') {
+      const issuer = await prisma.profile.findUnique({ where: { id: me.id }, select: ISSUER_SELECT })
+      issuerSnapshot = issuerInfo(issuer)
+    }
     const invoice = await prisma.invoice.update({
       where: { id },
-      data: { status, ...(status === 'SENT' ? { sentAt: new Date() } : {}) },
+      data: { status, ...(status === 'SENT' ? { sentAt: new Date() } : {}), ...(issuerSnapshot ? { issuerSnapshot } : {}) },
       include: INCLUDE,
     })
     return res.json({ invoice: format(invoice) })

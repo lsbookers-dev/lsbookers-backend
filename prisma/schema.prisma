@@ -1410,6 +1410,7 @@ model Invoice {
   issueDate       DateTime      @default(now())
   dueDate         DateTime?
   sentAt          DateTime?
+  issuerSnapshot  Json? // Émetteur (nom, adresse, SIRET…) figé à l'envoi : une facture émise ne change plus
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
