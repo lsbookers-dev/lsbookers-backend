@@ -296,10 +296,12 @@ router.post('/:id/apply', requireAuth, async (req, res) => {
       where: { offerId_applicantId: { offerId, applicantId: applicantProfile.id } },
       select: { id: true },
     });
-    if (!alreadyApplied) {
-      const limited = await checkLimit(req.user, 'applicationsPerMonth', { profileId: applicantProfile.id });
-      if (limited) return res.status(403).json(limited);
+    // Déjà postulé : pas de 2e message de candidature à l'organisateur
+    if (alreadyApplied) {
+      return res.status(409).json({ error: 'ALREADY_APPLIED', message: 'Vous avez déjà postulé à cette offre.' });
     }
+    const limited = await checkLimit(req.user, 'applicationsPerMonth', { profileId: applicantProfile.id });
+    if (limited) return res.status(403).json(limited);
 
     // Trouver ou créer la conversation
     let conversation = await prisma.conversation.findFirst({

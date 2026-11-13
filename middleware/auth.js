@@ -139,7 +139,7 @@ async function authenticate(req) {
     return { user, sessionSid, renewal: { decoded, user, sid: sessionSid, fromCookie } };
   } catch (err) {
     if (err.name === 'TokenExpiredError') {
-      return { status: 401, error: 'Session expiree, veuillez vous reconnecter' };
+      return { status: 401, error: 'Session expirée, veuillez vous reconnecter' };
     }
     return { status: 401, error: 'Token invalide' };
   }
@@ -199,7 +199,7 @@ const requireAdmin = (req, res, next) => {
   }
 
   if (!isAdminUser(req.user)) {
-    return res.status(403).json({ error: 'Acces reserve aux administrateurs' });
+    return res.status(403).json({ error: 'Accès réservé aux administrateurs' });
   }
 
   next();

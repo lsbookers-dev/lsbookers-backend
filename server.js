@@ -93,7 +93,7 @@ const authLimiter = rateLimit({
   keyGenerator: ipAndEmail,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'Trop de tentatives, reessayez dans 5 minutes' },
+  message: { error: 'Trop de tentatives, réessayez dans 5 minutes' },
 });
 // … et 100 essais / 5 min par adresse IP tous e-mails confondus (anti-robot)
 const authIpLimiter = rateLimit({
@@ -101,7 +101,7 @@ const authIpLimiter = rateLimit({
   max: 100,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'Trop de tentatives, reessayez dans 5 minutes' },
+  message: { error: 'Trop de tentatives, réessayez dans 5 minutes' },
 });
 
 // Sur l'ensemble de l'API — protection générale

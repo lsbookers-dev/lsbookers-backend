@@ -493,9 +493,9 @@ router.post('/verify-email', async (req, res) => {
       return true
     })
 
-    if (!verified) return res.status(400).json({ error: 'Lien invalide ou deja utilise' });
+    if (!verified) return res.status(400).json({ error: 'Lien invalide ou déjà utilisé' });
 
-    res.json({ message: 'Email verifie avec succes' });
+    res.json({ message: 'E-mail vérifié avec succès' });
   } catch (err) {
     console.error('Erreur dans /verify-email :', err);
     res.status(500).json({ error: 'Erreur serveur' });
@@ -513,7 +513,7 @@ router.post('/resend-verification', validate(resendVerificationSchema), async (r
 
     // Reponse generique pour ne pas exposer si l'email existe
     if (!user || user.emailVerified) {
-      return res.json({ message: 'Si un compte non verifie existe, un email sera envoye.' });
+      return res.json({ message: 'Si un compte non vérifié existe, un e-mail sera envoyé.' });
     }
 
     const newToken = crypto.randomBytes(32).toString('hex');

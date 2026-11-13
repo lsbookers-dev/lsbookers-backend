@@ -16,7 +16,7 @@ function sha256Hex(value) {
 // ─────────────────────────────────────────────
 router.post('/forgot-password', validate(forgotPasswordSchema), async (req, res) => {
   const { email } = req.body;
-  const generic = { message: 'Si un compte existe, un email sera envoye.' };
+  const generic = { message: 'Si un compte existe, un e-mail sera envoyé.' };
 
   try {
     const user = await prisma.user.findUnique({ where: { email: email.toLowerCase().trim() } });
@@ -63,7 +63,7 @@ router.post('/reset-password', validate(resetPasswordSchema), async (req, res) =
     const pr = await prisma.passwordReset.findUnique({ where: { tokenHash } });
 
     if (!pr || pr.usedAt || pr.expiresAt < new Date()) {
-      return res.status(400).json({ error: 'Lien invalide ou expire.' });
+      return res.status(400).json({ error: 'Lien invalide ou expiré.' });
     }
 
     const user = await prisma.user.findUnique({ where: { id: pr.userId }, select: { password: true } });
@@ -98,10 +98,10 @@ router.post('/reset-password', validate(resetPasswordSchema), async (req, res) =
     });
 
     if (!resetApplied) {
-      return res.status(400).json({ error: 'Lien invalide ou expire.' });
+      return res.status(400).json({ error: 'Lien invalide ou expiré.' });
     }
 
-    return res.json({ message: 'Mot de passe reinitialise avec succes.' });
+    return res.json({ message: 'Mot de passe réinitialisé avec succès.' });
   } catch (e) {
     console.error('reset-password error', e);
     return res.status(500).json({ error: 'Erreur serveur.' });

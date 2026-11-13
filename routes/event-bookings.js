@@ -10,6 +10,46 @@ const { createNotif, displayName } = require('../services/notifications');
 const { checkLimit } = require('../lib/plan');
 const { onBookingCancelled } = require('../services/bookingPayments');
 const { closeOffer } = require('./offers');
+const { getIO } = require('../socket');
+
+// Temps réel : les deux personnes du booking (et leurs conversations ouvertes) voient le nouveau statut
+// sans recharger la page. Sans effet si le temps réel est coupé.
+// Booking annulé : la personne bookée sort de l'événement de l'organisateur (il disparaît de son agenda)
+// et sa date redevient libre, sauf si un autre booking accepté tombe le même jour.
+async function releaseBookingFromAgendas(br) {
+  try {
+    if (br.eventId) {
+      await prisma.eventStaff.updateMany({
+        where: { eventId: br.eventId, profileId: br.targetId, status: { not: 'CANCELLED' } },
+        data: { status: 'CANCELLED' },
+      });
+    }
+    const day = new Date(br.startDate); day.setUTCHours(0, 0, 0, 0);
+    const dayEnd = new Date(day); dayEnd.setUTCHours(23, 59, 59, 999);
+    const otherSameDay = await prisma.bookingRequest.count({
+      where: { id: { not: br.id }, targetId: br.targetId, status: 'ACCEPTED', startDate: { gte: day, lte: dayEnd } },
+    });
+    if (!otherSameDay) {
+      await prisma.availability.deleteMany({ where: { profileId: br.targetId, date: day, status: 'UNAVAILABLE' } });
+    }
+  } catch (err) {
+    console.error('Libération des agendas après annulation :', err.message);
+  }
+}
+
+async function pushBookingUpdate(id) {
+  try {
+    const br = await prisma.bookingRequest.findUnique({
+      where: { id: Number(id) },
+      select: { id: true, status: true, requester: { select: { userId: true } }, target: { select: { userId: true } } },
+    });
+    if (!br) return;
+    const io = getIO();
+    for (const userId of [br.requester?.userId, br.target?.userId].filter(Boolean)) {
+      io.to(`user:${userId}`).emit('booking_updated', { bookingRequestId: br.id, status: br.status });
+    }
+  } catch (_) { /* temps réel indisponible : la page se mettra à jour au prochain chargement */ }
+}
 
 /**
  * Rattache un booking accepté à l'événement de l'organisateur :
@@ -291,6 +331,7 @@ router.patch('/booking-request/:id', requireAuth, async (req, res) => {
         actorId:   req.actor.id,
         messageId: linked?.id,
       });
+      pushBookingUpdate(req.params.id);
       return res.json({ request: waiting, awaitingArtist: true });
     }
 
@@ -302,6 +343,7 @@ router.patch('/booking-request/:id', requireAuth, async (req, res) => {
     // Booking déjà accepté puis annulé : remboursement / annulation tardive selon les règles
     if (status === 'CANCELLED' && br.status === 'ACCEPTED') {
       await onBookingCancelled(br.id, profile.id).catch(err => console.error('onBookingCancelled:', err));
+      await releaseBookingFromAgendas(br);
     }
 
     const targetName    = br.target.user?.pseudo    || [br.target.user?.firstName,    br.target.user?.lastName].filter(Boolean).join(' ')    || 'Artiste';
@@ -411,6 +453,7 @@ router.patch('/booking-request/:id', requireAuth, async (req, res) => {
       });
     }
 
+    pushBookingUpdate(req.params.id);
     res.json({ request: updated });
   } catch (err) {
     console.error('PATCH booking-request:', err);
@@ -429,6 +472,7 @@ router.patch('/booking-request/:id/payment-status', requireAuth, async (req, res
     if (!br) return res.status(404).json({ error: 'Demande introuvable' });
     if (br.requesterId !== profile?.id) return res.status(403).json({ error: 'Non autorisé' });
     const updated = await prisma.bookingRequest.update({ where: { id: br.id }, data: { paymentStatus } });
+    pushBookingUpdate(req.params.id);
     res.json({ request: updated });
   } catch (err) {
     console.error('PATCH booking-request payment-status:', err);
@@ -461,6 +505,7 @@ router.post('/booking-request/:id/cancel-request', requireAuth, async (req, res)
         data: { status: 'CANCELLED', cancellationRequestedBy: null, cancellationNote: null },
       });
       const result = await onBookingCancelled(br.id, profile.id);
+      await releaseBookingFromAgendas(br);
       const who = profile.id === br.requesterId ? br.requester.user : br.target.user;
       const whoName = who?.pseudo || [who?.firstName, who?.lastName].filter(Boolean).join(' ') || 'Utilisateur';
       const dateLabel = new Date(br.startDate).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
@@ -478,6 +523,7 @@ router.post('/booking-request/:id/cancel-request', requireAuth, async (req, res)
         actorId: req.user.id,
         messageId: conv?.id,
       });
+      pushBookingUpdate(req.params.id);
       return res.json({ request: cancelled, cancelled: true, late: result?.late ?? false });
     }
 
@@ -516,6 +562,7 @@ router.post('/booking-request/:id/cancel-request', requireAuth, async (req, res)
       messageId: cancelLinkedMsg?.id,
     });
 
+    pushBookingUpdate(req.params.id);
     res.json({ request: updated });
   } catch (err) {
     console.error('POST booking-request cancel-request:', err);
@@ -555,6 +602,7 @@ router.post('/booking-request/:id/cancel-response', requireAuth, async (req, res
       });
       // Annulation tardive comptée pour celui qui l'a demandée ; remboursement si payé en ligne
       await onBookingCancelled(br.id, br.cancellationRequestedBy).catch(err => console.error('onBookingCancelled:', err));
+      await releaseBookingFromAgendas(br);
       await createNotif({
         userId:    cancelerUserId,
         type:      'CANCELLATION_ACCEPTED',
@@ -568,6 +616,7 @@ router.post('/booking-request/:id/cancel-response', requireAuth, async (req, res
         });
         await prisma.conversation.update({ where: { id: linkedMsg.conversationId }, data: { updatedAt: new Date() } });
       }
+      pushBookingUpdate(req.params.id);
       return res.json({ request: updated });
     } else {
       const updated = await prisma.bookingRequest.update({
@@ -587,6 +636,7 @@ router.post('/booking-request/:id/cancel-response', requireAuth, async (req, res
         });
         await prisma.conversation.update({ where: { id: linkedMsg.conversationId }, data: { updatedAt: new Date() } });
       }
+      pushBookingUpdate(req.params.id);
       return res.json({ request: updated });
     }
   } catch (err) {

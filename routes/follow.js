@@ -69,6 +69,10 @@ router.delete('/:id', requireAuth, async (req, res) => {
     await prisma.follow.deleteMany({
       where: { followerId, followingId: followedId },
     })
+    // Plus abonné : la notification « X vous suit » n'a plus lieu d'être chez la personne suivie
+    await prisma.notification.deleteMany({
+      where: { userId: followedId, actorId: followerId, type: 'NEW_FOLLOW' },
+    }).catch(() => {})
     return res.json({ ok: true })
   } catch (error) {
     console.error('Erreur unfollow :', error)
