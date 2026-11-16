@@ -162,7 +162,8 @@ router.get('/', async (req, res) => {
   try {
     // Offres passées exclues (elles sont supprimées le lendemain, cf. services/offerCleanup)
     const and = [activeOfferWhere()];
-    const where = { status: 'ACTIVE', AND: and };
+    // Offres masquées (signalements) ou publiées par un compte suspendu : invisibles
+    const where = { status: 'ACTIVE', hiddenAt: null, organizer: { user: { bannedAt: null } }, AND: and };
 
     if (type && ['ARTIST', 'PROVIDER', 'ALL'].includes(type)) where.type = type;
     if (specialty) where.specialty = { contains: specialty, mode: 'insensitive' };
@@ -223,7 +224,7 @@ router.get('/:id', async (req, res) => {
       include: offerInclude,
     });
 
-    if (!offer || offer.status !== 'ACTIVE' || (offer.endDate || offer.date) < new Date(Date.now() - 24 * 60 * 60 * 1000)) {
+    if (!offer || offer.status !== 'ACTIVE' || offer.hiddenAt || (offer.endDate || offer.date) < new Date(Date.now() - 24 * 60 * 60 * 1000)) {
       return res.status(404).json({ error: 'OFFRE_INTROUVABLE' });
     }
 

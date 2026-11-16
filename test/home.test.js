@@ -70,7 +70,7 @@ function matches(pub, where = {}) {
       if (cond.gte !== undefined && !(value >= cond.gte)) return false
     } else if (cond instanceof Date) {
       if (value.getTime() !== cond.getTime()) return false
-    } else if (value !== cond) return false
+    } else if (cond === null ? value != null : value !== cond) return false // null = champ vide (ex. hiddenAt)
   }
   return true
 }

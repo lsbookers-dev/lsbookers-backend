@@ -162,6 +162,7 @@ model User {
   lateCancelWarnedAt DateTime?
   bannedAt           DateTime?
   banReason          String?
+  warningCount       Int       @default(0) // Avertissements de modération donnés par l'admin
 
   // Etapes d'inscription completes
   registrationStep Int @default(1) // 1=compte, 2=identite, 3=profil, 4=paiement
@@ -305,15 +306,15 @@ model Profile {
   invoicesIssued          Invoice[]          @relation("InvoiceIssuer")
   invoicesReceived        Invoice[]          @relation("InvoiceClient")
   managers                ProfileManager[]
+  // Équipe habituelle : personnes ajoutées à la main par un organisateur (en plus des personnes déjà bookées)
+  teamMembersAdded        TeamMember[]       @relation("TeamOwner")
+  teamMemberOf            TeamMember[]       @relation("TeamMemberProfile")
+  // Devis : envoyés depuis une offre (sender → recipient) ou déposés par soi-même
+  quotesSent              Quote[]            @relation("QuoteSender")
+  quotesReceived          Quote[]            @relation("QuoteRecipient")
+  quotesUploaded          Quote[]            @relation("QuoteUploader")
 
   @@index([latitude, longitude]) // Recherche par distance et fil « À proximité »
-  // Équipe habituelle : personnes ajoutées à la main par un organisateur (en plus des personnes déjà bookées)
-  teamMembersAdded TeamMember[] @relation("TeamOwner")
-  teamMemberOf     TeamMember[] @relation("TeamMemberProfile")
-  // Devis : envoyés depuis une offre (sender → recipient) ou déposés par soi-même
-  quotesSent     Quote[] @relation("QuoteSender")
-  quotesReceived Quote[] @relation("QuoteRecipient")
-  quotesUploaded Quote[] @relation("QuoteUploader")
 }
 
 // ─────────────────────────────────────────────
@@ -321,13 +322,14 @@ model Profile {
 // ─────────────────────────────────────────────
 
 model Publication {
-  id        Int      @id @default(autoincrement())
+  id        Int       @id @default(autoincrement())
   title     String
   media     String
   mediaType String
   caption   String?
   profileId Int
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
+  hiddenAt  DateTime? // Masquée en attendant la décision de l'admin (trop de signalements)
 
   profile         Profile              @relation(fields: [profileId], references: [id])
   likes           PublicationLike[]
@@ -374,12 +376,13 @@ model PublicationLike {
 }
 
 model PublicationComment {
-  id            Int      @id @default(autoincrement())
+  id            Int       @id @default(autoincrement())
   content       String
   publicationId Int
   profileId     Int
-  createdAt     DateTime @default(now())
+  createdAt     DateTime  @default(now())
   parentId      Int?
+  hiddenAt      DateTime? // Masqué en attendant la décision de l'admin (trop de signalements)
 
   publication Publication              @relation(fields: [publicationId], references: [id], onDelete: Cascade)
   profile     Profile                  @relation(fields: [profileId], references: [id], onDelete: Cascade)
@@ -515,9 +518,9 @@ model Block {
 // ─────────────────────────────────────────────
 
 model Conversation {
-  id        Int      @id @default(autoincrement())
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id               Int       @id @default(autoincrement())
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
   accountDeletedAt DateTime? // Un participant a supprimé son compte : l'autre garde la conversation, « Compte supprimé »
 
   participants ConversationParticipant[]
@@ -787,6 +790,7 @@ model Offer {
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
   organizerId Int
+  hiddenAt    DateTime? // Masquée (trop de signalements) ou retirée par l'admin
 
   organizer     Profile          @relation(fields: [organizerId], references: [id])
   event         Event?           @relation(fields: [eventId], references: [id])
@@ -1544,4 +1548,32 @@ model Quote {
   @@index([senderProfileId])
   @@index([recipientProfileId])
   @@index([uploadedByProfileId])
+}
+
+// ─────────────────────────────────────────────
+//  SIGNALEMENTS ET MODÉRATION (16/11/2026)
+// ─────────────────────────────────────────────
+
+/// Un membre signale un profil, une publication, un commentaire ou une offre.
+/// Pas de lien fort avec les autres tables : le signalement garde une copie du contenu (snapshot)
+/// et reste lisible dans l'admin même si le contenu ou un compte est supprimé ensuite.
+model Report {
+  id             Int       @id @default(autoincrement())
+  reporterId     Int? // Membre qui signale (vide si son compte est supprimé)
+  targetType     String // PROFILE | PUBLICATION | COMMENT | OFFER
+  targetId       Int // PROFILE : id du compte ; sinon id de la publication, du commentaire ou de l'offre
+  targetUserId   Int? // Auteur du contenu signalé
+  reason         String // Voir REASONS dans services/moderation.js
+  details        String?
+  snapshot       Json? // Copie du contenu au moment du signalement
+  status         String    @default("PENDING") // PENDING | DISMISSED | REMOVED | WARNED | BANNED
+  resolvedAt     DateTime?
+  resolvedById   Int?
+  resolutionNote String?
+  createdAt      DateTime  @default(now())
+
+  @@unique([reporterId, targetType, targetId])
+  @@index([status, createdAt])
+  @@index([targetType, targetId])
+  @@index([targetUserId])
 }

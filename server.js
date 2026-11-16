@@ -48,6 +48,8 @@ const payoutRoutes = require('./routes/payouts'); // Réglages › Paiements (co
 const bookingPaymentRoutes = require('./routes/bookingPayments'); // paiement d'un booking (direct ou en ligne)
 const managersRoutes = require('./routes/managers'); // profils gérés (agent, plusieurs salles)
 const stripeWebhookRoutes = require('./routes/stripeWebhook'); // messages de Stripe
+const reportRoutes = require('./routes/reports'); // signaler un contenu
+const adminReportRoutes = require('./routes/adminReports'); // admin : signalements et modération
 
 const app = express();
 
@@ -216,6 +218,7 @@ app.use('/api/admin/settings', adminSettingsRoutes);
 app.use('/api/admin/posts', adminPostsRoutes);
 app.use('/api/admin/featured', adminFeaturedRoutes);
 app.use('/api/admin/billing', adminBillingRoutes);
+app.use('/api/admin/reports', adminReportRoutes);
 app.use('/api/admin', adminRoutes);
 
 app.use('/api/events', eventRoutes);
@@ -226,6 +229,7 @@ app.use('/api/events', checklistRoutes);
 app.use('/api/bookings', bookingDetailRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/publications', publicationRoutes);
+app.use('/api/reports', reportRoutes);
 app.use('/api/albums', albumsRoutes);
 app.use('/api/offers', offersRoutes);
 app.use('/api/notifications', notificationsRoutes);

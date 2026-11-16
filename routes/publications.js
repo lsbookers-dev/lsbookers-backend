@@ -59,12 +59,16 @@ router.get('/:id(\\d+)', optionalAuth, async (req, res) => {
       include: {
         ...MEDIA_INCLUDE,
         ...TAG_INCLUDE_ALL,
-        profile: { select: { userId: true } },
+        profile: { select: { userId: true, user: { select: { bannedAt: true } } } },
         _count: { select: { likes: true, comments: true } },
       },
     })
     if (!pub) return res.status(404).json({ error: 'Publication introuvable' })
     const authorId = pub.profile?.userId
+    // Masquée (signalements) ou compte suspendu : seul l'auteur la voit encore
+    if ((pub.hiddenAt || pub.profile?.user?.bannedAt) && viewerId !== authorId) {
+      return res.status(404).json({ error: 'Publication introuvable' })
+    }
     if (viewerId && await isBlockedBetween(viewerId, authorId)) {
       return res.status(404).json({ error: 'Publication introuvable' })
     }
@@ -99,9 +103,12 @@ router.get('/profile/:profileId', optionalAuth, async (req, res) => {
       }
     }
 
+    // Publications masquées (signalements) : invisibles, sauf pour leur auteur
+    const owner = req.user ? await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } }) : null
+    const visible = owner?.id === profileId ? { profileId } : { profileId, hiddenAt: null }
     const [publications, total] = await Promise.all([
       prisma.publication.findMany({
-        where:   { profileId },
+        where:   visible,
         orderBy: { createdAt: 'desc' },
         skip:    (page - 1) * limit,
         take:    limit,
@@ -111,7 +118,7 @@ router.get('/profile/:profileId', optionalAuth, async (req, res) => {
           _count: { select: { likes: true, comments: true } },
         },
       }),
-      prisma.publication.count({ where: { profileId } }),
+      prisma.publication.count({ where: visible }),
     ]);
 
     return res.json({
@@ -266,6 +273,9 @@ const COMMENT_INCLUDE = {
   _count: { select: { likes: true, replies: true } },
 }
 
+// Commentaires masqués (signalements) ou écrits par un compte suspendu : invisibles
+const VISIBLE_COMMENT = { hiddenAt: null, profile: { user: { bannedAt: null } } }
+
 // Pagination des commentaires : les plus anciens d'abord, par paquets (curseur = id du dernier vu)
 const COMMENTS_PAGE = 20
 const REPLIES_PREVIEW = 3
@@ -300,7 +310,7 @@ router.get('/:id/comments', optionalAuth, async (req, res) => {
     const notBlocked = blockedProfileIds.length ? { profileId: { notIn: blockedProfileIds } } : {}
 
     const rows = await prisma.publicationComment.findMany({
-      where: { publicationId: id, parentId: null, ...notBlocked, ...(after ? { id: { gt: after } } : {}) }, // top-level seulement
+      where: { publicationId: id, parentId: null, ...VISIBLE_COMMENT, ...notBlocked, ...(after ? { id: { gt: after } } : {}) }, // top-level seulement
       orderBy: { id: 'asc' },
       take: limit + 1,
       include: {
@@ -343,7 +353,7 @@ router.get('/comments/:id/replies', optionalAuth, async (req, res) => {
     const notBlocked = blockedProfileIds.length ? { profileId: { notIn: blockedProfileIds } } : {}
 
     const rows = await prisma.publicationComment.findMany({
-      where: { parentId: id, ...notBlocked, ...(after ? { id: { gt: after } } : {}) },
+      where: { parentId: id, ...VISIBLE_COMMENT, ...notBlocked, ...(after ? { id: { gt: after } } : {}) },
       orderBy: { id: 'asc' },
       take: limit + 1,
       include: { ...COMMENT_INCLUDE, ...viewerLikes(viewerProfileId) },
@@ -775,7 +785,7 @@ router.get('/tagged/:profileId', optionalAuth, async (req, res) => {
     const where = {
       taggedUserId: profile.userId,
       status: 'ACCEPTED',
-      ...(blockedProfileIds.length ? { publication: { profileId: { notIn: blockedProfileIds } } } : {}),
+      publication: { hiddenAt: null, ...(blockedProfileIds.length ? { profileId: { notIn: blockedProfileIds } } : {}) },
     }
     const total = await prisma.publicationTag.count({ where })
     const tags = await prisma.publicationTag.findMany({

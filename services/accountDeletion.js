@@ -187,6 +187,8 @@ async function deleteUserAccount(id) {
     // 16. Follows + Blocks
     await tx.follow.deleteMany({ where: { OR: [{ followerId: id }, { followingId: id }] } });
     await tx.block.deleteMany({ where: { OR: [{ blockerId: id }, { blockedId: id }] } });
+    // Signalements : ceux qu'il a faits, et ceux en attente sur ses contenus (qui disparaissent avec lui)
+    await tx.report.deleteMany({ where: { OR: [{ reporterId: id }, { targetUserId: id, status: 'PENDING' }] } });
 
     // 17. Media liés à l'utilisateur
     await tx.media.deleteMany({ where: { userId: id } });

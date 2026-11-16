@@ -6,6 +6,7 @@ const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { deleteUserAccount } = require('../services/accountDeletion');
 const { overviewNumbers } = require('../services/adminStats');
 const { lateCancellationReport } = require('../services/adminWatch');
+const { pendingTargetCount } = require('../services/moderation');
 const { isProSubscription } = require('../lib/plan');
 const { nameChangeRequestSchema } = require('../schemas');
 const nameFieldsSchema = nameChangeRequestSchema.pick({ firstName: true, lastName: true });
@@ -16,12 +17,13 @@ const nameFieldsSchema = nameChangeRequestSchema.pick({ firstName: true, lastNam
  * =======================================================*/
 router.get('/overview', requireAuth, requireAdmin, async (_req, res) => {
   try {
-    const [numbers, carousel, otherOrders, unreadContact, watch] = await Promise.all([
+    const [numbers, carousel, otherOrders, unreadContact, watch, reports] = await Promise.all([
       overviewNumbers(),
       prisma.extraOrder.count({ where: { status: 'PAID', kind: 'CAROUSEL' } }),
       prisma.extraOrder.count({ where: { status: 'PAID', kind: { not: 'CAROUSEL' } } }),
       prisma.contactMessage.count({ where: { isRead: false, isArchived: false } }),
       lateCancellationReport(),
+      pendingTargetCount(),
     ]);
     const toWatch = watch.alerts.filter(a => a.needsDecision);
     return res.json({
@@ -29,6 +31,7 @@ router.get('/overview', requireAuth, requireAdmin, async (_req, res) => {
         carouselOrders: carousel,
         otherOrders,
         unreadContact,
+        reports,
         watchMembers: toWatch.map(a => ({ userId: a.userId, name: a.name, count: a.count })),
       },
       ...numbers,
@@ -45,12 +48,13 @@ router.get('/overview', requireAuth, requireAdmin, async (_req, res) => {
  * =======================================================*/
 router.get('/badges', requireAuth, requireAdmin, async (_req, res) => {
   try {
-    const [orders, unreadContact, watch] = await Promise.all([
+    const [orders, unreadContact, watch, reports] = await Promise.all([
       prisma.extraOrder.count({ where: { status: 'PAID' } }),
       prisma.contactMessage.count({ where: { isRead: false, isArchived: false } }),
       lateCancellationReport(),
+      pendingTargetCount(),
     ]);
-    return res.json({ members: watch.alerts.filter(a => a.needsDecision).length, sales: orders, messages: unreadContact });
+    return res.json({ reports, members: watch.alerts.filter(a => a.needsDecision).length, sales: orders, messages: unreadContact });
   } catch (err) {
     console.error('❌ /admin/badges', err);
     return res.status(500).json({ error: 'Erreur serveur' });

@@ -171,8 +171,9 @@ function feedScore(pub) {
 }
 
 // Classe toutes les publications qui répondent à `where` et en renvoie un morceau (skip/take)
-// Publications des comptes en pause : invisibles des autres membres
-const NOT_PAUSED = { profile: { user: { pausedAt: null } } }
+// Publications des comptes en pause ou suspendus, et publications masquées (signalements) :
+// invisibles des autres membres
+const NOT_PAUSED = { hiddenAt: null, profile: { user: { pausedAt: null, bannedAt: null } } }
 
 async function rankedPublications(where, skip, take, feedType) {
   if (take <= 0) return { items: [], total: 0 }
@@ -357,7 +358,7 @@ router.get('/nearby', requireAuth, async (req, res) => {
     const candidates = await prisma.profile.findMany({
       where: {
         id: { notIn: [viewer.id, ...blockedProfileIds] },
-        user: { role: { in: MEMBER_ROLES }, pausedAt: null },
+        user: { role: { in: MEMBER_ROLES }, pausedAt: null, bannedAt: null },
         OR: [
           ...(hasCoords ? [boundingBoxWhere(viewer.latitude, viewer.longitude, NEARBY_RADIUS_KM)] : []),
           ...(sameCity.length ? cityWhere : []),
@@ -373,7 +374,7 @@ router.get('/nearby', requireAuth, async (req, res) => {
 
     const rows = nearbyIds.length
       ? await prisma.publication.findMany({
-          where:   { profileId: { in: nearbyIds }, ...olderThan(mark) },
+          where:   { profileId: { in: nearbyIds }, hiddenAt: null, ...olderThan(mark) },
           include: PUB_INCLUDE,
           orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
           take:    NEARBY_PAGE + 1,
