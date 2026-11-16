@@ -42,6 +42,9 @@ function getUserDisplayName(u) {
   return u.pseudo || [u.firstName, u.lastName].filter(Boolean).join(' ') || 'Utilisateur'
 }
 
+// Interlocuteur qui a supprimé son compte : la conversation reste visible, sans profil ni réponse possible
+const DELETED_PARTICIPANT = { id: 0, name: 'Compte supprimé', pseudo: null, firstName: null, lastName: null, role: null, profile: null, profileId: null, lastActiveAt: null, deleted: true }
+
 function pickUserPublic(u) {
   if (!u) return null
   return {
@@ -185,9 +188,10 @@ router.get('/conversations', requireAuth, async (req, res) => {
 
 
     // Conversations avec au moins 1 message (une conversation vide n'apparaît pas chez le destinataire),
+    // ou dont l'autre personne a supprimé son compte (gardée avec la mention « Compte supprimé »),
     // sans les échanges avec l'admin
     const noAdmin = { participants: { none: { user: { role: 'ADMIN' } } } }
-    const where = { userId, conversation: { ...noAdmin, messages: { some: {} } } }
+    const where = { userId, conversation: { ...noAdmin, OR: [{ messages: { some: {} } }, { accountDeletedAt: { not: null } }] } }
     const include = {
       conversation: {
         include: { participants: { include: { user: PUBLIC_USER_SELECT } } },
@@ -241,6 +245,8 @@ router.get('/conversations', requireAuth, async (req, res) => {
           })
           if (otherMsg?.sender) {
             participants = [...participants, pickUserPublic(otherMsg.sender)]
+          } else if (c.accountDeletedAt) {
+            participants = [...participants, DELETED_PARTICIPANT]
           }
         }
 

@@ -9,6 +9,40 @@ const { requirePro } = require('../lib/plan'); // budget, équipe et documents d
 const { createNotif, displayName } = require('../services/notifications');
 
 // POST /api/events/:id/staff — ajouter un membre du personnel
+// GET /api/events/:id/staff/:staffId/invitation — détail d'une invitation, pour la personne invitée seulement
+// (fenêtre ouverte depuis la notification : poste, date, lieu, cachet, message, organisateur)
+router.get('/:id/staff/:staffId/invitation', requireAuth, async (req, res) => {
+  try {
+    const me = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } });
+    const staff = await prisma.eventStaff.findUnique({
+      where: { id: Number(req.params.staffId) },
+      include: {
+        event: {
+          select: {
+            id: true, title: true, start: true, end: true, allDay: true, lieu: true, description: true,
+            profile: { select: { id: true, userId: true, avatar: true, user: { select: { pseudo: true, firstName: true, lastName: true } } } },
+          },
+        },
+      },
+    });
+    if (!staff || staff.eventId !== Number(req.params.id) || !me || staff.profileId !== me.id) {
+      return res.status(404).json({ error: 'Invitation introuvable' });
+    }
+    const org = staff.event.profile;
+    res.json({
+      invitation: {
+        staffId: staff.id, eventId: staff.eventId, status: staff.status,
+        role: staff.role, fee: staff.fee, notes: staff.notes,
+        event: { title: staff.event.title, start: staff.event.start, end: staff.event.end, allDay: staff.event.allDay, lieu: staff.event.lieu, description: staff.event.description },
+        organizer: org ? { userId: org.userId, avatar: org.avatar, name: org.user?.pseudo || [org.user?.firstName, org.user?.lastName].filter(Boolean).join(' ') || 'Organisateur' } : null,
+      },
+    });
+  } catch (err) {
+    console.error('GET staff invitation', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
 router.post('/:id/staff', requireAuth, requirePro, async (req, res) => {
   const { role, name, fee, notes, profileId: staffProfileId } = req.body;
   if (!role?.trim()) return res.status(400).json({ error: 'Rôle requis' });

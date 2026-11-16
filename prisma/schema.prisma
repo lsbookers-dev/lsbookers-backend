@@ -307,6 +307,9 @@ model Profile {
   managers                ProfileManager[]
 
   @@index([latitude, longitude]) // Recherche par distance et fil « À proximité »
+  // Équipe habituelle : personnes ajoutées à la main par un organisateur (en plus des personnes déjà bookées)
+  teamMembersAdded TeamMember[] @relation("TeamOwner")
+  teamMemberOf     TeamMember[] @relation("TeamMemberProfile")
 }
 
 // ─────────────────────────────────────────────
@@ -511,6 +514,7 @@ model Conversation {
   id        Int      @id @default(autoincrement())
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  accountDeletedAt DateTime? // Un participant a supprimé son compte : l'autre garde la conversation, « Compte supprimé »
 
   participants ConversationParticipant[]
   messages     Message[]
@@ -1495,4 +1499,17 @@ model PendingEmail {
 
   @@index([createdAt])
   @@index([userId])
+}
+
+// Équipe habituelle d'un organisateur : personnes ajoutées à la main (16/11/2026)
+model TeamMember {
+  id              Int      @id @default(autoincrement())
+  ownerProfileId  Int
+  memberProfileId Int
+  createdAt       DateTime @default(now())
+  owner           Profile  @relation("TeamOwner", fields: [ownerProfileId], references: [id], onDelete: Cascade)
+  member          Profile  @relation("TeamMemberProfile", fields: [memberProfileId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerProfileId, memberProfileId])
+  @@index([memberProfileId])
 }

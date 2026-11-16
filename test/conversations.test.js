@@ -52,7 +52,7 @@ async function listConversations(query, { rows, extra = null }) {
     user: { update: async () => ({}) },
     conversationParticipant: {
       findMany: async args => { calls.findMany.push(args); return rows.slice(args.skip, args.skip + args.take) },
-      count: async ({ where }) => (where.conversation.messages.some.seen === false ? 2 : rows.length),
+      count: async ({ where }) => (where.conversation.messages?.some?.seen === false ? 2 : rows.length),
       findFirst: async args => { calls.findFirst.push(args); return extra },
     },
     $: {

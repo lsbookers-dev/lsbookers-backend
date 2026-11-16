@@ -180,7 +180,8 @@ async function deleteUserAccount(id) {
       await tx.message.deleteMany({ where: { senderId: id } });
     }
 
-    // 15. Participations aux conversations
+    // 15. Participations aux conversations : l'autre personne garde la conversation, marquée « Compte supprimé »
+    await tx.conversation.updateMany({ where: { participants: { some: { userId: id } } }, data: { accountDeletedAt: new Date() } });
     await tx.conversationParticipant.deleteMany({ where: { userId: id } });
 
     // 16. Follows + Blocks

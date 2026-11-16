@@ -114,7 +114,7 @@ async function organizerEvents(profileId, { from, to } = {}) {
 
 /** Personnes avec qui un organisateur a déjà travaillé (« Mon équipe habituelle »). */
 async function organizerTeam(profileId, limit = 8) {
-  const [staffs, bookings] = await Promise.all([
+  const [staffs, bookings, manual] = await Promise.all([
     prisma.eventStaff.findMany({
       where: { status: 'BOOKED', profileId: { not: null }, event: { profileId, status: { not: 'CANCELLED' } } },
       include: { profile: { select: { ...PERSON_SELECT, specialties: true, location: true } }, event: { select: { id: true, start: true } } },
@@ -122,6 +122,12 @@ async function organizerTeam(profileId, limit = 8) {
     prisma.bookingRequest.findMany({
       where: { requesterId: profileId, status: { in: ['ACCEPTED', 'COMPLETED'] } },
       include: { target: { select: { ...PERSON_SELECT, specialties: true, location: true } } },
+    }),
+    // Personnes ajoutées à la main par l'organisateur
+    prisma.teamMember.findMany({
+      where: { ownerProfileId: profileId },
+      include: { member: { select: { ...PERSON_SELECT, specialties: true, location: true } } },
+      orderBy: { createdAt: 'desc' },
     }),
   ])
   const team = new Map()
@@ -135,10 +141,15 @@ async function organizerTeam(profileId, limit = 8) {
   }
   for (const s of staffs) add(s.profile, `e${s.event.id}`, s.event.start, s.role)
   for (const b of bookings) add(b.target, b.eventId ? `e${b.eventId}` : `b${b.id}`, b.startDate, null)
-  return [...team.values()]
-    .map(({ roles, events, ...entry }) => ({ ...entry, collaborations: events.size, specialty: entry.specialties[0] || [...roles][0] || null }))
+  const manualIds = new Set(manual.map(m => m.memberProfileId))
+  const auto = [...team.values()]
+    .map(({ roles, events, ...entry }) => ({ ...entry, collaborations: events.size, specialty: entry.specialties[0] || [...roles][0] || null, manual: manualIds.has(entry.profileId) }))
     .sort((a, b) => b.collaborations - a.collaborations || b.lastDate - a.lastDate)
-    .slice(0, limit)
+  // Les personnes ajoutées à la main apparaissent toujours, même sans collaboration
+  const added = manual
+    .filter(m => m.member && !team.has(m.memberProfileId))
+    .map(m => ({ ...person(m.member), specialties: m.member.specialties || [], location: m.member.location || null, lastDate: null, collaborations: 0, specialty: m.member.specialties?.[0] || null, manual: true }))
+  return [...auto.filter(e => e.manual), ...added, ...auto.filter(e => !e.manual).slice(0, limit)]
 }
 
 module.exports = { artistPrestations, organizerEvents, organizerTeam, person }

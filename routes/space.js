@@ -69,6 +69,39 @@ async function upcomingBookings(profileId, role, now) {
 /**
  * GET /api/space/dashboard — chiffres de « Mon activité », bookings en cours, équipe habituelle.
  */
+// ── Équipe habituelle : ajouter / retirer quelqu'un à la main (organisateur) ──
+router.post('/team', requireAuth, async (req, res) => {
+  try {
+    const owner = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } })
+    const memberProfileId = Number(req.body?.profileId)
+    if (!owner) return res.status(404).json({ error: 'Profil introuvable' })
+    if (!Number.isInteger(memberProfileId) || memberProfileId === owner.id) return res.status(400).json({ error: 'Membre invalide' })
+    const member = await prisma.profile.findUnique({ where: { id: memberProfileId }, select: { id: true, user: { select: { role: true } } } })
+    if (!member || member.user?.role === 'ADMIN') return res.status(404).json({ error: 'Membre introuvable' })
+    await prisma.teamMember.upsert({
+      where: { ownerProfileId_memberProfileId: { ownerProfileId: owner.id, memberProfileId } },
+      create: { ownerProfileId: owner.id, memberProfileId },
+      update: {},
+    })
+    res.json({ team: await organizerTeam(owner.id) })
+  } catch (err) {
+    console.error('POST /space/team', err)
+    res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
+router.delete('/team/:profileId', requireAuth, async (req, res) => {
+  try {
+    const owner = await prisma.profile.findUnique({ where: { userId: req.user.id }, select: { id: true } })
+    if (!owner) return res.status(404).json({ error: 'Profil introuvable' })
+    await prisma.teamMember.deleteMany({ where: { ownerProfileId: owner.id, memberProfileId: Number(req.params.profileId) } })
+    res.json({ team: await organizerTeam(owner.id) })
+  } catch (err) {
+    console.error('DELETE /space/team', err)
+    res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
 router.get('/dashboard', requireAuth, async (req, res) => {
   try {
     const profile = await myProfile(req)

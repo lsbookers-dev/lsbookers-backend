@@ -154,7 +154,7 @@ const OFFERS_PAGE = 20
 const OFFERS_MAX = 50
 
 router.get('/', async (req, res) => {
-  const { type, specialty, location, country, organizerId, eventId, forRole } = req.query;
+  const { type, specialty, location, country, organizerId, eventId, forRole, dateFrom, dateTo } = req.query;
   const paged = req.query.paged === '1' || req.query.paged === 'true';
   const cursor = Math.max(parseInt(req.query.cursor, 10) || 0, 0);
   const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || (paged ? OFFERS_PAGE : OFFERS_MAX), 1), OFFERS_MAX);
@@ -171,6 +171,15 @@ router.get('/', async (req, res) => {
     if (organizerId) where.organizerId = parseInt(organizerId, 10);
     // Filtre par eventId via la relation (pas le champ scalaire)
     if (eventId) where.event = { id: parseInt(eventId, 10) };
+
+    // Date précise (du = au) ou période : l'offre touche au moins un jour de l'intervalle
+    const day = (v, end) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? new Date(`${v}T${end ? '23:59:59' : '00:00:00'}`) : null);
+    const from = day(dateFrom, false);
+    const to = day(dateTo || dateFrom, true);
+    if (from && to) {
+      and.push({ date: { lte: to } });
+      and.push({ OR: [{ endDate: { gte: from } }, { endDate: null, date: { gte: from } }] });
+    }
 
     // « Pour moi »
     if (forRole && ['ARTIST', 'PROVIDER'].includes(String(forRole))) {
