@@ -44,14 +44,28 @@ router.get('/:id/checklist', requireAuth, async (req, res) => {
 })
 
 // POST /api/events/:id/checklist — ajouter ma checklist (liste de départ selon le rôle)
+// Rappel choisi par l'utilisateur : aucun, J-7 + veille, veille, J-7, ou une date choisie (dans le futur)
+const REMIND_MODES = ['NONE', 'J7_J1', 'J1', 'J7', 'CUSTOM']
+function readReminder(body) {
+  const mode = REMIND_MODES.includes(body?.remindMode) ? body.remindMode : null
+  if (!mode) return { error: 'Rappel invalide' }
+  if (mode !== 'CUSTOM') return { data: { remindMode: mode, remindAt: null, remindedAt: null } }
+  const at = new Date(body.remindAt)
+  if (Number.isNaN(at.getTime()) || at <= new Date()) return { error: 'Choisissez une date de rappel à venir' }
+  return { data: { remindMode: mode, remindAt: at, remindedAt: null } }
+}
+
 router.post('/:id/checklist', requireAuth, async (req, res) => {
   try {
     const a = await access(req)
     if (!a) return res.status(403).json({ error: 'Accès refusé' })
     const existing = await load(a.eventId, a.profileId)
     if (existing) return res.json({ checklist: existing })
+    const reminder = req.body?.remindMode ? readReminder(req.body) : { data: {} }
+    if (reminder.error) return res.status(400).json({ error: reminder.error })
     await prisma.eventChecklist.create({
       data: {
+        ...reminder.data,
         eventId: a.eventId,
         profileId: a.profileId,
         items: { create: TEMPLATES[a.as].map((label, position) => ({ label, position })) },
@@ -60,6 +74,22 @@ router.post('/:id/checklist', requireAuth, async (req, res) => {
     return res.status(201).json({ checklist: await load(a.eventId, a.profileId) })
   } catch (err) {
     console.error('❌ POST checklist :', err)
+    return res.status(500).json({ error: 'Erreur serveur' })
+  }
+})
+
+// PATCH /api/events/:id/checklist/reminder — changer le rappel de ma checklist
+router.patch('/:id/checklist/reminder', requireAuth, async (req, res) => {
+  try {
+    const a = await access(req)
+    if (!a) return res.status(403).json({ error: 'Accès refusé' })
+    const reminder = readReminder(req.body)
+    if (reminder.error) return res.status(400).json({ error: reminder.error })
+    const updated = await prisma.eventChecklist.updateMany({ where: { eventId: a.eventId, profileId: a.profileId }, data: reminder.data })
+    if (!updated.count) return res.status(404).json({ error: 'Checklist introuvable' })
+    return res.json({ checklist: await load(a.eventId, a.profileId) })
+  } catch (err) {
+    console.error('❌ PATCH checklist reminder :', err)
     return res.status(500).json({ error: 'Erreur serveur' })
   }
 })

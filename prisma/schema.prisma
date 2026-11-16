@@ -310,6 +310,10 @@ model Profile {
   // Équipe habituelle : personnes ajoutées à la main par un organisateur (en plus des personnes déjà bookées)
   teamMembersAdded TeamMember[] @relation("TeamOwner")
   teamMemberOf     TeamMember[] @relation("TeamMemberProfile")
+  // Devis : envoyés depuis une offre (sender → recipient) ou déposés par soi-même
+  quotesSent     Quote[] @relation("QuoteSender")
+  quotesReceived Quote[] @relation("QuoteRecipient")
+  quotesUploaded Quote[] @relation("QuoteUploader")
 }
 
 // ─────────────────────────────────────────────
@@ -1359,6 +1363,9 @@ model EventChecklist {
   profileId   Int
   reminded7At DateTime? // Rappel J-7 envoyé
   reminded1At DateTime? // Rappel J-1 envoyé
+  remindMode  String    @default("J7_J1") // Rappel choisi : NONE | J7_J1 | J1 | J7 | CUSTOM
+  remindAt    DateTime? // Rappel à une date choisie (remindMode CUSTOM)
+  remindedAt  DateTime? // Rappel à une date choisie envoyé
   createdAt   DateTime  @default(now())
 
   event   Event                @relation(fields: [eventId], references: [id], onDelete: Cascade)
@@ -1512,4 +1519,29 @@ model TeamMember {
 
   @@unique([ownerProfileId, memberProfileId])
   @@index([memberProfileId])
+}
+
+// Devis (16/11/2026) : ceux envoyés depuis une offre (PDF joint ou proposition en ligne) et ceux déposés
+// par le membre lui-même. LS Bookers n'édite plus de devis à son logo : on ne garde que le document.
+model Quote {
+  id                  Int      @id @default(autoincrement())
+  senderProfileId     Int? // Artiste / prestataire qui a envoyé le devis depuis une offre
+  recipientProfileId  Int? // Organisateur qui l'a reçu
+  uploadedByProfileId Int? // Membre qui a déposé lui-même ce devis
+  offerId             Int?
+  messageId           Int?
+  title               String
+  fileUrl             String
+  fileName            String?
+  counterpartName     String? // Devis déposé : avec qui (texte libre)
+  amount              Float?
+  createdAt           DateTime @default(now())
+
+  sender     Profile? @relation("QuoteSender", fields: [senderProfileId], references: [id], onDelete: SetNull)
+  recipient  Profile? @relation("QuoteRecipient", fields: [recipientProfileId], references: [id], onDelete: SetNull)
+  uploadedBy Profile? @relation("QuoteUploader", fields: [uploadedByProfileId], references: [id], onDelete: Cascade)
+
+  @@index([senderProfileId])
+  @@index([recipientProfileId])
+  @@index([uploadedByProfileId])
 }

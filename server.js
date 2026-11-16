@@ -235,6 +235,7 @@ app.use('/api/home', homeRoutes);
 app.use('/api/contact', contactRoutes);
 app.use('/api/space', spaceRoutes);
 app.use('/api/invoices', invoiceRoutes);
+app.use('/api/quotes', require('./routes/quotes'));
 app.use('/api/billing', billingRoutes);
 app.use('/api/payouts', payoutRoutes);
 app.use('/api/booking-payments', bookingPaymentRoutes);

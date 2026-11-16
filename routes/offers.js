@@ -307,7 +307,12 @@ router.post('/:id/apply', requireAuth, async (req, res) => {
     });
     // Déjà postulé : pas de 2e message de candidature à l'organisateur
     if (alreadyApplied) {
-      return res.status(409).json({ error: 'ALREADY_APPLIED', message: 'Vous avez déjà postulé à cette offre.' });
+      // La conversation est renvoyée : un devis peut encore y être joint après une candidature
+      const conv = await prisma.conversation.findFirst({
+        where: { AND: [{ participants: { some: { userId: applicantUserId } } }, { participants: { some: { userId: organizerUserId } } }] },
+        select: { id: true },
+      });
+      return res.status(409).json({ error: 'ALREADY_APPLIED', message: 'Vous avez déjà postulé à cette offre.', conversationId: conv?.id ?? null });
     }
     const limited = await checkLimit(req.user, 'applicationsPerMonth', { profileId: applicantProfile.id });
     if (limited) return res.status(403).json(limited);

@@ -237,6 +237,18 @@ router.post('/:id(\\d+)/items', requireAuth, async (req, res) => {
     if (!album) return res.status(404).json({ error: 'Album introuvable' })
     if (!profile || album.profileId !== profile.id) return res.status(403).json({ error: 'Accès interdit' })
 
+    // Une publication de l'album : la sienne, ou une où l'on est identifié (identification acceptée)
+    if (publicationId) {
+      const pubId = parseInt(publicationId, 10)
+      const allowed = await prisma.publication.findFirst({
+        where: { id: pubId, OR: [{ profileId: profile.id }, { tags: { some: { taggedUserId: req.user.id, status: 'ACCEPTED' } } }] },
+        select: { id: true },
+      })
+      if (!allowed) return res.status(403).json({ error: 'Vous ne pouvez ajouter que vos publications ou celles où vous êtes identifié.' })
+      const already = await prisma.albumItem.findFirst({ where: { albumId, publicationId: pubId }, select: { id: true } })
+      if (already) return res.status(409).json({ error: 'Cette publication est déjà dans l’album.' })
+    }
+
     // Trouver l'ordre max actuel
     const last = await prisma.albumItem.findFirst({
       where: { albumId },
