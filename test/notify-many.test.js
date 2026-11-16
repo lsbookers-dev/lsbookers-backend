@@ -35,9 +35,9 @@ test('envoi groupé : cloches en une fois, e-mails selon les réglages, jamais �
     // 9 = l'auteur, 5 en double : une seule fois
     assert.deepEqual(created.map(n => n.userId).sort(), [2, 4, 5])
     assert.ok(created.every(n => n.type === 'NEW_OFFER' && n.offerId === 12 && n.actorId === 9))
-    assert.deepEqual(result, { bell: 3, email: 3 }) // e-mails : 2, 3, 5
+    assert.deepEqual(result, { bell: 3, email: 0 }) // plus d'e-mail pour une nouvelle offre (14/11/2026)
     // E-mails mis en attente (10 min), avec le bon lien vers l'offre
-    assert.deepEqual(queued.map(q => q.userId).sort(), [2, 3, 5])
+    assert.deepEqual(queued.map(q => q.userId).sort(), [])
     assert.ok(queued.every(q => q.link.endsWith('/offers?offer=12') && q.ctaLabel === 'Voir l’offre'))
   } finally {
     prisma.user.findMany = originals.findMany

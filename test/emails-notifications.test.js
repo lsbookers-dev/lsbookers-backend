@@ -60,10 +60,15 @@ test('une seule nouveauté : e-mail détaillé avec désinscription en un clic',
 })
 
 test('plusieurs nouveautés : un seul e-mail groupé', async () => {
-  const pending = [row(1, 'BOOKING_REQUEST', 50), row(2, 'NEW_OFFER', null), row(3, 'NEW_APPLICATION', 52)]
+  const pending = [row(1, 'BOOKING_REQUEST', 50), row(2, 'BOOKING_ACCEPTED', null), row(3, 'PAYMENT_RECEIVED', 52)]
   const sent = await withMocks(baseMocks(pending, [50, 52]), () => captureSends(() => sendPendingEmails()))
   assert.equal(sent.length, 1)
   assert.equal(sent[0].subject, '3 nouveautés sur LS Bookers')
+})
+
+test('e-mails réservés à l’essentiel : une nouvelle offre ne part plus par e-mail', async () => {
+  const sent = await withMocks(baseMocks([row(1, 'NEW_OFFER', 50)], [50]), () => captureSends(() => sendPendingEmails()))
+  assert.equal(sent.length, 0)
 })
 
 test('adresse non confirmée ou e-mails coupés depuis : rien ne part', async () => {

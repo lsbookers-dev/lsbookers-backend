@@ -59,7 +59,13 @@ test('notifications : réglages par défaut et choix enregistrés', () => {
   assert.equal(wantsBell(prefs, 'NEW_DEVICE_LOGIN'), true, 'sécurité : toujours dans la cloche')
   assert.equal(wantsEmail(resolvePrefs(null), 'BOOKING_REQUEST'), true)
   assert.equal(wantsEmail(resolvePrefs(null), 'NEW_LIKE'), false)
-  assert.deepEqual(sanitizePrefs({ inconnu: { bell: true }, messages: { bell: true, email: false } }), { messages: { email: false } })
+  assert.deepEqual(sanitizePrefs({ inconnu: { bell: true }, messages: { bell: true, email: false }, bookings: { email: false } }), { messages: {}, bookings: { email: false } })
+  // E-mails réservés à l'essentiel (14/11/2026) : jamais pour le réseau, les offres ou les messages
+  assert.equal(resolvePrefs({ network: { email: true } }).network.email, false)
+  assert.equal(wantsEmail(resolvePrefs(null), 'NEW_OFFER'), false)
+  assert.equal(wantsEmail(resolvePrefs(null), 'BOOKING_ITEM_ADDED'), false, 'élément ajouté au booking : cloche seulement')
+  assert.equal(wantsEmail(resolvePrefs(null), 'MANAGEMENT_INVITE'), true)
+  assert.equal(resolvePrefs(null).messages.email, false)
 })
 
 test('createNotif : cloche désactivée pour ce type → rien dans la cloche', async () => {
@@ -88,9 +94,10 @@ test('réglages : les choix de notifications sont fusionnés avec ceux déjà en
     profile: { updateMany: async () => ({ count: 1 }) },
   }, async () => {
     const res = responseRecorder()
-    await routeHandler(accountRouter, 'patch', '/settings')({ user: { id: 1 }, body: { notifPrefs: { network: { email: true } } } }, res)
-    assert.deepEqual(saved, { network: { bell: false, email: true } })
-    assert.equal(res.body.settings.notifPrefs.network.email, true)
+    await routeHandler(accountRouter, 'patch', '/settings')({ user: { id: 1 }, body: { notifPrefs: { bookings: { email: false }, network: { email: true } } } }, res)
+    // L'e-mail du réseau n'existe plus (14/11/2026) : seul le choix des bookings est enregistré
+    assert.deepEqual(saved, { network: { bell: false }, bookings: { email: false } })
+    assert.equal(res.body.settings.notifPrefs.bookings.email, false)
   })
 })
 
@@ -201,7 +208,7 @@ test('export : fichier JSON à télécharger, sans mot de passe', async () => {
   assert.equal(data.account.password, undefined)
 })
 
-test('e-mail « nouveau message » : seulement si absent du site, au plus une fois par heure', async () => {
+test('plus d’e-mail « nouveau message » (décision du 14/11/2026), même absent du site', async () => {
   const { notifyNewMessageByEmail } = require('../services/messageEmails')
   const updated = []
   const ago = (min) => new Date(Date.now() - min * 60000)
@@ -218,5 +225,5 @@ test('e-mail « nouveau message » : seulement si absent du site, au plus une fo
       update: async ({ where }) => { updated.push(where.id) },
     },
   }, () => notifyNewMessageByEmail({ conversationId: 5, senderId: 9 }))
-  assert.deepEqual(updated, [2])
+  assert.deepEqual(updated, [])
 })
