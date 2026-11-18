@@ -8,6 +8,7 @@ const { carouselFeatured } = require('../services/extras')
 const { ensureProfileRegion } = require('../lib/regions')
 const { isProRow, managedProUserIds } = require('../lib/plan')
 const { boundingBoxWhere } = require('../lib/geo')
+const { createShortCache } = require('../lib/shortCache')
 
 const MEMBER_ROLES = ['ARTIST', 'ORGANIZER', 'PROVIDER']
 
@@ -175,24 +176,45 @@ function feedScore(pub) {
 // invisibles des autres membres
 const NOT_PAUSED = { hiddenAt: null, profile: { user: { pausedAt: null, bannedAt: null } } }
 
-async function rankedPublications(where, skip, take, feedType) {
-  if (take <= 0) return { items: [], total: 0 }
+// Classement [{ id, profileId, score }] des publications qui répondent à `where`
+async function rankPublications(where) {
   const rows = await prisma.publication.findMany({
     where: { ...where, ...NOT_PAUSED },
-    select: { id: true, createdAt: true, _count: { select: { likes: true, comments: true } } },
+    select: { id: true, profileId: true, createdAt: true, _count: { select: { likes: true, comments: true } } },
   })
-  const ids = rows
-    .map(r => ({ id: r.id, score: feedScore(r) }))
+  return rows
+    .map(r => ({ id: r.id, profileId: r.profileId, score: feedScore(r) }))
     .sort((a, b) => b.score - a.score || b.id - a.id)
-    .slice(skip, skip + take)
-    .map(r => r.id)
-  if (!ids.length) return { items: [], total: rows.length }
-  const full = await prisma.publication.findMany({ where: { id: { in: ids } }, include: PUB_INCLUDE })
+}
+
+// Morceau (skip/take) d'un classement, avec les publications complètes dans l'ordre du classement
+async function pageOfRanking(ranked, skip, take, feedType) {
+  if (take <= 0) return { items: [], total: ranked.length }
+  const ids = ranked.slice(skip, skip + take).map(r => r.id)
+  if (!ids.length) return { items: [], total: ranked.length }
+  // NOT_PAUSED revérifié : une publication masquée depuis le calcul du classement n'apparaît pas
+  const full = await prisma.publication.findMany({ where: { id: { in: ids }, ...NOT_PAUSED }, include: PUB_INCLUDE })
   const byId = new Map(full.map(p => [p.id, p]))
   return {
     items: ids.map(id => byId.get(id)).filter(Boolean).map(p => ({ ...p, feedType })),
-    total: rows.length,
+    total: ranked.length,
   }
+}
+
+// Classe toutes les publications qui répondent à `where` et en renvoie un morceau (skip/take)
+async function rankedPublications(where, skip, take, feedType) {
+  if (take <= 0) return { items: [], total: 0 }
+  return pageOfRanking(await rankPublications(where), skip, take, feedType)
+}
+
+// Tendances : le classement des 90 derniers jours est le même pour tout le monde. Il est calculé
+// une fois toutes les 2 minutes (au lieu d'une fois par visite du fil), puis chaque membre en retire
+// ses abonnements, ses blocages et ses suggestions (audit du 18/11/2026).
+const trendingCache = createShortCache({ ttlMs: 2 * 60 * 1000, max: 1 })
+function trendingRanking() {
+  return trendingCache.get('trending', () => rankPublications({
+    createdAt: { gte: new Date(Date.now() - TRENDING_WINDOW_DAYS * 24 * 3_600_000) },
+  }))
 }
 
 // Mélange : un « secondaire » tous les n « principaux », un « tertiaire » tous les m
@@ -288,10 +310,9 @@ router.get('/feed', requireAuth, async (req, res) => {
 
     // ── SOURCE 2 — Tendances (reçoit aussi les places laissées libres) ─
     const freeSlots = (followedSlots - followedBucket.length) + (suggestionSlots - suggestions.items.length)
-    const trending = await rankedPublications({
-      profileId: { notIn: [...ownAndFollowedProfileIds, ...blockedProfileIds, ...fofProfileIds] },
-      createdAt: { gte: new Date(Date.now() - TRENDING_WINDOW_DAYS * 24 * 3_600_000) },
-    }, Number(cursor.t) || 0, trendingSlots + freeSlots, 'trending')
+    const excluded = new Set([...ownAndFollowedProfileIds, ...blockedProfileIds, ...fofProfileIds])
+    const trendingPool = (await trendingRanking()).filter(r => !excluded.has(r.profileId))
+    const trending = await pageOfRanking(trendingPool, Number(cursor.t) || 0, trendingSlots + freeSlots, 'trending')
 
     // Dans une page, les publications suivies sont présentées des plus intéressantes aux moins intéressantes
     followedBucket.sort((a, b) => feedScore(b) - feedScore(a))
@@ -497,3 +518,4 @@ router.get('/trends', optionalAuth, async (req, res) => {
 })
 
 module.exports = router
+module.exports.clearFeedCache = () => trendingCache.clear()

@@ -1,8 +1,12 @@
 const test = require('node:test')
+const { beforeEach } = require('node:test')
 const assert = require('node:assert/strict')
 
 const prisma = require('../prisma/client')
 const homeRouter = require('../routes/home')
+
+// Chaque test a ses propres données : pas de mémoire courte d'un test à l'autre
+beforeEach(() => homeRouter.clearFeedCache())
 const profileRouter = require('../routes/profile')
 
 function responseRecorder() {
@@ -121,6 +125,28 @@ test('fil « Pour vous » : en descendant, aucune publication répétée ni saut
   // Tout ce qui est récent (≤ 90 j) ou suivi doit apparaître
   const expected = PUBS.filter(p => [1, 2].includes(p.profileId) || p.createdAt >= new Date(NOW - 90 * 24 * HOUR)).map(p => p.id)
   assert.deepEqual([...seen].sort((a, b) => a - b), expected.sort((a, b) => a - b))
+})
+
+test('fil « Pour vous » : les tendances sont calculées une fois pour plusieurs visites', async () => {
+  const rankingQueries = []
+  const mocks = feedMocks(1)
+  mocks.publication = {
+    findMany: async (args) => {
+      // Requête de classement des tendances : sélection légère sur la fenêtre de 90 jours
+      if (args.select && args.where?.createdAt) rankingQueries.push(args)
+      return publicationMock.findMany(args)
+    },
+  }
+  for (let i = 0; i < 3; i++) {
+    const res = responseRecorder()
+    await withMocks(mocks, () => routeHandler(homeRouter, 'get', '/feed')({ user: { id: 1 }, query: {} }, res))
+    assert.equal(res.statusCode, 200)
+    // Ses abonnements et ses propres publications ne sont jamais proposés en « tendances »
+    for (const p of res.body.posts.filter(p => p.feedType === 'trending')) assert.ok(![1, 2].includes(p.profileId ?? PUBS.find(x => x.id === p.id).profileId))
+  }
+  assert.equal(rankingQueries.length, 1)
+  // Le classement partagé ne contient aucune exclusion propre à un membre
+  assert.equal(rankingQueries[0].where.profileId, undefined)
 })
 
 test('fil « Pour vous » : curseur illisible refusé', async () => {

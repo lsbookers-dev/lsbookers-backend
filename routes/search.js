@@ -4,6 +4,11 @@ const prisma = require('../prisma/client')
 const { requireAuth } = require('../middleware/auth')
 const { boostPro, isProRow, managedProUserIds } = require('../lib/plan')
 const { haversineKm, boundingBoxWhere } = require('../lib/geo')
+const { createShortCache } = require('../lib/shortCache')
+
+// Recherches identiques (mêmes filtres) : la liste légère des résultats est gardée 1 minute,
+// puis chaque membre en retire son propre compte et ses blocages (audit du 18/11/2026)
+const searchCache = createShortCache({ ttlMs: 60 * 1000, max: 200 })
 
 // fetch compatible CommonJS
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args))
@@ -214,7 +219,6 @@ router.get('/', requireAuth, async (req, res) => {
       // Réglages : comptes en pause et membres qui ne veulent pas apparaître dans la Recherche
       pausedAt: null,
       bannedAt: null,
-      id: { not: req.user.id, notIn: blockedIds.length ? blockedIds : undefined },
 
       ...(name && buildPublicNameFilter(name)),
 
@@ -264,30 +268,38 @@ router.get('/', requireAuth, async (req, res) => {
       },
     }
 
-    // 1) Liste légère de tous les résultats (quelques champs seulement) pour le tri et le comptage
-    const candidates = await prisma.user.findMany({
-      where,
-      select: {
-        id: true,
-        role: true,
-        pseudo: true,
-        firstName: true,
-        lastName: true,
-        subscription: { select: { status: true, endDate: true, currentPeriodEnd: true } },
-        agencySubscription: { select: { status: true, endDate: true, currentPeriodEnd: true } },
-        profile: {
-          select: {
-            showRealName: true,
-            specialties: true,
-            styles: true,
-            typeEtablissement: true,
-            latitude: true,
-            longitude: true,
+    // 1) Liste légère de tous les résultats (quelques champs seulement) pour le tri et le comptage.
+    // Mêmes filtres = même liste pour tout le monde : gardée 1 minute (voir searchCache)
+    const shared = await searchCache.get(JSON.stringify(where), async () => {
+      const rows = await prisma.user.findMany({
+        where,
+        select: {
+          id: true,
+          role: true,
+          pseudo: true,
+          firstName: true,
+          lastName: true,
+          subscription: { select: { status: true, endDate: true, currentPeriodEnd: true } },
+          agencySubscription: { select: { status: true, endDate: true, currentPeriodEnd: true } },
+          profile: {
+            select: {
+              showRealName: true,
+              specialties: true,
+              styles: true,
+              typeEtablissement: true,
+              latitude: true,
+              longitude: true,
+            },
           },
         },
-      },
-      orderBy: { createdAt: 'desc' },
+        orderBy: { createdAt: 'desc' },
+      })
+      // Profils gérés par une agence qui a la formule : Pro aussi
+      return { rows, managedPro: await managedProUserIds(rows.map(u => u.id)) }
     })
+    const hidden = new Set([req.user.id, ...blockedIds])
+    const candidates = shared.rows.filter(u => !hidden.has(u.id))
+    const managedPro = shared.managedPro
 
     let ranked = candidates.filter((user) => {
       const p = user.profile
@@ -314,8 +326,6 @@ router.get('/', requireAuth, async (req, res) => {
       return true
     })
 
-    // Profils gérés par une agence qui a la formule : Pro aussi
-    const managedPro = await managedProUserIds(ranked.map(u => u.id))
     ranked = sort === 'alpha'
       ? [...ranked].sort((a, b) => displayName(a).localeCompare(displayName(b), 'fr'))
       : boostPro(ranked, u => isProRow(u, managedPro))
@@ -387,3 +397,4 @@ router.get('/users', requireAuth, async (req, res) => {
 })
 
 module.exports = router
+module.exports.clearSearchCache = () => searchCache.clear()

@@ -1,8 +1,12 @@
 const test = require('node:test')
+const { beforeEach } = require('node:test')
 const assert = require('node:assert/strict')
 
 const prisma = require('../prisma/client')
 const searchRouter = require('../routes/search')
+
+// Chaque test a ses propres données : pas de mémoire courte d'un test à l'autre
+beforeEach(() => searchRouter.clearSearchCache())
 const { boundingBoxWhere, haversineKm } = require('../lib/geo')
 
 function responseRecorder() {
@@ -145,4 +149,33 @@ test('distance : le carré de la base contient le cercle, le calcul exact écart
   assert.ok(beauvais.lat >= box.latitude.gte && beauvais.lat <= box.latitude.lte)
   assert.ok(beauvais.lon >= box.longitude.gte && beauvais.lon <= box.longitude.lte)
   assert.ok(haversineKm(paris.lat, paris.lon, beauvais.lat, beauvais.lon) < 100)
+})
+
+test('recherche : mêmes filtres = un seul calcul pour plusieurs membres, chacun garde ses blocages', async () => {
+  const calls = []
+  const candidates = [member(1), member(2), member(3), member(999)]
+  const user = userMock(candidates, calls)
+  const asMember = (userId, blocks) => {
+    const res = responseRecorder()
+    return withMocks({ user, block: { findMany: async () => blocks } }, async () => {
+      await routeHandler(searchRouter, 'get', '/')({ user: { id: userId }, query: {} }, res)
+      return res
+    })
+  }
+  const a = await asMember(999, [{ blockerId: 999, blockedId: 2 }])
+  const b = await asMember(3, [])
+  // Une seule lecture de la liste légère pour les deux recherches (+ une lecture de fiches chacune)
+  assert.equal(calls.filter(c => !c.where.id?.in).length, 1)
+  assert.deepEqual(a.body.users.map(u => u.id).sort(), [1, 3]) // ni lui-même, ni le compte bloqué
+  assert.deepEqual(b.body.users.map(u => u.id).sort(), [1, 2, 999])
+  // La liste partagée ne dépend pas du membre qui cherche
+  assert.equal(calls[0].where.id, undefined)
+})
+
+test('recherche : des filtres différents ne partagent pas la même liste', async () => {
+  const calls = []
+  const user = userMock([member(1)], calls)
+  await search({ role: 'ARTIST' }, { user })
+  await search({ role: 'ORGANIZER' }, { user })
+  assert.equal(calls.filter(c => !c.where.id?.in).length, 2)
 })
