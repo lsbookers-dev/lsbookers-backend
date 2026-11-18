@@ -5,7 +5,19 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 
 const { r2Client } = require('../lib/r2')
-const { checkRequest, confirmUpload, UploadError } = require('../lib/directUpload')
+const prisma = require('../prisma/client')
+const { checkRequest, confirmUpload, UploadError, deleteAbandonedUploads } = require('../lib/directUpload')
+
+// Fichiers en attente de confirmation (table PendingUpload) simulés en mémoire
+const pending = []
+prisma.pendingUpload.deleteMany = async ({ where }) => {
+  const before = pending.length
+  for (let i = pending.length - 1; i >= 0; i--) {
+    if ((where.key && pending[i].key === where.key) || (where.id?.in && where.id.in.includes(pending[i].id))) pending.splice(i, 1)
+  }
+  return { count: before - pending.length }
+}
+prisma.pendingUpload.findMany = async ({ where, take }) => pending.filter(p => p.createdAt < where.createdAt.lt).slice(0, take)
 
 const MB = 1024 * 1024
 const JPEG = [0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0x4a, 0x46, 0x49, 0x46, 0, 1, 1]
@@ -70,4 +82,27 @@ test('confirmation : faux contenu ou trop gros → fichier supprimé', async () 
     await assert.rejects(confirmUpload({ userId: 7, purpose: 'general', key: KEY }), e => e.code === 'FORMAT_NOT_ALLOWED')
     assert.equal(sent.at(-1).constructor.name, 'DeleteObjectCommand')
   })
+})
+
+test('fichier confirmé : il n’est plus en attente (jamais supprimé par le nettoyage)', async () => {
+  pending.length = 0
+  pending.push({ id: 1, key: KEY, userId: 7, createdAt: new Date(Date.now() - 2 * 24 * 3600 * 1000) })
+  await withR2(() => objectResponse(JPEG, 2 * MB, 'image/jpeg'), async () => {
+    await confirmUpload({ userId: 7, purpose: 'general', key: KEY })
+  })
+  assert.equal(pending.length, 0)
+})
+
+test('nettoyage : seuls les fichiers non confirmés depuis plus de 24 h sont supprimés du stockage', async () => {
+  pending.length = 0
+  const now = new Date('2027-01-10T12:00:00Z')
+  pending.push(
+    { id: 1, key: 'lsbookers/media/u7-1-aaaaaaaa-vieux.jpg', userId: 7, createdAt: new Date(now.getTime() - 25 * 3600 * 1000) },
+    { id: 2, key: 'lsbookers/media/u7-2-bbbbbbbb-recent.jpg', userId: 7, createdAt: new Date(now.getTime() - 2 * 3600 * 1000) },
+  )
+  await withR2(() => ({}), async (sent) => {
+    assert.equal(await deleteAbandonedUploads(now), 1)
+    assert.deepEqual(sent.map(c => [c.constructor.name, c.input.Key]), [['DeleteObjectCommand', 'lsbookers/media/u7-1-aaaaaaaa-vieux.jpg']])
+  })
+  assert.deepEqual(pending.map(p => p.id), [2])
 })

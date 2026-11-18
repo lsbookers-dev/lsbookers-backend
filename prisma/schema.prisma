@@ -1577,3 +1577,14 @@ model Report {
   @@index([targetType, targetId])
   @@index([targetUserId])
 }
+
+// Envoi direct vers R2 autorisé mais pas encore confirmé (audit du 18/11/2026).
+// La ligne disparaît à la confirmation ; au bout de 24 h, le fichier abandonné est supprimé du stockage.
+model PendingUpload {
+  id        Int      @id @default(autoincrement())
+  key       String   @unique
+  userId    Int
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}

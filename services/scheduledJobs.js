@@ -10,6 +10,7 @@ const { chargeDuePayments, releaseDuePayouts } = require('./bookingPayments')
 const { dailyBackupIfDue } = require('./dbBackup')
 const { endLapsedManagements } = require('./agency')
 const { sendPendingEmails } = require('./pendingEmails')
+const { deleteAbandonedUploads } = require('../lib/directUpload')
 
 const INTERVAL_MS = 60 * 60 * 1000
 const PAYMENTS_INTERVAL_MS = 15 * 60 * 1000
@@ -34,6 +35,7 @@ const JOBS = [
   ['Fin des mises en avant payantes', closeFinishedFeatures],
   ['Sauvegarde quotidienne de la base', dailyBackupIfDue],
   ['Fin des gestions d’agences sans formule depuis 30 jours', () => endLapsedManagements()],
+  ['Fichiers envoyés jamais confirmés (plus de 24 h)', () => deleteAbandonedUploads()],
 ]
 
 const PAYMENT_JOBS = [
