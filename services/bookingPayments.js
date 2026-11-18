@@ -312,16 +312,32 @@ async function releaseDuePayouts(now = new Date()) {
   const stripe = getStripe()
   if (!stripe) return 0
   const settings = await getPlanSettings()
-  const paid = await prisma.bookingPayment.findMany({
-    where: { status: 'PAID' },
-    include: { booking: { include: { requester: PERSON, target: PERSON } } },
-    take: 100,
-  })
+  const releaseMs = settings.bookingPayment.releaseHoursAfter * HOUR
+  // Seuls les paiements qui peuvent être dus sont lus (booking confirmé, prestation commencée
+  // depuis au moins le délai), tous, par paquets de 100 : les bookings payés à l'avance
+  // ne bloquent plus les versements dus (audit du 18/11/2026)
+  const where = {
+    status: 'PAID',
+    booking: { status: { in: ['ACCEPTED', 'COMPLETED'] }, startDate: { lte: new Date(now.getTime() - releaseMs) } },
+  }
+  const paid = []
+  for (let cursor = null; ;) {
+    const batch = await prisma.bookingPayment.findMany({
+      where,
+      include: { booking: { include: { requester: PERSON, target: PERSON } } },
+      orderBy: { id: 'asc' },
+      take: 100,
+      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+    })
+    paid.push(...batch)
+    if (batch.length < 100) break
+    cursor = batch[batch.length - 1].id
+  }
   let released = 0
   for (const p of paid) {
     const b = p.booking
     if (b.status !== 'ACCEPTED' && b.status !== 'COMPLETED') continue
-    const releaseAt = new Date(prestationEnd(b).getTime() + settings.bookingPayment.releaseHoursAfter * HOUR)
+    const releaseAt = new Date(prestationEnd(b).getTime() + releaseMs)
     if (releaseAt > now) continue
     const amount = p.amountCents - p.commissionCents - p.transferredCents
     try {
