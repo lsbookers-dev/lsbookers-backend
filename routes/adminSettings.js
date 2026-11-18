@@ -16,13 +16,15 @@ function isAnnouncementVisible(s, now = new Date()) {
 
 /** Récupère (ou crée) la ligne de settings unique (id = 1) */
 async function getOrCreateSettings() {
-  let settings = await prisma.adminSettings.findUnique({ where: { id: 1 } });
-  if (!settings) {
-    settings = await prisma.adminSettings.create({
-      data: { id: 1 },
-    });
+  const settings = await prisma.adminSettings.findUnique({ where: { id: 1 } });
+  if (settings) return settings;
+  try {
+    return await prisma.adminSettings.create({ data: { id: 1 } });
+  } catch (err) {
+    // Deux visites simultanées sur une base neuve : l'autre a créé la ligne, on la relit
+    if (err.code === 'P2002') return prisma.adminSettings.findUnique({ where: { id: 1 } });
+    throw err;
   }
-  return settings;
 }
 
 /* ==========================================

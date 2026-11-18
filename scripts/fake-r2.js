@@ -4,11 +4,13 @@
 const http = require('http')
 const store = new Map()
 const cors = process.env.CORS !== '0'
+const origin = process.env.ORIGIN || 'http://localhost:3000' // site autorisé (tests automatiques : 3001)
+const port = Number(process.env.PORT) || 9000
 const log = []
 http.createServer((req, res) => {
   const path = decodeURIComponent(req.url.split('?')[0])
   const hdr = cors ? {
-    'Access-Control-Allow-Origin': 'http://localhost:3000',
+    'Access-Control-Allow-Origin': origin,
     'Access-Control-Allow-Methods': 'PUT, GET, HEAD',
     'Access-Control-Allow-Headers': 'content-type, cache-control',
   } : {}
@@ -35,4 +37,4 @@ http.createServer((req, res) => {
   }
   res.writeHead(200, { ...hdr, 'Content-Type': obj.type, 'Content-Length': obj.body.length })
   res.end(req.method === 'HEAD' ? undefined : obj.body)
-}).listen(9000, () => console.log(`faux R2 sur :9000 (CORS ${cors ? 'activé' : 'absent'})`))
+}).listen(port, () => console.log(`faux R2 sur :${port} (CORS ${cors ? `activé pour ${origin}` : 'absent'})`))
