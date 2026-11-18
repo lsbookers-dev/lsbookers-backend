@@ -164,6 +164,29 @@ test('liste des routes interdites : le quotidien reste permis', () => {
   assert.equal(isBlockedWhileActing('PATCH', '/api/accounting'), false)
 })
 
+test('liste des routes interdites : les majuscules et adresses déguisées ne la contournent pas', () => {
+  for (const [method, url] of [
+    ['PUT', '/API/ACCOUNT/password'],
+    ['POST', '/Api/Account/sessions/revoke-others'],
+    ['POST', '/api/PAYOUTS/dashboard'],
+    ['POST', '/api/Payouts/withdraw/'],
+    ['POST', '/api//payouts/onboard'],
+    ['POST', '/api/%61ccount/email'],
+    ['DELETE', '/API/AUTH/account'],
+    ['POST', '/api/Booking-Payments/12/online'],
+  ]) {
+    assert.equal(isBlockedWhileActing(method, url), true, `${method} ${url}`)
+  }
+  assert.equal(isBlockedWhileActing('GET', '/API/AUTH/ME'), false)
+})
+
+test('agent : une adresse en majuscules vers les réglages du compte est refusée', async () => {
+  const { res, nextCalled } = await runAuth({ userId: 1, actAs: 20, management: ACTIVE, method: 'POST', url: '/API/ACCOUNT/sessions/revoke-others' })
+  assert.equal(nextCalled, false)
+  assert.equal(res.statusCode, 403)
+  assert.equal(res.body.error, 'MANAGED_FORBIDDEN')
+})
+
 test('l’agent ne voit pas les données personnelles de l’artiste', () => {
   const safe = hidePrivateFromManager({ ...ARTIST, phone: '0600000000', dateOfBirth: new Date(), stripeAccountId: 'acct_1' })
   for (const key of ['email', 'phone', 'dateOfBirth', 'stripeAccountId']) assert.equal(key in safe, false, key)

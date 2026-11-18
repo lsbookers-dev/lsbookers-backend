@@ -11,6 +11,7 @@
  */
 
 const { ZodError } = require('zod');
+require('../lib/zodFr'); // messages d'erreur en français
 
 /**
  * @param {import('zod').ZodSchema} schema
@@ -24,7 +25,7 @@ function validate(schema) {
       next();
     } catch (err) {
       if (err instanceof ZodError) {
-        const errors = err.errors.map(e => ({
+        const errors = err.issues.map(e => ({
           field: e.path.join('.'),
           message: e.message,
         }));

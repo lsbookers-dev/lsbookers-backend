@@ -7,7 +7,7 @@
  * stripHtml() supprime les balises HTML des champs texte libres (anti-XSS stocké).
  */
 
-const { z } = require('zod');
+const { z } = require('../lib/zodFr'); // zod avec messages en français
 
 // Supprime les balises HTML d'une chaîne (ex: <script>, <b>, etc.)
 // Appliqué sur tous les champs texte libres avant stockage en base.
@@ -356,7 +356,7 @@ const managedClaimSchema = z.object({
   firstName:       step2Schema.shape.firstName,
   lastName:        step2Schema.shape.lastName,
   requireApproval: z.boolean().optional(),
-  isAdult:         z.literal(true, { errorMap: () => ({ message: 'Vous devez certifier être majeur.' }) }),
+  isAdult:         z.literal(true, { error: 'Vous devez certifier être majeur.' }),
 });
 
 module.exports = {

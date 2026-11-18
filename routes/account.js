@@ -52,7 +52,7 @@ const exportLimiter = rateLimit({
 
 // ── Schémas ────────────────────────────────────────────────
 const settingsSchema = z.object({
-  notifPrefs:       z.record(z.object({ bell: z.boolean().optional(), email: z.boolean().optional() })).optional(),
+  notifPrefs:       z.record(z.string(), z.object({ bell: z.boolean().optional(), email: z.boolean().optional() })).optional(),
   weeklyRecap:      z.boolean().optional(),
   newsletterOptIn:  z.boolean().optional(),
   loginAlerts:      z.boolean().optional(),
